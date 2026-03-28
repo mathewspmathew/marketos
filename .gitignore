@@ -1,0 +1,43 @@
+
+# Virtual environments
+.venv
+
+# Python
+*.py[oc]
+wheels/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+.env.*
+
+# ML / DVC
+*.ckpt
+*.pt
+*.safetensors
+/models/
+*.dvc
+
+# Secrets
+*.pem
+*.key
+secrets/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
