@@ -74,6 +74,7 @@ async function syncProductsFromShopify(admin, shop) {
           productType: node.productType ?? "",
           imageUrl: node.featuredImage?.url ?? null,
           status: node.status ?? "ACTIVE",
+          vectorized: false, // Reset on update
         },
         create: {
           id: node.id,
@@ -86,6 +87,8 @@ async function syncProductsFromShopify(admin, shop) {
           productType: node.productType ?? "",
           imageUrl: node.featuredImage?.url ?? null,
           status: node.status ?? "ACTIVE",
+          source: "INTERNAL",
+          vectorized: false,
         },
       });
     }

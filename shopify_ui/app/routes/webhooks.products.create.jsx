@@ -30,6 +30,7 @@ export const action = async ({ request }) => {
       productType: product.product_type ?? "",
       imageUrl,
       status: product.status?.toUpperCase() ?? "ACTIVE",
+      vectorized: false, // Reset on update (unlikely for create but good for consistency)
     },
     create: {
       id: `gid://shopify/Product/${product.id}`,
@@ -42,6 +43,8 @@ export const action = async ({ request }) => {
       productType: product.product_type ?? "",
       imageUrl,
       status: product.status?.toUpperCase() ?? "ACTIVE",
+      source: "INTERNAL",
+      vectorized: false,
     },
   });
 

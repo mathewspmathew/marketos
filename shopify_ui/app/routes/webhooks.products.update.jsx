@@ -32,6 +32,7 @@ export const action = async ({ request }) => {
       productType: product.product_type ?? "",
       imageUrl,
       status: product.status?.toUpperCase() ?? "ACTIVE",
+      vectorized: false, // Reset embedding on update
     },
     create: {
       id: shopifyId,
@@ -44,6 +45,8 @@ export const action = async ({ request }) => {
       productType: product.product_type ?? "",
       imageUrl,
       status: product.status?.toUpperCase() ?? "ACTIVE",
+      source: "INTERNAL",
+      vectorized: false,
     },
   });
 

@@ -1,15 +1,13 @@
-version: '3.8'
-
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: marketos_postgres
     environment:
       POSTGRES_USER: marketos
       POSTGRES_PASSWORD: password123
       POSTGRES_DB: marketos
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -42,15 +40,6 @@ services:
       - "5050:80"
     depends_on:
       postgres:
-        condition: service_healthy
-
-  redisinsight:
-    image: redislabs/redisinsight:latest
-    container_name: marketos_redisinsight
-    ports:
-      - "8001:8001"
-    depends_on:
-      redis:
         condition: service_healthy
 
 volumes:
