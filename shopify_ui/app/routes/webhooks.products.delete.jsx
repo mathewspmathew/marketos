@@ -12,7 +12,7 @@ export const action = async ({ request }) => {
 
   // Ignore if the product was never synced to our DB
   try {
-    await db.product.delete({ where: { id: shopifyId } });
+    await db.shopifyProduct.delete({ where: { id: shopifyId } });
   } catch (_e) {
     // Record not found — that's fine
   }

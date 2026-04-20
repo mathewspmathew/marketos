@@ -9,22 +9,42 @@ export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // First-time sync: if we have no products for this shop, pull from Shopify GraphQL
-  const count = await db.product.count({ where: { shop } });
+  // 1. Ensure Demo User exists (multi-tenancy requirement)
+  const demoUserId = process.env.MARKETOS_DEMO_TENANT_ID || "00000000-0000-0000-0000-000000000001";
+  await db.user.upsert({
+    where: { id: demoUserId },
+    update: {},
+    create: {
+      id: demoUserId,
+      email: "demo@marketos.io",
+      username: "Demo User",
+    },
+  });
+
+  // 2. First-time sync: if we have no products for this shop, pull from Shopify GraphQL
+  const count = await db.shopifyProduct.count({ where: { shop } });
   if (count === 0) {
-    await syncProductsFromShopify(admin, shop);
+    await syncProductsFromShopify(admin, shop, demoUserId);
   }
 
-  const products = await db.product.findMany({
+  const products = await db.shopifyProduct.findMany({
     where: { shop },
+    include: { variants: { take: 1 } }, // Include primary variant for price
     orderBy: { updatedAt: "desc" },
   });
 
-  return { products };
+  // Flatten products for the UI (keep price at top level)
+  const flattened = products.map((p) => ({
+    ...p,
+    price: p.variants[0]?.currentPrice?.toString() ?? "0.00",
+    compareAtPrice: p.variants[0]?.originalPrice?.toString() ?? null,
+  }));
+
+  return { products: flattened };
 };
 
 // ─── GraphQL full sync helper ─────────────────────────────────────────────────
-async function syncProductsFromShopify(admin, shop) {
+async function syncProductsFromShopify(admin, shop, userId) {
   let hasNextPage = true;
   let cursor = null;
 
@@ -42,11 +62,16 @@ async function syncProductsFromShopify(admin, shop) {
               status
               tags
               featuredImage { url }
-              variants(first: 1) {
+              variants(first: 10) {
                 edges {
                   node {
+                    id
+                    title
                     price
                     compareAtPrice
+                    sku
+                    barcode
+                    selectedOptions { name value }
                   }
                 }
               }
@@ -62,35 +87,60 @@ async function syncProductsFromShopify(admin, shop) {
     const { edges, pageInfo } = json.data.products;
 
     for (const { node } of edges) {
-      const variant = node.variants?.edges?.[0]?.node ?? {};
-      await db.product.upsert({
+      // 1. Upsert Product
+      await db.shopifyProduct.upsert({
         where: { id: node.id },
         update: {
           title: node.title,
           description: node.descriptionHtml ?? "",
-          price: variant.price ?? "0.00",
-          compareAtPrice: variant.compareAtPrice ?? null,
-          tags: JSON.stringify(node.tags ?? []),
+          tags: node.tags ?? [],
           productType: node.productType ?? "",
           imageUrl: node.featuredImage?.url ?? null,
           status: node.status ?? "ACTIVE",
-          vectorized: false, // Reset on update
+          vectorized: false,
         },
         create: {
           id: node.id,
+          userId,
           shop,
           title: node.title,
           description: node.descriptionHtml ?? "",
-          price: variant.price ?? "0.00",
-          compareAtPrice: variant.compareAtPrice ?? null,
-          tags: JSON.stringify(node.tags ?? []),
+          tags: node.tags ?? [],
           productType: node.productType ?? "",
           imageUrl: node.featuredImage?.url ?? null,
           status: node.status ?? "ACTIVE",
-          source: "INTERNAL",
           vectorized: false,
         },
       });
+
+      // 2. Sync Variants
+      for (const { node: vNode } of node.variants.edges) {
+        const options = {};
+        vNode.selectedOptions.forEach(opt => { options[opt.name] = opt.value; });
+
+        await db.shopifyVariant.upsert({
+          where: { id: vNode.id },
+          update: {
+            title: vNode.title,
+            currentPrice: vNode.price,
+            originalPrice: vNode.compareAtPrice,
+            sku: vNode.sku,
+            barcode: vNode.barcode,
+            options,
+          },
+          create: {
+            id: vNode.id,
+            productId: node.id,
+            userId,
+            title: vNode.title,
+            currentPrice: vNode.price,
+            originalPrice: vNode.compareAtPrice,
+            sku: vNode.sku,
+            barcode: vNode.barcode,
+            options,
+          },
+        });
+      }
     }
 
     hasNextPage = pageInfo.hasNextPage;
@@ -107,12 +157,12 @@ export const action = async ({ request }) => {
 
   if (intent === "toggleDynamic") {
     const enabled = formData.get("enabled") === "true";
-    await db.product.update({
+    await db.shopifyProduct.update({
       where: { id: productId },
       data: { dynamicChangeEnabled: enabled },
     });
   } else if (intent === "updateFields") {
-    await db.product.update({
+    await db.shopifyProduct.update({
       where: { id: productId },
       data: {
         fieldPrice: formData.get("fieldPrice") === "true",
@@ -156,10 +206,7 @@ export default function HomePage() {
   const allTags = useMemo(() => {
     const tagSet = new Set();
     for (const p of products) {
-      try {
-        const parsed = JSON.parse(p.tags);
-        if (Array.isArray(parsed)) parsed.forEach((t) => tagSet.add(t));
-      } catch (_e) { /* invalid JSON — skip */ }
+      if (Array.isArray(p.tags)) p.tags.forEach((t) => tagSet.add(t));
     }
     return [...tagSet].sort();
   }, [products]);

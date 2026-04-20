@@ -9,44 +9,80 @@ export const action = async ({ request }) => {
   }
 
   const product = payload;
-  const price =
-    product.variants?.[0]?.price ?? "0.00";
-  const compareAtPrice =
-    product.variants?.[0]?.compare_at_price ?? null;
-  const imageUrl =
-    product.image?.src ?? product.images?.[0]?.src ?? null;
-  const tags = JSON.stringify(
-    product.tags ? product.tags.split(", ").filter(Boolean) : [],
-  );
+  const imageUrl = product.image?.src ?? product.images?.[0]?.src ?? null;
+  const tags = product.tags ? product.tags.split(", ").map(t => t.trim()).filter(Boolean) : [];
+  const shopifyId = `gid://shopify/Product/${product.id}`;
 
-  await db.product.upsert({
-    where: { id: `gid://shopify/Product/${product.id}` },
+  const demoUserId = process.env.MARKETOS_DEMO_TENANT_ID || "00000000-0000-0000-0000-000000000001";
+  await db.user.upsert({
+    where: { id: demoUserId },
+    update: {},
+    create: {
+      id: demoUserId,
+      email: "demo@marketos.io",
+      username: "Demo User",
+    },
+  });
+
+  // 1. Upsert Product
+  await db.shopifyProduct.upsert({
+    where: { id: shopifyId },
     update: {
       title: product.title ?? "",
       description: product.body_html ?? "",
-      price,
-      compareAtPrice,
       tags,
       productType: product.product_type ?? "",
       imageUrl,
       status: product.status?.toUpperCase() ?? "ACTIVE",
-      vectorized: false, // Reset on update (unlikely for create but good for consistency)
+      vectorized: false,
     },
     create: {
-      id: `gid://shopify/Product/${product.id}`,
+      id: shopifyId,
+      userId: demoUserId,
       shop,
       title: product.title ?? "",
       description: product.body_html ?? "",
-      price,
-      compareAtPrice,
       tags,
       productType: product.product_type ?? "",
       imageUrl,
       status: product.status?.toUpperCase() ?? "ACTIVE",
-      source: "INTERNAL",
       vectorized: false,
     },
   });
+
+  // 2. Sync Variants
+  if (product.variants && Array.isArray(product.variants)) {
+    for (const v of product.variants) {
+      const variantId = `gid://shopify/ProductVariant/${v.id}`;
+      const options = {};
+      if (v.option1) options["Option1"] = v.option1;
+      if (v.option2) options["Option2"] = v.option2;
+      if (v.option3) options["Option3"] = v.option3;
+
+      await db.shopifyVariant.upsert({
+        where: { id: variantId },
+        update: {
+          title: v.title,
+          currentPrice: v.price,
+          originalPrice: v.compare_at_price,
+          sku: v.sku,
+          barcode: v.barcode,
+          options,
+        },
+        create: {
+          id: variantId,
+          productId: shopifyId,
+          userId: demoUserId,
+          title: v.title,
+          currentPrice: v.price,
+          originalPrice: v.compare_at_price,
+          sku: v.sku,
+          barcode: v.barcode,
+          options,
+        },
+      });
+    }
+  }
 
   return new Response(null, { status: 200 });
 };
