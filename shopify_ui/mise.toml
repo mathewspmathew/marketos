@@ -1,0 +1,6 @@
+[tools]
+node = "20"
+
+[env]
+OPENSSL_CONF = "/dev/null"
+NODE_OPTIONS = "--openssl-legacy-provider"

@@ -1,0 +1,4 @@
+[project]
+name = "common"
+version = "0.1.0"
+dependencies = ["prisma", "asyncpg", "requests", "google-cloud-storage", "pydantic", "python-dotenv"]

@@ -1,0 +1,4 @@
+[project]
+name = "scraper-svc"
+version = "0.1.0"
+dependencies = ["celery", "redis", "firecrawl-py", "groq", "python-dotenv"]

@@ -43,7 +43,6 @@ export const action = async ({ request }) => {
 
   if (intent === "addConfig") {
     const competitorUrl = formData.get("competitorUrl");
-    const llmInstructions = formData.get("llmInstructions");
     const includeImages = formData.get("includeImages") === "true";
 
     let productLimitRaw = formData.get("productLimit");
@@ -63,7 +62,6 @@ export const action = async ({ request }) => {
         userId: demoUserId,
         shopId: shop,
         competitorUrl,
-        llmInstructions,
         includeImages,
         productLimit: isNaN(productLimit) ? null : productLimit,
         frequencyInterval: isNaN(frequencyInterval) ? 24 : frequencyInterval,
@@ -85,7 +83,6 @@ export default function ControllerPage() {
   const fetcher = useFetcher();
 
   const [competitorUrl, setCompetitorUrl] = useState("");
-  const [llmInstructions, setLlmInstructions] = useState("");
   const [includeImages, setIncludeImages] = useState(true);
   
   const [productLimit, setProductLimit] = useState("10");
@@ -103,7 +100,6 @@ export default function ControllerPage() {
       {
         intent: "addConfig",
         competitorUrl,
-        llmInstructions,
         includeImages: String(includeImages),
         productLimit,
         customProductLimit,
@@ -113,9 +109,7 @@ export default function ControllerPage() {
       { method: "POST" }
     );
     
-    // Reset form after submission
     setCompetitorUrl("");
-    setLlmInstructions("");
   };
 
   const handleDelete = (id) => {
@@ -142,14 +136,6 @@ export default function ControllerPage() {
               helpText="Enter the full URL of the competitor's website or product page."
             />
             
-            <s-text-field
-              label="LLM Instructions (Optional)"
-              placeholder="e.g. 'Ensure price is numeric', 'Capitalize names'"
-              value={llmInstructions}
-              onInput={(e) => setLlmInstructions(e.currentTarget.value)}
-              multiline={4}
-            />
-
             <s-stack direction="inline" gap="base" align="center">
                <s-text>Include Images</s-text>
                <s-toggle 
@@ -236,12 +222,6 @@ export default function ControllerPage() {
                       <s-text tone="subdued">Interval: {config.frequencyInterval}h</s-text>
                       <s-text tone="subdued">Images: {config.includeImages ? "Yes" : "No"}</s-text>
                     </s-stack>
-
-                    {config.llmInstructions && (
-                      <s-text tone="subdued" italic>
-                        "{config.llmInstructions}"
-                      </s-text>
-                    )}
 
                     <s-stack direction="inline" gap="base">
                       <s-button 

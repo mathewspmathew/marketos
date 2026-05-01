@@ -1,6 +1,6 @@
 
 # Virtual environments
-.venv
+.venv/
 
 # Python
 *.py[oc]
@@ -31,6 +31,7 @@ secrets/
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # Logs
 *.log
@@ -56,6 +57,13 @@ shopify_ui/database.sqlite
 shopify_ui/.env
 shopify_ui/.env.*
 shopify_ui/extensions/*/dist
+
+/node_modules
+
+#as we moved prisma files to root, we want to update that accordingly
+
+/prisma/dev.sqlite
+/prisma/dev.sqlite-journal
 
 # Ignore shopify files created during app dev
 shopify_ui/.shopify/*

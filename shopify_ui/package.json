@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "react-router build",
-    "dev": "shopify app dev",
+    "dev": "OPENSSL_CONF=/dev/null NODE_OPTIONS=--openssl-legacy-provider shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
     "deploy": "shopify app deploy",

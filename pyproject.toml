@@ -4,8 +4,16 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
-
-[tool.uv.workspace]
-members = ["services/*", "shared"]
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.0",
+    "celery[redis]>=5.0",
+    "firecrawl-py",
+    "groq",
+    "google-cloud-storage",
+    "google-cloud-aiplatform",
+    "pydantic",
+    "python-dotenv",
+    "requests",
+]
 
