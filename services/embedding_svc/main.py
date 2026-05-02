@@ -2,14 +2,15 @@
 services/embedding_svc/main.py
 
 Task: generate_embeddings  (embedding_queue)
-  Load product + variants from DB via SQLAlchemy
-  Generate text embedding (768d) via Vertex AI text-embedding-004
-  Generate image embedding (768d) via Vertex AI multimodalembedding@001
-  Write vectors back via raw SQL (pgvector has no SQLAlchemy ORM type yet)
-  Mark product + variants as vectorized = true
+  Load ScrapedProduct + variants from DB.
+  Per variant: text embedding from ScrapedVariant.semanticText (Vertex AI text-embedding-004).
+  Product-level: image embedding from ScrapedProduct.imageUrl (Vertex AI multimodalembedding@001).
+  Write one ProductEmbedding row per variant via raw SQL (pgvector has no ORM type).
 """
 
 import os
+import uuid
+
 import requests
 import vertexai
 from dotenv import load_dotenv
@@ -40,6 +41,8 @@ try:
 except Exception:
     _image_model = None
 
+_EMBEDDING_MODEL_TAG = "text-embedding-004+multimodalembedding@001"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Embedding helpers
@@ -61,7 +64,7 @@ def get_image_embedding(image_url: str) -> list[float] | None:
         return None
     try:
         if image_url.startswith("https://storage.googleapis.com/"):
-            path = image_url.replace("https://storage.googleapis.com/", "")
+            path  = image_url.replace("https://storage.googleapis.com/", "")
             image = Image(gcs_uri=f"gs://{path}")
         else:
             image_bytes = requests.get(image_url, timeout=15).content
@@ -93,47 +96,63 @@ def _generate(product_id: str) -> None:
             print(f"[!] Product not found: {product_id}")
             return
 
-        sem_text = product.semanticText or product.title or ""
         print(f"[>] Embedding: {product.title[:50]} | {len(product.variants)} variant(s)")
 
-        text_vec = get_text_embedding(sem_text)
-        if not text_vec:
-            print(f"    [!] Text embedding failed — skipping product {product_id}")
-            return
-
+        # Image embedding is shared across all variants (same product image)
         image_vec = get_image_embedding(product.imageUrl or "")
 
-        update_fields = (
-            '"textEmbedding" = CAST(:text_vec AS vector), '
-            '"imageEmbedding" = CAST(:img_vec AS vector), '
-            '"vectorized" = true, "updatedAt" = NOW()'
-            if image_vec else
-            '"textEmbedding" = CAST(:text_vec AS vector), '
-            '"vectorized" = true, "updatedAt" = NOW()'
-        )
-        params: dict = {"text_vec": _vec(text_vec), "id": product_id}
-        if image_vec:
-            params["img_vec"] = _vec(image_vec)
-
+        # Clear stale embeddings before writing fresh ones
         session.execute(
-            text(f'UPDATE "ScrapedProduct" SET {update_fields} WHERE id = :id'),
-            params,
+            text('DELETE FROM "ProductEmbedding" WHERE "prodId" = :pid'),
+            {"pid": product_id},
         )
 
+        written = 0
         for v in product.variants:
-            variant_vec = get_text_embedding(v.variantSemanticText or "")
-            if not variant_vec:
+            if not v.semanticText:
+                print(f"    [-] No semanticText for variant {v.id[:8]} — skipping")
                 continue
-            session.execute(
-                text(
-                    'UPDATE "ScrapedVariant" '
-                    'SET "variantEmbedding" = CAST(:vec AS vector), "vectorized" = true, "updatedAt" = NOW() '
-                    'WHERE id = :id'
-                ),
-                {"vec": _vec(variant_vec), "id": v.id},
-            )
 
-        print(f"[✓] Embedding complete: {product.title[:50]}")
+            text_vec = get_text_embedding(v.semanticText)
+            if not text_vec:
+                print(f"    [!] Text embedding failed for variant {v.id[:8]}")
+                continue
+
+            row_id = str(uuid.uuid4())
+            base_params = {
+                "id":        row_id,
+                "userId":    product.userId,
+                "prodId":    product_id,
+                "variantId": v.id,
+                "model":     _EMBEDDING_MODEL_TAG,
+                "text_vec":  _vec(text_vec),
+            }
+
+            if image_vec:
+                session.execute(
+                    text(
+                        'INSERT INTO "ProductEmbedding" '
+                        '(id, "userId", "prodId", "variantId", '
+                        '"vectorText", "vectorImg", "embeddingModel", "vectorizedAt") '
+                        'VALUES (:id, :userId, :prodId, :variantId, '
+                        'CAST(:text_vec AS vector), CAST(:img_vec AS vector), :model, NOW())'
+                    ),
+                    {**base_params, "img_vec": _vec(image_vec)},
+                )
+            else:
+                session.execute(
+                    text(
+                        'INSERT INTO "ProductEmbedding" '
+                        '(id, "userId", "prodId", "variantId", '
+                        '"vectorText", "embeddingModel", "vectorizedAt") '
+                        'VALUES (:id, :userId, :prodId, :variantId, '
+                        'CAST(:text_vec AS vector), :model, NOW())'
+                    ),
+                    base_params,
+                )
+            written += 1
+
+        print(f"[✓] Wrote {written} ProductEmbedding row(s) for: {product.title[:50]}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

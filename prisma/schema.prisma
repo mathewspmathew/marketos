@@ -7,14 +7,11 @@ generator client {
 }
 
 generator py_client {
-  provider                  = "prisma-client-py"
-  recursive_type_depth      = 5
+  provider                    = "prisma-client-py"
+  recursive_type_depth        = 5
   enable_experimental_decimal = true
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
@@ -50,11 +47,13 @@ model User {
   email     String   @unique
   createdAt DateTime @default(now())
 
-  shopifyProducts ShopifyProduct[]
-  shopifyVariants ShopifyVariant[]
-  scrapedProducts ScrapedProduct[]
-  scrapedVariants ScrapedVariant[]
-  scrapingConfigs ScrapingConfig[]
+  shopifyProducts   ShopifyProduct[]
+  shopifyVariants   ShopifyVariant[]
+  scrapedProducts   ScrapedProduct[]
+  scrapedVariants   ScrapedVariant[]
+  scrapingConfigs   ScrapingConfig[]
+  productUrls       ProductUrl[]
+  productEmbeddings ProductEmbedding[]
 }
 
 // ─────────────────────────────────────────
@@ -64,24 +63,22 @@ model ShopifyProduct {
   id     String  @id // Shopify GID
   userId String
   user   User    @relation(fields: [userId], references: [id])
-  shop   String // e.g. "mystore.myshopify.com"
+  shop   String
   url    String?
 
   title          String
   description    String  @default("")
   vendor         String?
   productType    String  @default("")
-  tags           Json    @default("[]") // Using Json for native array support
+  tags           Json    @default("[]")
   imageUrl       String?
-  specifications Json? // Specs escape hatch
+  specifications Json?
 
-  // AI & Vectorization
   semanticText   String?
   textEmbedding  Unsupported("vector(768)")?
   imageEmbedding Unsupported("vector(768)")?
   vectorized     Boolean                     @default(false)
 
-  // MarketOS Dynamic Pricing Strategy
   dynamicChangeEnabled Boolean @default(false)
   fieldPrice           Boolean @default(true)
   fieldDescription     Boolean @default(false)
@@ -95,64 +92,9 @@ model ShopifyProduct {
 }
 
 model ShopifyVariant {
-  id        String         @id // Shopify Variant GID or UUID
+  id        String         @id
   productId String
   product   ShopifyProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User           @relation(fields: [userId], references: [id])
-
-  sku     String?
-  barcode String? // UPC/EAN
-  title   String  @default("Default Title")
-  options Json? // e.g. {"Size": "M", "Color": "Red"}
-
-  currentPrice  Decimal  @db.Decimal(10, 2)
-  originalPrice Decimal? @db.Decimal(10, 2)
-  isInStock     Boolean  @default(true)
-  stockQuantity Int?
-
-  // Variant-level AI
-  variantSemanticText String?
-  variantEmbedding    Unsupported("vector(768)")?
-  vectorized          Boolean                     @default(false)
-
-  updatedAt DateTime @updatedAt
-}
-
-// ─────────────────────────────────────────
-// COMPETITOR: Scraped External Data
-// ─────────────────────────────────────────
-model ScrapedProduct {
-  id         String @id @default(uuid())
-  userId     String
-  user       User   @relation(fields: [userId], references: [id])
-  productUrl String @unique @map("url")
-  domain     String
-
-  title          String
-  description    String?
-  vendor         String?
-  productType    String?
-  tags           Json    @default("[]")
-  imageUrl       String?
-  specifications Json?
-
-  // AI & Vectorization
-  semanticText   String?
-  textEmbedding  Unsupported("vector(768)")?
-  imageEmbedding Unsupported("vector(768)")?
-  vectorized     Boolean                     @default(false)
-
-  scrapedAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  variants ScrapedVariant[]
-}
-
-model ScrapedVariant {
-  id        String         @id @default(uuid())
-  productId String
-  product   ScrapedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
   userId    String
   user      User           @relation(fields: [userId], references: [id])
 
@@ -166,15 +108,116 @@ model ScrapedVariant {
   isInStock     Boolean  @default(true)
   stockQuantity Int?
 
-  // Variant-level AI
   variantSemanticText String?
   variantEmbedding    Unsupported("vector(768)")?
   vectorized          Boolean                     @default(false)
 
-  scrapedAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
+// ─────────────────────────────────────────
+// COMPETITOR: Scraped External Data
+// ─────────────────────────────────────────
+model ScrapedProduct {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  domain String
+
+  title          String
+  description    String?
+  vendor         String?
+  productType    String?
+  tags           Json    @default("[]")
+  imageUrl       String?
+  specifications Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variants   ScrapedVariant[]
+  urls       ProductUrl[]
+  embeddings ProductEmbedding[]
+}
+
+model ScrapedVariant {
+  id        String         @id @default(uuid())
+  productId String
+  product   ScrapedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User           @relation(fields: [userId], references: [id])
+
+  sku           String?
+  barcode       String?
+  title         String  @default("Default Title")
+  options       Json?
+  currentPrice  Decimal  @db.Decimal(10, 2)
+  originalPrice Decimal? @db.Decimal(10, 2)
+  isInStock     Boolean  @default(true)
+  stockQuantity Int?
+
+  // Groq-generated semantic description combining product + variant context
+  semanticText String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  embeddings ProductEmbedding[]
+}
+
+// ─────────────────────────────────────────
+// URL TRACKING: one URL per competitor page
+// Decouples product identity from URL so the
+// same product scraped from multiple URLs
+// stays a single ScrapedProduct row.
+// ─────────────────────────────────────────
+enum UrlStatus {
+  ACTIVE
+  DEAD
+  PAUSED
+}
+
+model ProductUrl {
+  id       String         @id @default(uuid())
+  userId   String
+  user     User           @relation(fields: [userId], references: [id])
+  configId String
+  config   ScrapingConfig @relation(fields: [configId], references: [id])
+  prodId   String
+  product  ScrapedProduct @relation(fields: [prodId], references: [id], onDelete: Cascade)
+
+  url           String    @unique
+  status        UrlStatus @default(ACTIVE)
+  failCount     Int       @default(0)
+  lastScrapedAt DateTime?
+  nextScrapAt   DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────
+// EMBEDDINGS: one row per variant
+// variantId is nullable so a product-level
+// image-only embedding can be stored too.
+// ─────────────────────────────────────────
+model ProductEmbedding {
+  id        String  @id @default(uuid())
+  userId    String
+  prodId    String
+  variantId String?
+
+  vectorText     Unsupported("vector(768)")?
+  vectorImg      Unsupported("vector(768)")?
+  embeddingModel String
+  vectorizedAt   DateTime @default(now())
+
+  user    User            @relation(fields: [userId], references: [id])
+  product ScrapedProduct  @relation(fields: [prodId], references: [id], onDelete: Cascade)
+  variant ScrapedVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+}
+
+// ─────────────────────────────────────────
+// SCRAPER CONFIGS
+// ─────────────────────────────────────────
 enum ScrapeStatus {
   IDLE
   QUEUED
@@ -182,21 +225,20 @@ enum ScrapeStatus {
   SCRAPED_FIRST
 }
 
-// ─────────────────────────────────────────
-// SCRAPER CONFIGS
-// ─────────────────────────────────────────
 model ScrapingConfig {
   id                String       @id @default(uuid())
   userId            String
   user              User         @relation(fields: [userId], references: [id])
-  shopId            String? // e.g. "mystore.myshopify.com"
+  shopId            String?
   competitorUrl     String
   includeImages     Boolean      @default(true)
   productLimit      Int?
-  frequencyInterval Int? // In hours
+  frequencyInterval Int?
   nextRunAt         DateTime?
   isActive          Boolean      @default(true)
   status            ScrapeStatus @default(IDLE)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
+
+  productUrls ProductUrl[]
 }
