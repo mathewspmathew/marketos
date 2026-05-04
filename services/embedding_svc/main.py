@@ -120,21 +120,21 @@ def _generate(product_id: str) -> None:
 
             row_id = str(uuid.uuid4())
             base_params = {
-                "id":        row_id,
-                "userId":    product.userId,
-                "prodId":    product_id,
-                "variantId": v.id,
-                "model":     _EMBEDDING_MODEL_TAG,
-                "text_vec":  _vec(text_vec),
+                "id":          row_id,
+                "shopDomain":  product.shopDomain,
+                "prodId":      product_id,
+                "variantId":   v.id,
+                "model":       _EMBEDDING_MODEL_TAG,
+                "text_vec":    _vec(text_vec),
             }
 
             if image_vec:
                 session.execute(
                     text(
                         'INSERT INTO "ProductEmbedding" '
-                        '(id, "userId", "prodId", "variantId", '
+                        '(id, "shopDomain", "prodId", "variantId", '
                         '"vectorText", "vectorImg", "embeddingModel", "vectorizedAt") '
-                        'VALUES (:id, :userId, :prodId, :variantId, '
+                        'VALUES (:id, :shopDomain, :prodId, :variantId, '
                         'CAST(:text_vec AS vector), CAST(:img_vec AS vector), :model, NOW())'
                     ),
                     {**base_params, "img_vec": _vec(image_vec)},
@@ -143,9 +143,9 @@ def _generate(product_id: str) -> None:
                 session.execute(
                     text(
                         'INSERT INTO "ProductEmbedding" '
-                        '(id, "userId", "prodId", "variantId", '
+                        '(id, "shopDomain", "prodId", "variantId", '
                         '"vectorText", "embeddingModel", "vectorizedAt") '
-                        'VALUES (:id, :userId, :prodId, :variantId, '
+                        'VALUES (:id, :shopDomain, :prodId, :variantId, '
                         'CAST(:text_vec AS vector), :model, NOW())'
                     ),
                     base_params,

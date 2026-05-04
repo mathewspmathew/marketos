@@ -7,44 +7,38 @@ import db from "../db.server";
 // ─── Loader ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
-  const shop = session.shop;
+  const shopDomain = session.shop;
 
-  // 1. Ensure Demo User exists (multi-tenancy requirement)
-  const demoUserId = process.env.MARKETOS_DEMO_TENANT_ID || "00000000-0000-0000-0000-000000000001";
-  await db.user.upsert({
-    where: { id: demoUserId },
+  // Ensure ShopifyUser row exists for this shop
+  await db.shopifyUser.upsert({
+    where: { shopDomain },
     update: {},
-    create: {
-      id: demoUserId,
-      email: "demo@marketos.io",
-      username: "Demo User",
-    },
+    create: { shopDomain },
   });
 
-  // 2. First-time sync: if we have no products for this shop, pull from Shopify GraphQL
-  const count = await db.shopifyProduct.count({ where: { shop } });
+  // First-time sync: pull products from Shopify GraphQL if none stored yet
+  const count = await db.shopifyProduct.count({ where: { shopDomain } });
   if (count === 0) {
-    await syncProductsFromShopify(admin, shop, demoUserId);
+    await syncProductsFromShopify(admin, shopDomain);
   }
 
   const products = await db.shopifyProduct.findMany({
-    where: { shop },
-    include: { variants: { take: 1 } }, // Include primary variant for price
+    where: { shopDomain },
+    include: { variants: { take: 1 } },
     orderBy: { updatedAt: "desc" },
   });
 
-  // Flatten products for the UI (keep price at top level)
   const flattened = products.map((p) => ({
     ...p,
     price: p.variants[0]?.currentPrice?.toString() ?? "0.00",
-    compareAtPrice: p.variants[0]?.originalPrice?.toString() ?? null,
+    compareAtPrice: p.variants[0]?.compareAtPrice?.toString() ?? null,
   }));
 
   return { products: flattened };
 };
 
 // ─── GraphQL full sync helper ─────────────────────────────────────────────────
-async function syncProductsFromShopify(admin, shop, userId) {
+async function syncProductsFromShopify(admin, shopDomain) {
   let hasNextPage = true;
   let cursor = null;
 
@@ -59,6 +53,7 @@ async function syncProductsFromShopify(admin, shop, userId) {
               title
               descriptionHtml
               productType
+              handle
               status
               tags
               featuredImage { url }
@@ -71,6 +66,7 @@ async function syncProductsFromShopify(admin, shop, userId) {
                     compareAtPrice
                     sku
                     barcode
+                    image { url }
                     selectedOptions { name value }
                   }
                 }
@@ -80,14 +76,11 @@ async function syncProductsFromShopify(admin, shop, userId) {
         }
       }
     `;
-    const response = await admin.graphql(query, {
-      variables: { cursor },
-    });
+    const response = await admin.graphql(query, { variables: { cursor } });
     const json = await response.json();
     const { edges, pageInfo } = json.data.products;
 
     for (const { node } of edges) {
-      // 1. Upsert Product
       await db.shopifyProduct.upsert({
         where: { id: node.id },
         update: {
@@ -95,48 +88,47 @@ async function syncProductsFromShopify(admin, shop, userId) {
           description: node.descriptionHtml ?? "",
           tags: node.tags ?? [],
           productType: node.productType ?? "",
+          handle: node.handle ?? null,
           imageUrl: node.featuredImage?.url ?? null,
           status: node.status ?? "ACTIVE",
-          vectorized: false,
         },
         create: {
           id: node.id,
-          userId,
-          shop,
+          shopDomain,
           title: node.title,
           description: node.descriptionHtml ?? "",
           tags: node.tags ?? [],
           productType: node.productType ?? "",
+          handle: node.handle ?? null,
           imageUrl: node.featuredImage?.url ?? null,
           status: node.status ?? "ACTIVE",
-          vectorized: false,
         },
       });
 
-      // 2. Sync Variants
       for (const { node: vNode } of node.variants.edges) {
         const options = {};
-        vNode.selectedOptions.forEach(opt => { options[opt.name] = opt.value; });
+        vNode.selectedOptions.forEach((opt) => { options[opt.name] = opt.value; });
 
         await db.shopifyVariant.upsert({
           where: { id: vNode.id },
           update: {
             title: vNode.title,
             currentPrice: vNode.price,
-            originalPrice: vNode.compareAtPrice,
+            compareAtPrice: vNode.compareAtPrice ?? null,
             sku: vNode.sku,
             barcode: vNode.barcode,
+            imageUrl: vNode.image?.url ?? null,
             options,
           },
           create: {
             id: vNode.id,
             productId: node.id,
-            userId,
             title: vNode.title,
             currentPrice: vNode.price,
-            originalPrice: vNode.compareAtPrice,
+            compareAtPrice: vNode.compareAtPrice ?? null,
             sku: vNode.sku,
             barcode: vNode.barcode,
+            imageUrl: vNode.image?.url ?? null,
             options,
           },
         });
@@ -148,7 +140,7 @@ async function syncProductsFromShopify(admin, shop, userId) {
   }
 }
 
-// ─── Action (persist toggle + checkbox settings) ──────────────────────────────
+// ─── Action ───────────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
   await authenticate.admin(request);
   const formData = await request.formData();
@@ -159,15 +151,15 @@ export const action = async ({ request }) => {
     const enabled = formData.get("enabled") === "true";
     await db.shopifyProduct.update({
       where: { id: productId },
-      data: { dynamicChangeEnabled: enabled },
+      data: { dynamicPricingEnabled: enabled },
     });
   } else if (intent === "updateFields") {
     await db.shopifyProduct.update({
       where: { id: productId },
       data: {
-        fieldPrice: formData.get("fieldPrice") === "true",
-        fieldDescription: formData.get("fieldDescription") === "true",
-        fieldTitle: formData.get("fieldTitle") === "true",
+        syncPrice: formData.get("syncPrice") === "true",
+        syncDescription: formData.get("syncDescription") === "true",
+        syncTitle: formData.get("syncTitle") === "true",
       },
     });
   }
@@ -180,29 +172,24 @@ export default function HomePage() {
   const { products } = useLoaderData();
   const fetcher = useFetcher();
 
-  // Local filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState("all");
   const [selectedCategory, setSelectedCategory] = useState("all");
-
-  // Which product row is expanded (accordion — one at a time)
   const [expandedId, setExpandedId] = useState(null);
 
-  // Optimistic local copies of DB state (keyed by product id)
   const [localState, setLocalState] = useState(() => {
     const map = {};
     for (const p of products) {
       map[p.id] = {
-        dynamicChangeEnabled: p.dynamicChangeEnabled,
-        fieldPrice: p.fieldPrice,
-        fieldDescription: p.fieldDescription,
-        fieldTitle: p.fieldTitle,
+        dynamicPricingEnabled: p.dynamicPricingEnabled,
+        syncPrice: p.syncPrice,
+        syncDescription: p.syncDescription,
+        syncTitle: p.syncTitle,
       };
     }
     return map;
   });
 
-  // ── Derived filter options ──────────────────────────────────────────────────
   const allTags = useMemo(() => {
     const tagSet = new Set();
     for (const p of products) {
@@ -216,37 +203,31 @@ export default function HomePage() {
     return [...catSet].sort();
   }, [products]);
 
-  // ── Filtered product list ───────────────────────────────────────────────────
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
-      const matchesSearch = p.title
-        .toLowerCase()
-        .includes(searchQuery.toLowerCase());
+      const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase());
       const productTags = (() => {
         try { return JSON.parse(p.tags); } catch { return []; }
       })();
-      const matchesTag =
-        selectedTag === "all" || productTags.includes(selectedTag);
-      const matchesCategory =
-        selectedCategory === "all" || p.productType === selectedCategory;
+      const matchesTag = selectedTag === "all" || productTags.includes(selectedTag);
+      const matchesCategory = selectedCategory === "all" || p.productType === selectedCategory;
       return matchesSearch && matchesTag && matchesCategory;
     });
   }, [products, searchQuery, selectedTag, selectedCategory]);
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
   const getLocal = (id) =>
     localState[id] ?? {
-      dynamicChangeEnabled: false,
-      fieldPrice: true,
-      fieldDescription: false,
-      fieldTitle: false,
+      dynamicPricingEnabled: false,
+      syncPrice: true,
+      syncDescription: false,
+      syncTitle: false,
     };
 
   const handleToggle = (productId, currentValue) => {
     const newValue = !currentValue;
     setLocalState((prev) => ({
       ...prev,
-      [productId]: { ...prev[productId], dynamicChangeEnabled: newValue },
+      [productId]: { ...prev[productId], dynamicPricingEnabled: newValue },
     }));
     fetcher.submit(
       { intent: "toggleDynamic", productId, enabled: String(newValue) },
@@ -262,24 +243,20 @@ export default function HomePage() {
       {
         intent: "updateFields",
         productId,
-        fieldPrice: String(updated.fieldPrice),
-        fieldDescription: String(updated.fieldDescription),
-        fieldTitle: String(updated.fieldTitle),
+        syncPrice: String(updated.syncPrice),
+        syncDescription: String(updated.syncDescription),
+        syncTitle: String(updated.syncTitle),
       },
       { method: "POST" },
     );
   };
 
-  const toggleExpand = (id) =>
-    setExpandedId((prev) => (prev === id ? null : id));
+  const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
-  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <s-page heading="Dynamic Pricing — Home">
-      {/* ── Filter bar ── */}
       <s-section>
         <s-stack direction="inline" gap="base" wrap>
-          {/* onInput fires on every keystroke; onChange only fires on blur */}
           <s-text-field
             label="Search products"
             placeholder="Search by name…"
@@ -288,7 +265,6 @@ export default function HomePage() {
             clearButton
             onClearButtonClick={() => setSearchQuery("")}
           />
-          {/* s-select requires s-option children, not native <option> */}
           <s-select
             label="Tag"
             value={selectedTag}
@@ -296,9 +272,7 @@ export default function HomePage() {
           >
             <s-option value="all">All Tags</s-option>
             {allTags.map((tag) => (
-              <s-option key={tag} value={tag}>
-                {tag}
-              </s-option>
+              <s-option key={tag} value={tag}>{tag}</s-option>
             ))}
           </s-select>
           <s-select
@@ -308,15 +282,12 @@ export default function HomePage() {
           >
             <s-option value="all">All Categories</s-option>
             {allCategories.map((cat) => (
-              <s-option key={cat} value={cat}>
-                {cat}
-              </s-option>
+              <s-option key={cat} value={cat}>{cat}</s-option>
             ))}
           </s-select>
         </s-stack>
       </s-section>
 
-      {/* ── Product list ── */}
       <s-section>
         {filteredProducts.length === 0 ? (
           <s-paragraph>No products match your filters.</s-paragraph>
@@ -324,15 +295,14 @@ export default function HomePage() {
           <s-resource-list>
             {filteredProducts.map((product) => {
               const local = getLocal(product.id);
-              const isOn = local.dynamicChangeEnabled;
+              const isOn = local.dynamicPricingEnabled;
               const isExpanded = expandedId === product.id;
               const productTags = (() => {
-                try { return JSON.parse(product.tags); } catch (_e) { return []; }
+                try { return JSON.parse(product.tags); } catch { return []; }
               })();
 
               return (
                 <s-resource-item key={product.id} id={product.id}>
-                  {/* ── Product thumbnail ── */}
                   {product.imageUrl && (
                     <img
                       slot="media"
@@ -344,9 +314,7 @@ export default function HomePage() {
                     />
                   )}
 
-                  {/* ── Main content ── */}
                   <s-stack direction="block" gap="tight">
-                    {/* Row 1: title + price */}
                     <s-stack direction="inline" gap="base" align="center">
                       <s-text emphasis="bold">{product.title}</s-text>
                       <s-badge>{product.productType || "Product"}</s-badge>
@@ -358,20 +326,16 @@ export default function HomePage() {
                       )}
                     </s-stack>
 
-                    {/* Row 2: tags */}
                     {productTags.length > 0 && (
                       <s-stack direction="inline" gap="tight">
                         {productTags.slice(0, 5).map((tag) => (
-                          <s-badge key={tag} tone="info">
-                            {tag}
-                          </s-badge>
+                          <s-badge key={tag} tone="info">{tag}</s-badge>
                         ))}
                       </s-stack>
                     )}
 
-                    {/* Row 3: Dynamic Change toggle + expand arrow */}
                     <s-stack direction="inline" gap="base" align="center">
-                      <s-text>Dynamic Change</s-text>
+                      <s-text>Dynamic Pricing</s-text>
                       <s-toggle
                         id={`toggle-${product.id}`}
                         checked={isOn || undefined}
@@ -388,7 +352,6 @@ export default function HomePage() {
                       </s-button>
                     </s-stack>
 
-                    {/* ── Expandable detail panel ── */}
                     {isExpanded && (
                       <s-box
                         padding="base"
@@ -398,44 +361,40 @@ export default function HomePage() {
                       >
                         <s-stack direction="block" gap="tight">
                           <s-text emphasis="bold">
-                            Which fields should update dynamically?
+                            Which fields should sync dynamically?
                           </s-text>
                           <s-stack direction="inline" gap="loose">
                             <s-checkbox
                               id={`price-${product.id}`}
                               label="Price"
-                              checked={local.fieldPrice || undefined}
+                              checked={local.syncPrice || undefined}
                               disabled={!isOn || undefined}
                               onChange={() =>
-                                handleFieldChange(product.id, "fieldPrice", local.fieldPrice)
+                                handleFieldChange(product.id, "syncPrice", local.syncPrice)
                               }
                             />
                             <s-checkbox
                               id={`description-${product.id}`}
                               label="Description"
-                              checked={local.fieldDescription || undefined}
+                              checked={local.syncDescription || undefined}
                               disabled={!isOn || undefined}
                               onChange={() =>
-                                handleFieldChange(
-                                  product.id,
-                                  "fieldDescription",
-                                  local.fieldDescription,
-                                )
+                                handleFieldChange(product.id, "syncDescription", local.syncDescription)
                               }
                             />
                             <s-checkbox
                               id={`title-${product.id}`}
                               label="Title"
-                              checked={local.fieldTitle || undefined}
+                              checked={local.syncTitle || undefined}
                               disabled={!isOn || undefined}
                               onChange={() =>
-                                handleFieldChange(product.id, "fieldTitle", local.fieldTitle)
+                                handleFieldChange(product.id, "syncTitle", local.syncTitle)
                               }
                             />
                           </s-stack>
                           {!isOn && (
                             <s-text tone="subdued">
-                              Enable Dynamic Change to configure fields.
+                              Enable Dynamic Pricing to configure sync fields.
                             </s-text>
                           )}
                         </s-stack>

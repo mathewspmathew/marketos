@@ -16,9 +16,8 @@ export const loader = async ({ request }) => {
     console.log(`[Controller Loader] Fetching configs for shop: ${shop}, user: ${demoUserId}`);
     
     const configs = await db.scrapingConfig.findMany({
-      where: { 
-        userId: demoUserId,
-        shopId: shop
+      where: {
+        shopDomain: shop,
       },
       orderBy: { createdAt: "desc" },
     });
@@ -59,8 +58,7 @@ export const action = async ({ request }) => {
 
     await db.scrapingConfig.create({
       data: {
-        userId: demoUserId,
-        shopId: shop,
+        shopDomain: shop,
         competitorUrl,
         includeImages,
         productLimit: isNaN(productLimit) ? null : productLimit,

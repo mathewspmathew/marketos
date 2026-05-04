@@ -72,6 +72,23 @@ services:
       - ./services:/app/services
     command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "scheduler_queue", "--concurrency=1", "--loglevel=info"]
 
+  semantic-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: semantic_worker
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services:/app/services
+    # concurrency=1 + rate_limit='3/m' keeps Groq TPM usage separate from extraction
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "semantic_queue", "-n", "semantic-worker@%h", "--concurrency=1", "--loglevel=info"]
+
   embedding-worker:
     build:
       context: .

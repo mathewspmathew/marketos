@@ -2,21 +2,19 @@
 services/scraper_svc/main.py
 
 Task 1 — scrape_listing  (scraping_queue)
-  Discover product URLs from a competitor listing page (dynamic scroll for
-  bot-protected sites, map_url + crawl_url fallback for open sites).
-  Scrape each product page concurrently → upload .md to GCS.
-  Persist discovered URLs to Redis for observability.
+  Discover product URLs → concurrent page scrapes → GCS upload.
+  Persist discovered URL list to Redis (checkpoint).
   Queue one extract_product task per product.
 
 Task 2 — extract_product  (extraction_queue)
-  Download .md from GCS → Groq LLM extraction → ProductSchema
-  Upload product image to GCS → upsert ScrapedProduct + ScrapedVariant via ProductUrl
-  Queue generate_variant_semantics task.
+  Download .md from GCS → Groq extraction → upsert via ProductUrl.
+  On permanent failure: log to ScrapingError table (DLQ).
+  Queue generate_variant_semantics.
 
-Task 3 — generate_variant_semantics  (extraction_queue)
-  Fetch all variants for a product → ONE Groq call → rich semantic descriptions.
-  Bulk-update ScrapedVariant.semanticText.
-  Queue generate_embeddings task.
+Task 3 — generate_variant_semantics  (semantic_queue)
+  ONE Groq call for all variants → bulk-update ScrapedVariant.semanticText.
+  On permanent failure: log to ScrapingError table.
+  Queue generate_embeddings.
 """
 
 import json
@@ -45,7 +43,10 @@ from services.common.gcs_utils import (
     upload_image_to_gcs,
     upload_markdown_to_gcs,
 )
-from services.common.models import ProductUrl, ScrapedProduct, ScrapedVariant, ScrapingConfig
+from services.common.models import (
+    ProductUrl, ScrapedProduct, ScrapedVariant,
+    ScrapingConfig, ScrapingError,
+)
 from services.common.schemas import ProductSchema
 
 load_dotenv()
@@ -54,13 +55,13 @@ _groq_client      = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
 _firecrawl_client = V1FirecrawlApp(api_key=os.getenv("FIRECRAWL_API_KEY", "not-set"))
 _redis = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
 
-_PENDING_KEY_TTL    = 7200   # 2 h — Redis TTL for the in-flight extraction counter
-_URLS_KEY_TTL       = 7200   # 2 h — Redis TTL for the discovered URL list
-_MAX_SCRAPE_WORKERS = 3      # concurrent Firecrawl product-page requests
+_PENDING_KEY_TTL    = 7200
+_URLS_KEY_TTL       = 7200
+_MAX_SCRAPE_WORKERS = 3
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Groq prompt — product extraction
+# Groq prompts
 # ─────────────────────────────────────────────────────────────────────────────
 
 GROQ_EXTRACT_PROMPT = """You are a professional e-commerce data extractor.
@@ -88,10 +89,6 @@ RULES:
 - If multiple options exist, create one variant per option.
 - Return ONLY raw JSON. No markdown. No commentary."""
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Groq prompt — variant semantic text generation
-# ─────────────────────────────────────────────────────────────────────────────
 
 GROQ_SEMANTIC_PROMPT = """You are an expert e-commerce copywriter specialising in semantic search optimisation.
 
@@ -212,7 +209,7 @@ def _generate_semantic_texts(product: ScrapedProduct, variants: list) -> dict[st
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Config status helper
+# Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _update_config_status(config_id: str, status: str) -> None:
@@ -224,17 +221,58 @@ def _update_config_status(config_id: str, status: str) -> None:
         )
 
 
+def _log_error(
+    shop_domain: str,
+    config_id:   str,
+    product_url: str,
+    error_type:  str,
+    task_name:   str,
+    gcs_ref:     str = "",
+    detail:      str = "",
+) -> None:
+    """Write a permanent error record to ScrapingError (DLQ)."""
+    try:
+        with get_db() as session:
+            session.execute(
+                pg_insert(ScrapingError).values(
+                    id=str(uuid.uuid4()),
+                    shopDomain=shop_domain,
+                    configId=config_id,
+                    productUrl=product_url,
+                    gcsRef=gcs_ref or None,
+                    errorType=error_type,
+                    errorDetail=detail[:1000] if detail else None,
+                    taskName=task_name,
+                )
+            )
+        print(f"    [DLQ] Logged {error_type} for {product_url[:60]}", flush=True)
+    except Exception as log_err:
+        print(f"    [!] Failed to write DLQ entry: {log_err}", flush=True)
+
+
+def _mark_task_done(config_id: str) -> None:
+    try:
+        counter_key = f"scrape_pending:{config_id}"
+        remaining   = _redis.decr(counter_key)
+        print(f"    [>] Pending counter for {config_id}: {remaining}", flush=True)
+        if remaining <= 0:
+            _redis.delete(counter_key)
+            _update_config_status(config_id, "SCRAPED_FIRST")
+            print(f"    [✓] Config {config_id} → SCRAPED_FIRST", flush=True)
+    except Exception as e:
+        print(f"    [!] Counter update failed for {config_id}: {e}", flush=True)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# DB upsert — checks ProductUrl first so the same URL updates the existing
-# ScrapedProduct rather than inserting a duplicate.
+# DB upsert — resolve product via ProductUrl first (ON CONFLICT for safety)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def upsert_to_db(
-    config_id:  str,
-    user_id:    str,
-    url:        str,
-    product:    ProductSchema,
-    image_url:  str,
+    config_id:   str,
+    shop_domain: str,
+    url:         str,
+    product:     ProductSchema,
+    image_url:   str,
 ) -> str | None:
     domain = urlparse(url).netloc or "unknown"
     now    = datetime.now(timezone.utc)
@@ -260,17 +298,30 @@ def upsert_to_db(
                         updatedAt=now,
                     )
                 )
+                # Fix #1: ON CONFLICT so concurrent runs never crash on the unique constraint
                 session.execute(
-                    sa_update(ProductUrl)
-                    .where(ProductUrl.id == existing_url_row.id)
-                    .values(lastScrapedAt=now, status="ACTIVE", failCount=0)
+                    pg_insert(ProductUrl)
+                    .values(
+                        id=existing_url_row.id,
+                        shopDomain=shop_domain,
+                        configId=config_id,
+                        prodId=product_id,
+                        url=url,
+                        status="ACTIVE",
+                        failCount=0,
+                        lastScrapedAt=now,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["url"],
+                        set_={"lastScrapedAt": now, "status": "ACTIVE", "failCount": 0},
+                    )
                 )
             else:
                 product_id = str(uuid.uuid4())
                 session.execute(
                     pg_insert(ScrapedProduct).values(
                         id=product_id,
-                        userId=user_id,
+                        shopDomain=shop_domain,
                         domain=domain,
                         title=product.title,
                         description=product.description or "",
@@ -282,10 +333,13 @@ def upsert_to_db(
                         updatedAt=now,
                     )
                 )
+                # Fix #1: ON CONFLICT covers the race where two scrape runs discover the
+                # same URL simultaneously and both reach this insert concurrently.
                 session.execute(
-                    pg_insert(ProductUrl).values(
+                    pg_insert(ProductUrl)
+                    .values(
                         id=str(uuid.uuid4()),
-                        userId=user_id,
+                        shopDomain=shop_domain,
                         configId=config_id,
                         prodId=product_id,
                         url=url,
@@ -293,9 +347,13 @@ def upsert_to_db(
                         failCount=0,
                         lastScrapedAt=now,
                     )
+                    .on_conflict_do_update(
+                        index_elements=["url"],
+                        set_={"lastScrapedAt": now, "status": "ACTIVE", "failCount": 0},
+                    )
                 )
 
-            # ── 2. Replace variants (delete → bulk insert) ────────────────────
+            # ── 2. Replace variants ───────────────────────────────────────────
             session.query(ScrapedVariant).filter(ScrapedVariant.productId == product_id).delete()
 
             variants = product.variants or []
@@ -311,7 +369,6 @@ def upsert_to_db(
                 [
                     {
                         "id":            str(uuid.uuid4()),
-                        "userId":        user_id,
                         "productId":     product_id,
                         "sku":           str(v.sku or ""),
                         "barcode":       v.barcode,
@@ -376,22 +433,15 @@ def is_product_url(url: str, listing_url: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _scrape_product(product_url: str, proxy: str | None, domain: str) -> tuple[str, str] | None:
-    """Scrape one product page and upload markdown to GCS. Returns (url, gcs_ref) or None."""
-    # Stagger concurrent requests so all workers don't hit the target simultaneously
     time.sleep(random.uniform(0.3, 1.5))
     try:
-        result   = _firecrawl_client.scrape_url(
-            product_url,
-            formats=["markdown"],
-            proxy=proxy,
-            timeout=45000,
-        )
+        result   = _firecrawl_client.scrape_url(product_url, formats=["markdown"], proxy=proxy, timeout=45000)
         markdown = (
             result.get('markdown') if isinstance(result, dict)
             else getattr(result, 'markdown', None)
         ) or ""
     except Exception as e:
-        print(f"    [!] Failed to scrape {product_url}: {e}", flush=True)
+        print(f"    [!] Firecrawl failed for {product_url}: {e}", flush=True)
         return None
 
     if not markdown or len(markdown.strip()) < 400:
@@ -412,21 +462,19 @@ def _scrape_product(product_url: str, proxy: str | None, domain: str) -> tuple[s
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.task(name='scraper.scrape_listing', time_limit=600, soft_time_limit=540)
-def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products: int = 5):
-    """Discover product URLs → scrape pages concurrently → queue extraction tasks."""
+def scrape_listing(config_id: str, shop_domain: str, listing_url: str, num_products: int = 5):
+    """Discover product URLs → concurrent scrape → queue extraction tasks."""
     _update_config_status(config_id, "RUNNING")
 
-    domain      = urlparse(listing_url).netloc
+    domain       = urlparse(listing_url).netloc
     _use_stealth = any(d in domain for d in ('flipkart.com', 'amazon.', 'myntra.com'))
     _proxy       = 'stealth' if _use_stealth else None
 
-    # ── URL Discovery ──────────────────────────────────────────────────────────
-    print(f"[>] Discovering product URLs: {listing_url} (proxy={_proxy})", flush=True)
+    print(f"[>] Discovering URLs: {listing_url} (proxy={_proxy})", flush=True)
     raw_links  = []
     listing_md = ""
 
     if not _use_stealth:
-        # map_url: fast sitemap-style URL dump, good for open sites
         try:
             map_result = _firecrawl_client.map_url(listing_url, params={"limit": num_products * 20})
             raw_links  = (
@@ -435,12 +483,9 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
             ) or []
             print(f"[>] map_url returned {len(raw_links)} links", flush=True)
         except Exception as map_err:
-            print(f"[!] map_url failed ({map_err}), falling back to scrape...", flush=True)
+            print(f"[!] map_url failed ({map_err})", flush=True)
 
     if not raw_links:
-        # For stealth sites (infinite-scroll grids) or map_url failure:
-        # scroll the listing page to load lazily-rendered product cards.
-        # Scroll count scales with the requested product count (~3 products per 1500px).
         n_scrolls = max(2, math.ceil(num_products / 3))
         _actions  = [{"type": "wait", "milliseconds": 3000}]
         for _ in range(n_scrolls):
@@ -448,7 +493,6 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
                 {"type": "scroll", "direction": "down", "amount": 1500},
                 {"type": "wait",   "milliseconds": 2000},
             ]
-
         try:
             listing_result = _firecrawl_client.scrape_url(
                 listing_url,
@@ -471,7 +515,7 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
             _update_config_status(config_id, "IDLE")
             return
 
-    # ── Mine URLs from rendered markdown (per-domain patterns) ─────────────────
+    # Per-domain URL mining from rendered markdown
     scheme = urlparse(listing_url).scheme
     base   = f"{scheme}://{urlparse(listing_url).netloc}"
     abs_md_links = _re.findall(r'https?://[^\s\)\]"\'<>]+', listing_md)
@@ -493,7 +537,6 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
 
     raw_links = list(dict.fromkeys(raw_links + abs_md_links + rel_md_links))
 
-    # ── Filter to product URLs ─────────────────────────────────────────────────
     seen: set[str] = set()
     product_urls   = []
     for u in raw_links:
@@ -505,9 +548,9 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
 
     print(f"[>] {len(raw_links)} links → {len(product_urls)} product URLs after filter", flush=True)
 
-    # ── crawl_url fallback for non-stealth when map_url yield was low ──────────
+    # crawl_url fallback for non-stealth when map_url + mining still not enough
     if not _use_stealth and len(product_urls) < num_products:
-        print(f"[>] Only {len(product_urls)}/{num_products} found — trying crawl_url fallback...", flush=True)
+        print(f"[>] Only {len(product_urls)}/{num_products} — trying crawl_url fallback...", flush=True)
         try:
             crawl_result = _firecrawl_client.crawl_url(
                 listing_url,
@@ -527,7 +570,6 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
                 ) or []
                 crawl_links.extend(page_links)
             raw_links = list(dict.fromkeys(raw_links + crawl_links))
-            # Re-filter with the extra links
             for u in raw_links:
                 if isinstance(u, str) and u not in seen and is_product_url(u, listing_url):
                     seen.add(u)
@@ -538,7 +580,6 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
         except Exception as crawl_err:
             print(f"[!] crawl_url fallback failed: {crawl_err}", flush=True)
 
-    # Debug aid when nothing passes the filter
     if raw_links and not product_urls:
         id_links = [u for u in raw_links if _PRODUCT_ID_RE.search(urlparse(u).path)]
         print(f"[DEBUG] ID-pattern links: {id_links[:5]}", flush=True)
@@ -548,43 +589,32 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
         _update_config_status(config_id, "IDLE")
         return
 
-    # ── Persist discovered URLs to Redis (checkpoint before scraping) ──────────
-    _redis.set(
-        f"scrape_urls:{config_id}",
-        json.dumps(product_urls),
-        ex=_URLS_KEY_TTL,
-    )
-    print(f"[>] Saved {len(product_urls)} discovered URLs to Redis", flush=True)
+    # Checkpoint: save discovered URLs to Redis before scraping starts
+    _redis.set(f"scrape_urls:{config_id}", json.dumps(product_urls), ex=_URLS_KEY_TTL)
 
-    # ── Scrape product pages concurrently ──────────────────────────────────────
-    print(f"[>] Scraping {len(product_urls)} product pages (workers={_MAX_SCRAPE_WORKERS})...", flush=True)
+    print(f"[>] Scraping {len(product_urls)} pages concurrently (workers={_MAX_SCRAPE_WORKERS})...", flush=True)
     uploaded_pages: list[tuple[str, str]] = []
 
     with ThreadPoolExecutor(max_workers=_MAX_SCRAPE_WORKERS) as pool:
-        futures = {
-            pool.submit(_scrape_product, url, _proxy, domain): url
-            for url in product_urls
-        }
+        futures = {pool.submit(_scrape_product, url, _proxy, domain): url for url in product_urls}
         for future in as_completed(futures):
             result = future.result()
             if result:
                 uploaded_pages.append(result)
 
     n = len(uploaded_pages)
-    print(f"[✓] scrape_listing done — {n} pages uploaded, queuing extraction.", flush=True)
+    print(f"[✓] {n} pages uploaded — queuing extraction.", flush=True)
 
     if not uploaded_pages:
         _update_config_status(config_id, "IDLE")
         return
 
-    # Set Redis counter BEFORE queuing tasks to avoid a race where a fast task
-    # completes and decrements before the counter is even initialised.
     _redis.set(f"scrape_pending:{config_id}", n, ex=_PENDING_KEY_TTL)
 
     for product_url, gcs_ref in uploaded_pages:
         app.send_task(
             'scraper.extract_product',
-            args=[config_id, user_id, product_url, gcs_ref],
+            args=[config_id, shop_domain, product_url, gcs_ref],
             queue='extraction_queue',
         )
         print(f"    [✓] Queued extraction: {product_url[:70]}", flush=True)
@@ -594,32 +624,20 @@ def scrape_listing(config_id: str, user_id: str, listing_url: str, num_products:
 # Task 2: extract_product
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _mark_task_done(config_id: str) -> None:
-    try:
-        counter_key = f"scrape_pending:{config_id}"
-        remaining   = _redis.decr(counter_key)
-        print(f"    [>] Pending counter for {config_id}: {remaining}", flush=True)
-        if remaining <= 0:
-            _redis.delete(counter_key)
-            _update_config_status(config_id, "SCRAPED_FIRST")
-            print(f"    [✓] Config {config_id} → SCRAPED_FIRST", flush=True)
-    except Exception as e:
-        print(f"    [!] Counter update failed for {config_id}: {e}", flush=True)
-
-
 @app.task(name='scraper.extract_product', bind=True, max_retries=5, default_retry_delay=30, rate_limit='3/m')
-def extract_product(self, config_id: str, user_id: str, product_url: str, gcs_ref: str):
-    """Download .md → Groq extract → DB upsert via ProductUrl → queue semantic task."""
+def extract_product(self, config_id: str, shop_domain: str, product_url: str, gcs_ref: str):
+    """Download .md → Groq extract → DB upsert → queue semantic generation."""
     print(f"[>] Extracting: {product_url}")
 
-    def give_up(reason: str) -> None:
-        print(f"    [!] Giving up on {product_url[:60]}: {reason}")
+    def give_up(error_type: str, detail: str) -> None:
+        print(f"    [!] Giving up on {product_url[:60]}: {detail}")
+        _log_error(shop_domain, config_id, product_url, error_type, 'scraper.extract_product', gcs_ref, detail)
         _mark_task_done(config_id)
 
     markdown = download_markdown_from_gcs(gcs_ref)
     if not markdown:
         if self.request.retries >= self.max_retries:
-            give_up("empty markdown after max retries")
+            give_up("GCS_EMPTY", "empty markdown after max retries")
             return
         raise self.retry(exc=ValueError(f"Empty markdown from GCS: {gcs_ref}"))
 
@@ -628,13 +646,13 @@ def extract_product(self, config_id: str, user_id: str, product_url: str, gcs_re
     except GroqRateLimitError:
         print("    [!] Groq rate limited — retrying in 65s")
         if self.request.retries >= self.max_retries:
-            give_up("Groq rate limited after max retries")
+            give_up("GROQ_FAILED", "Groq rate limited after max retries")
             return
         raise self.retry(countdown=65)
 
     if not product or not product.title:
         if self.request.retries >= self.max_retries:
-            give_up("Groq returned no usable product")
+            give_up("GROQ_FAILED", "Groq returned no usable product after max retries")
             return
         raise self.retry(exc=ValueError(f"Groq returned nothing for {product_url}"))
 
@@ -644,25 +662,22 @@ def extract_product(self, config_id: str, user_id: str, product_url: str, gcs_re
     else:
         print(f"    [-] No image for: {product.title[:40]}")
 
-    prod_id = upsert_to_db(config_id, user_id, product_url, product, image_url)
+    prod_id = upsert_to_db(config_id, shop_domain, product_url, product, image_url)
 
     if prod_id:
-        app.send_task(
-            'scraper.generate_variant_semantics',
-            args=[prod_id],
-            queue='extraction_queue',
-        )
+        # Fix #2: goes to semantic_queue, not extraction_queue — keeps extraction throughput clean
+        app.send_task('scraper.generate_variant_semantics', args=[prod_id, config_id, shop_domain, product_url], queue='semantic_queue')
         print(f"    [>] Queued semantic generation: {prod_id}")
 
     _mark_task_done(config_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Task 3: generate_variant_semantics
+# Task 3: generate_variant_semantics  (Fix #2: own queue — semantic_queue)
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.task(name='scraper.generate_variant_semantics', bind=True, max_retries=3, default_retry_delay=30, rate_limit='3/m')
-def generate_variant_semantics(self, product_id: str):
+def generate_variant_semantics(self, product_id: str, config_id: str, shop_domain: str, product_url: str):
     """One Groq call generates semanticText for all variants, then queues embeddings."""
     print(f"[>] Generating semantic text for product {product_id}")
 
@@ -672,7 +687,7 @@ def generate_variant_semantics(self, product_id: str):
             variants = session.query(ScrapedVariant).filter(ScrapedVariant.productId == product_id).all()
 
             if not product:
-                print(f"[!] Product {product_id} not found — skipping semantic generation")
+                print(f"[!] Product {product_id} not found — skipping")
                 return
             if not variants:
                 print(f"[!] No variants for product {product_id} — skipping")
@@ -681,13 +696,14 @@ def generate_variant_semantics(self, product_id: str):
             try:
                 semantic_map = _generate_semantic_texts(product, variants)
             except GroqRateLimitError:
-                print("    [!] Groq rate limited — retrying in 65s")
                 raise self.retry(countdown=65)
             except Exception as e:
-                print(f"    [!] Groq semantic error: {e}")
+                if self.request.retries >= self.max_retries:
+                    _log_error(shop_domain, config_id, product_url, "SEMANTIC_FAILED", 'scraper.generate_variant_semantics', detail=str(e))
+                    return
                 raise self.retry(exc=e)
 
-            now = datetime.now(timezone.utc)
+            now     = datetime.now(timezone.utc)
             updated = 0
             for v in variants:
                 text = semantic_map.get(v.id, "")
@@ -701,11 +717,8 @@ def generate_variant_semantics(self, product_id: str):
 
             print(f"    [✓] semanticText written for {updated}/{len(variants)} variant(s) of '{product.title[:40]}'")
 
-    except (GroqRateLimitError, self.MaxRetriesExceededError):
-        raise
     except Exception as exc:
         raise self.retry(exc=exc)
 
-    # Queue embedding after semantic text is committed
     app.send_task('embedder.generate_embeddings', args=[product_id], queue='embedding_queue')
     print(f"    [>] Queued embedding: {product_id}")

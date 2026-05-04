@@ -28,10 +28,10 @@ app.conf.update(
     task_acks_late=True,            # Re-queue task if worker crashes mid-execution
     result_expires=3600,            # Auto-expire task results in Redis after 1 hour
     task_routes={
-        'scraper.scrape_listing':              {'queue': 'scraping_queue'},
-        'scraper.extract_product':             {'queue': 'extraction_queue'},
-        'scraper.generate_variant_semantics':  {'queue': 'extraction_queue'},
-        'embedder.generate_embeddings':        {'queue': 'embedding_queue'},
+        'scraper.scrape_listing':             {'queue': 'scraping_queue'},
+        'scraper.extract_product':            {'queue': 'extraction_queue'},
+        'scraper.generate_variant_semantics': {'queue': 'semantic_queue'},
+        'embedder.generate_embeddings':       {'queue': 'embedding_queue'},
         'services.scraper_svc.celery_beat.check_idle_configs': {'queue': 'scheduler_queue'},
     },
     beat_schedule={

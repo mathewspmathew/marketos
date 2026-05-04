@@ -66,7 +66,7 @@ def check_idle_configs():
             try:
                 app.send_task(
                     'scraper.scrape_listing',
-                    args=[config.id, config.userId, config.competitorUrl, config.productLimit or 5],
+                    args=[config.id, config.shopDomain, config.competitorUrl, config.productLimit or 5],
                     queue='scraping_queue',
                 )
             except Exception as e:
