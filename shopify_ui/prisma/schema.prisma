@@ -90,10 +90,11 @@ model ShopifyVariant {
   options      Json?
   imageUrl     String?
 
-  currentPrice  Decimal  @db.Decimal(10, 2)
+  currentPrice   Decimal  @db.Decimal(10, 2)
   compareAtPrice Decimal? @db.Decimal(10, 2)
-  isInStock     Boolean  @default(true)
-  stockQuantity Int?
+  isInStock      Boolean  @default(true)
+  stockQuantity  Int?
+  semanticText   String?
 
   updatedAt DateTime @updatedAt
 
@@ -105,7 +106,6 @@ model ShopifyEmbedding {
   variantId String         @unique
   variant   ShopifyVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
-  semanticText   String?
   textEmbedding  Unsupported("vector(768)")?
   imageEmbedding Unsupported("vector(768)")?
 

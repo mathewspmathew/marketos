@@ -11,8 +11,10 @@ app = Celery(
     broker=redis_url, # where tasks are send
     backend=redis_url, # where results are stored
     include=[
-        'services.scraper_svc.main',
-        'services.scraper_svc.celery_beat',  # registers check_idle_configs periodic task
+        'services.scraper_svc.scraper',
+        'services.scraper_svc.extractor',
+        'services.scraper_svc.semantics',
+        'services.scraper_svc.celery_beat',
         'services.embedding_svc.main',
     ]
 )
@@ -28,10 +30,12 @@ app.conf.update(
     task_acks_late=True,            # Re-queue task if worker crashes mid-execution
     result_expires=3600,            # Auto-expire task results in Redis after 1 hour
     task_routes={
-        'scraper.scrape_listing':             {'queue': 'scraping_queue'},
-        'scraper.extract_product':            {'queue': 'extraction_queue'},
-        'scraper.generate_variant_semantics': {'queue': 'semantic_queue'},
-        'embedder.generate_embeddings':       {'queue': 'embedding_queue'},
+        'scraper.scrape_listing':                       {'queue': 'scraping_queue'},
+        'scraper.extract_product':                      {'queue': 'extraction_queue'},
+        'scraper.generate_variant_semantics':           {'queue': 'semantic_queue'},
+        'scraper.generate_shopify_variant_semantics':   {'queue': 'semantic_queue'},
+        'embedder.generate_embeddings':                 {'queue': 'embedding_queue'},
+        'shopify_embedder.generate_shopify_embeddings': {'queue': 'embedding_queue'},
         'services.scraper_svc.celery_beat.check_idle_configs': {'queue': 'scheduler_queue'},
     },
     beat_schedule={

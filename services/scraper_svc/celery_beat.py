@@ -76,3 +76,5 @@ def check_idle_configs():
                     .where(ScrapingConfig.id == config.id)
                     .values(status="IDLE", updatedAt=func.now())
                 )
+
+

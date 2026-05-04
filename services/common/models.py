@@ -12,7 +12,7 @@ because SQLAlchemy has no native pgvector type; all vector reads/writes use raw 
 """
 import uuid
 
-from sqlalchemy import BIGINT, Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import BIGINT, Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, func, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum, JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -52,6 +52,62 @@ class ShopifyUser(Base):
     productUrls       = relationship("ProductUrl",        back_populates="shop")
     productEmbeddings = relationship("ProductEmbedding",  back_populates="shop")
     scrapingErrors    = relationship("ScrapingError",     back_populates="shop")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal Shopify store data (read-only from Python side; Shopify sync writes)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ShopifyProduct(Base):
+    __tablename__ = "ShopifyProduct"
+
+    id          = Column(String, primary_key=True)
+    shopDomain  = Column("shopDomain",  String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    title       = Column("title",       String, nullable=False)
+    description = Column("description", Text, default="")
+    vendor      = Column("vendor",      String)
+    productType = Column("productType", String, default="")
+    tags        = Column("tags",        JSONB, default=list)
+    imageUrl    = Column("imageUrl",    String)
+    handle      = Column("handle",      String)
+    status      = Column("status",      String, default="ACTIVE")
+    createdAt   = Column("createdAt",   DateTime(timezone=True), server_default=func.now())
+    updatedAt   = Column("updatedAt",   DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    variants = relationship("ShopifyVariant", back_populates="product", cascade="all, delete-orphan")
+
+
+class ShopifyVariant(Base):
+    __tablename__ = "ShopifyVariant"
+
+    id             = Column(String, primary_key=True)
+    productId      = Column("productId",      String, ForeignKey("ShopifyProduct.id", ondelete="CASCADE"), nullable=False)
+    sku            = Column("sku",            String)
+    barcode        = Column("barcode",        String)
+    title          = Column("title",          String, nullable=False, default="Default Title")
+    options        = Column("options",        JSONB)
+    imageUrl       = Column("imageUrl",       String)
+    currentPrice   = Column("currentPrice",   Numeric(10, 2), nullable=False)
+    compareAtPrice = Column("compareAtPrice", Numeric(10, 2))
+    isInStock      = Column("isInStock",      Boolean, default=True)
+    stockQuantity  = Column("stockQuantity",  Integer)
+    semanticText   = Column("semanticText",   Text)
+    updatedAt      = Column("updatedAt",      DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    product   = relationship("ShopifyProduct",  back_populates="variants")
+    embedding = relationship("ShopifyEmbedding", back_populates="variant", uselist=False, cascade="all, delete-orphan")
+
+
+class ShopifyEmbedding(Base):
+    __tablename__ = "ShopifyEmbedding"
+    # vector columns (textEmbedding, imageEmbedding) omitted — use raw SQL for pgvector writes
+
+    id        = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    variantId = Column("variantId", String, ForeignKey("ShopifyVariant.id", ondelete="CASCADE"), nullable=False, unique=True)
+    embeddedAt = Column("embeddedAt", DateTime(timezone=True), server_default=func.now())
+    updatedAt  = Column("updatedAt",  DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    variant = relationship("ShopifyVariant", back_populates="embedding")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

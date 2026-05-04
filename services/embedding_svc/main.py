@@ -21,7 +21,7 @@ from vertexai.vision_models import Image, MultiModalEmbeddingModel
 
 from services.common.celery_app import app
 from services.common.db import get_db
-from services.common.models import ScrapedProduct
+from services.common.models import ScrapedProduct, ShopifyProduct, ShopifyVariant
 
 load_dotenv()
 
@@ -165,4 +165,78 @@ def generate_embeddings(self, product_id: str):
         _generate(product_id)
     except Exception as exc:
         print(f"    [!] Embedding failed for {product_id}: {exc} — retrying")
+        raise self.retry(exc=exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shopify variant embedding
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _generate_shopify(variant_id: str) -> None:
+    with get_db() as session:
+        variant = (
+            session.query(ShopifyVariant)
+            .options(selectinload(ShopifyVariant.product))
+            .filter(ShopifyVariant.id == variant_id)
+            .first()
+        )
+        if not variant:
+            print(f"[!] ShopifyVariant not found: {variant_id}")
+            return
+
+        if not variant.semanticText:
+            print(f"[-] No semanticText for ShopifyVariant {variant_id[:8]} — skipping")
+            return
+
+        print(f"[>] Shopify embedding: variant {variant_id[:8]}")
+
+        text_vec = get_text_embedding(variant.semanticText)
+        if not text_vec:
+            print(f"    [!] Text embedding failed for ShopifyVariant {variant_id[:8]}")
+            return
+
+        image_vec = get_image_embedding(variant.product.imageUrl or "") if variant.product else None
+
+        row_id = str(uuid.uuid4())
+        base_params = {
+            "id":        row_id,
+            "variantId": variant_id,
+            "text_vec":  _vec(text_vec),
+        }
+
+        if image_vec:
+            session.execute(
+                text(
+                    'INSERT INTO "ShopifyEmbedding" '
+                    '(id, "variantId", "textEmbedding", "imageEmbedding", "embeddedAt", "updatedAt") '
+                    'VALUES (:id, :variantId, CAST(:text_vec AS vector), CAST(:img_vec AS vector), NOW(), NOW()) '
+                    'ON CONFLICT ("variantId") DO UPDATE SET '
+                    '"textEmbedding" = EXCLUDED."textEmbedding", '
+                    '"imageEmbedding" = EXCLUDED."imageEmbedding", '
+                    '"updatedAt" = NOW()'
+                ),
+                {**base_params, "img_vec": _vec(image_vec)},
+            )
+        else:
+            session.execute(
+                text(
+                    'INSERT INTO "ShopifyEmbedding" '
+                    '(id, "variantId", "textEmbedding", "embeddedAt", "updatedAt") '
+                    'VALUES (:id, :variantId, CAST(:text_vec AS vector), NOW(), NOW()) '
+                    'ON CONFLICT ("variantId") DO UPDATE SET '
+                    '"textEmbedding" = EXCLUDED."textEmbedding", '
+                    '"updatedAt" = NOW()'
+                ),
+                base_params,
+            )
+
+        print(f"[✓] ShopifyEmbedding written for variant {variant_id[:8]}")
+
+
+@app.task(name='shopify_embedder.generate_shopify_embeddings', bind=True, max_retries=3, default_retry_delay=60, rate_limit='10/m')
+def generate_shopify_embeddings(self, variant_id: str):
+    try:
+        _generate_shopify(variant_id)
+    except Exception as exc:
+        print(f"    [!] Shopify embedding failed for {variant_id}: {exc} — retrying")
         raise self.retry(exc=exc)
