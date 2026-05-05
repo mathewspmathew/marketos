@@ -63,6 +63,7 @@ export const action = async ({ request }) => {
           sku:            v.sku   ?? null,
           barcode:        v.barcode ?? null,
           options,
+          semanticText:   null, // reset so pipeline regenerates embedding
         },
         create: {
           id:             variantId,

@@ -1,12 +1,67 @@
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
-from sqlalchemy import update as sa_update, func
+from sqlalchemy import distinct, update as sa_update, func
 
 from services.common.celery_app import app
 from services.common.db import get_db
-from services.common.models import ScrapingConfig
+from services.common.models import ProductUrl, ScrapingConfig, ShopifyVariant
 
 _STUCK_TIMEOUT_HOURS = 1
+
+
+_RESCRAPE_DOMAIN_GAP = 30  # seconds between consecutive scrapes of the same domain
+
+
+def _rescrape_pass() -> None:
+    """Queue ALL due ProductUrls. Stagger per domain with countdown so the
+    same site is never hit concurrently — oldest due URL fires first."""
+    now = datetime.now(timezone.utc)
+    with get_db() as session:
+        due_urls = (
+            session.query(ProductUrl, ScrapingConfig)
+            .join(ScrapingConfig, ProductUrl.configId == ScrapingConfig.id)
+            .filter(
+                ScrapingConfig.status == "SCRAPED_FIRST",
+                ScrapingConfig.isActive == True,
+                ProductUrl.status == "ACTIVE",
+                ProductUrl.nextScrapAt != None,
+                ProductUrl.nextScrapAt <= now,
+            )
+            .order_by(ProductUrl.nextScrapAt.asc())  # oldest due first
+            .all()
+        )
+
+        if not due_urls:
+            return
+
+        # Track per-domain countdown so same-site tasks are spaced _RESCRAPE_DOMAIN_GAP apart
+        domain_next_countdown: dict[str, int] = {}
+
+        for pu, config in due_urls:
+            domain   = urlparse(pu.url).netloc
+            countdown = domain_next_countdown.get(domain, 0)
+            domain_next_countdown[domain] = countdown + _RESCRAPE_DOMAIN_GAP
+
+            print(
+                f"[Beat] Scheduling rescrape in {countdown}s: {pu.url[:60]} (domain={domain})",
+                flush=True,
+            )
+            try:
+                app.send_task(
+                    'scraper.rescrape_product',
+                    args=[config.id, config.shopDomain, pu.url, pu.prodId],
+                    queue='scraping_queue',
+                    countdown=countdown,
+                )
+                # Clear nextScrapAt immediately — task sets it again on completion
+                session.execute(
+                    sa_update(ProductUrl)
+                    .where(ProductUrl.id == pu.id)
+                    .values(nextScrapAt=None)
+                )
+            except Exception as e:
+                print(f"[Beat] Failed to schedule rescrape for {pu.url[:60]}: {e}", flush=True)
 
 
 @app.task(name='services.scraper_svc.celery_beat.check_idle_configs')
@@ -76,5 +131,34 @@ def check_idle_configs():
                     .where(ScrapingConfig.id == config.id)
                     .values(status="IDLE", updatedAt=func.now())
                 )
+
+    _rescrape_pass()
+    _shopify_semantic_backfill()
+
+
+def _shopify_semantic_backfill() -> None:
+    """Queue semantic generation for any ShopifyVariant still missing semanticText.
+    Recovers products whose webhook fired while the API gateway was down."""
+    with get_db() as session:
+        product_ids = [
+            row[0]
+            for row in session.query(distinct(ShopifyVariant.productId))
+            .filter(ShopifyVariant.semanticText == None)  # noqa: E711
+            .all()
+        ]
+
+    if not product_ids:
+        return
+
+    print(f"[Beat] Shopify backfill: queuing semantics for {len(product_ids)} product(s)", flush=True)
+    for product_id in product_ids:
+        try:
+            app.send_task(
+                'scraper.generate_shopify_variant_semantics',
+                args=[product_id],
+                queue='semantic_queue',
+            )
+        except Exception as e:
+            print(f"[Beat] Failed to queue Shopify semantics for {product_id}: {e}", flush=True)
 
 

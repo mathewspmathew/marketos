@@ -123,6 +123,7 @@ class ScrapingConfig(Base):
     includeImages     = Column("includeImages",     Boolean, default=True)
     productLimit      = Column("productLimit",      Integer)
     frequencyInterval = Column("frequencyInterval", Integer)
+    frequencyUnit     = Column("frequencyUnit",     String, default="nofreq")
     nextRunAt         = Column("nextRunAt",         DateTime(timezone=True))
     isActive          = Column("isActive",          Boolean, default=True)
     status            = Column("status",            _scrape_status, nullable=False, default="IDLE")
@@ -215,8 +216,7 @@ class ProductEmbedding(Base):
     shopDomain     = Column("shopDomain",     String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
     prodId         = Column("prodId",         String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
     variantId      = Column("variantId",      String, ForeignKey("ScrapedVariant.id",  ondelete="SET NULL"), nullable=True)
-    embeddingModel = Column("embeddingModel", String, nullable=False)
-    vectorizedAt   = Column("vectorizedAt",   DateTime(timezone=True), server_default=func.now())
+    vectorizedAt = Column("vectorizedAt", DateTime(timezone=True), server_default=func.now())
 
     shop    = relationship("ShopifyUser",    back_populates="productEmbeddings")
     product = relationship("ScrapedProduct", back_populates="embeddings")

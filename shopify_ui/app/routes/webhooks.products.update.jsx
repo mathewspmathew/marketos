@@ -1,6 +1,8 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+
 export const action = async ({ request }) => {
   const { topic, shop, payload } = await authenticate.webhook(request);
 
@@ -61,6 +63,7 @@ export const action = async ({ request }) => {
           sku:            v.sku    ?? null,
           barcode:        v.barcode ?? null,
           options,
+          semanticText:   null, // reset so pipeline regenerates embedding
         },
         create: {
           id:             variantId,
@@ -74,6 +77,15 @@ export const action = async ({ request }) => {
         },
       });
     }
+  }
+
+  // Trigger semantic + embedding pipeline via the internal API gateway
+  try {
+    await fetch(`${PYTHON_API_URL}/internal/shopify/product-updated?product_id=${encodeURIComponent(shopifyId)}`, {
+      method: "POST",
+    });
+  } catch (err) {
+    console.error("[webhook] Failed to notify API gateway:", err);
   }
 
   return new Response(null, { status: 200 });

@@ -6,13 +6,16 @@ Shared utilities used across scraper, extractor, and semantics tasks.
 
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import redis as redis_lib
 from sqlalchemy import update as sa_update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from services.common.db import get_db
-from services.common.models import ScrapingConfig, ScrapingError
+from services.common.models import ProductUrl, ScrapingConfig, ScrapingError
+
+_UNIT_TO_SECONDS = {"min": 60, "hr": 3600, "day": 86400}
 
 _redis = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
 
@@ -57,9 +60,33 @@ def log_error(
         print(f"    [!] Failed to write DLQ entry: {log_err}", flush=True)
 
 
+def set_next_scrap_at(config_id: str, product_url: str) -> None:
+    """Set ProductUrl.nextScrapAt based on config frequency. No-op if nofreq."""
+    try:
+        with get_db() as session:
+            config = session.query(ScrapingConfig).filter(ScrapingConfig.id == config_id).first()
+            if not config:
+                return
+            unit     = config.frequencyUnit or "nofreq"
+            interval = config.frequencyInterval or 1
+            if unit not in _UNIT_TO_SECONDS:
+                return
+            next_at = datetime.now(timezone.utc) + timedelta(seconds=interval * _UNIT_TO_SECONDS[unit])
+            session.execute(
+                sa_update(ProductUrl)
+                .where(ProductUrl.url == product_url)
+                .values(nextScrapAt=next_at)
+            )
+            print(f"    [>] nextScrapAt set to {next_at.isoformat()} for {product_url[:60]}", flush=True)
+    except Exception as e:
+        print(f"    [!] set_next_scrap_at failed for {product_url[:60]}: {e}", flush=True)
+
+
 def mark_task_done(config_id: str) -> None:
     try:
         counter_key = f"scrape_pending:{config_id}"
+        if not _redis.exists(counter_key):
+            return  # re-scrape path — no initial-scrape counter to manage
         remaining   = _redis.decr(counter_key)
         print(f"    [>] Pending counter for {config_id}: {remaining}", flush=True)
         if remaining <= 0:

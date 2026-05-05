@@ -50,11 +50,11 @@ export const action = async ({ request }) => {
     }
     const productLimit = productLimitRaw ? parseInt(productLimitRaw, 10) : null;
     
-    let frequencyIntervalRaw = formData.get("frequencyInterval");
-    if (frequencyIntervalRaw === "custom") {
-      frequencyIntervalRaw = formData.get("customFrequency");
-    }
-    const frequencyInterval = parseInt(frequencyIntervalRaw, 10) || 24;
+    const frequencyUnit = formData.get("frequencyUnit") || "nofreq";
+    const frequencyIntervalRaw = formData.get("frequencyInterval");
+    const frequencyInterval = frequencyUnit !== "nofreq"
+      ? (parseInt(frequencyIntervalRaw, 10) || 1)
+      : null;
 
     await db.scrapingConfig.create({
       data: {
@@ -62,7 +62,8 @@ export const action = async ({ request }) => {
         competitorUrl,
         includeImages,
         productLimit: isNaN(productLimit) ? null : productLimit,
-        frequencyInterval: isNaN(frequencyInterval) ? 24 : frequencyInterval,
+        frequencyInterval,
+        frequencyUnit,
       },
     });
   } else if (intent === "deleteConfig") {
@@ -86,8 +87,8 @@ export default function ControllerPage() {
   const [productLimit, setProductLimit] = useState("10");
   const [customProductLimit, setCustomProductLimit] = useState("");
   
-  const [frequencyInterval, setFrequencyInterval] = useState("24");
-  const [customFrequency, setCustomFrequency] = useState("");
+  const [frequencyUnit, setFrequencyUnit] = useState("nofreq");
+  const [frequencyInterval, setFrequencyInterval] = useState("1");
 
   const isAdding = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "addConfig";
 
@@ -102,7 +103,7 @@ export default function ControllerPage() {
         productLimit,
         customProductLimit,
         frequencyInterval,
-        customFrequency,
+        frequencyUnit,
       },
       { method: "POST" }
     );
@@ -167,24 +168,30 @@ export default function ControllerPage() {
             </s-stack>
 
             <s-stack direction="block" gap="tight">
-              <s-text emphasis="bold">Frequency (Hours)</s-text>
+              <s-text emphasis="bold">Re-scrape Frequency</s-text>
               <s-stack direction="inline" gap="base">
-                {["12", "24", "48", "custom"].map((val) => (
-                  <s-button 
+                {[
+                  { val: "nofreq", label: "No Freq" },
+                  { val: "min",    label: "Min" },
+                  { val: "hr",     label: "Hr" },
+                  { val: "day",    label: "Day" },
+                ].map(({ val, label }) => (
+                  <s-button
                     key={val}
-                    variant={frequencyInterval === val ? "primary" : "secondary"}
-                    onClick={() => setFrequencyInterval(val)}
+                    variant={frequencyUnit === val ? "primary" : "secondary"}
+                    onClick={() => setFrequencyUnit(val)}
                   >
-                    {val === "custom" ? "Custom" : `${val}h`}
+                    {label}
                   </s-button>
                 ))}
               </s-stack>
-              {frequencyInterval === "custom" && (
+              {frequencyUnit !== "nofreq" && (
                 <s-text-field
                   type="number"
-                  placeholder="Enter hours"
-                  value={customFrequency}
-                  onInput={(e) => setCustomFrequency(e.currentTarget.value)}
+                  label={`Every how many ${frequencyUnit === "min" ? "minutes" : frequencyUnit === "hr" ? "hours" : "days"}?`}
+                  placeholder="1"
+                  value={frequencyInterval}
+                  onInput={(e) => setFrequencyInterval(e.currentTarget.value)}
                 />
               )}
             </s-stack>
@@ -217,7 +224,11 @@ export default function ControllerPage() {
                     
                     <s-stack direction="inline" gap="loose">
                       <s-text tone="subdued">Limit: {config.productLimit ?? "None"}</s-text>
-                      <s-text tone="subdued">Interval: {config.frequencyInterval}h</s-text>
+                      <s-text tone="subdued">
+                        Freq: {config.frequencyUnit === "nofreq" || !config.frequencyUnit
+                          ? "None"
+                          : `Every ${config.frequencyInterval} ${config.frequencyUnit}`}
+                      </s-text>
                       <s-text tone="subdued">Images: {config.includeImages ? "Yes" : "No"}</s-text>
                     </s-stack>
 

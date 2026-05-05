@@ -120,12 +120,11 @@ def _generate(product_id: str) -> None:
 
             row_id = str(uuid.uuid4())
             base_params = {
-                "id":          row_id,
-                "shopDomain":  product.shopDomain,
-                "prodId":      product_id,
-                "variantId":   v.id,
-                "model":       _EMBEDDING_MODEL_TAG,
-                "text_vec":    _vec(text_vec),
+                "id":         row_id,
+                "shopDomain": product.shopDomain,
+                "prodId":     product_id,
+                "variantId":  v.id,
+                "text_vec":   _vec(text_vec),
             }
 
             if image_vec:
@@ -133,9 +132,9 @@ def _generate(product_id: str) -> None:
                     text(
                         'INSERT INTO "ProductEmbedding" '
                         '(id, "shopDomain", "prodId", "variantId", '
-                        '"vectorText", "vectorImg", "embeddingModel", "vectorizedAt") '
+                        '"vectorText", "vectorImg", "vectorizedAt") '
                         'VALUES (:id, :shopDomain, :prodId, :variantId, '
-                        'CAST(:text_vec AS vector), CAST(:img_vec AS vector), :model, NOW())'
+                        'CAST(:text_vec AS vector), CAST(:img_vec AS vector), NOW())'
                     ),
                     {**base_params, "img_vec": _vec(image_vec)},
                 )
@@ -144,15 +143,18 @@ def _generate(product_id: str) -> None:
                     text(
                         'INSERT INTO "ProductEmbedding" '
                         '(id, "shopDomain", "prodId", "variantId", '
-                        '"vectorText", "embeddingModel", "vectorizedAt") '
+                        '"vectorText", "vectorizedAt") '
                         'VALUES (:id, :shopDomain, :prodId, :variantId, '
-                        'CAST(:text_vec AS vector), :model, NOW())'
+                        'CAST(:text_vec AS vector), NOW())'
                     ),
                     base_params,
                 )
             written += 1
 
-        print(f"[✓] Wrote {written} ProductEmbedding row(s) for: {product.title[:50]}")
+        eligible = sum(1 for v in product.variants if v.semanticText)
+        print(f"[✓] Wrote {written}/{eligible} ProductEmbedding row(s) for: {product.title[:50]}")
+        if eligible > 0 and written == 0:
+            raise RuntimeError(f"All {eligible} embedding(s) failed for product {product_id} — check Vertex AI credentials")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -238,5 +240,8 @@ def generate_shopify_embeddings(self, variant_id: str):
     try:
         _generate_shopify(variant_id)
     except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            print(f"    [!] Shopify embedding permanently failed for {variant_id}: {exc}", flush=True)
+            return
         print(f"    [!] Shopify embedding failed for {variant_id}: {exc} — retrying")
         raise self.retry(exc=exc)

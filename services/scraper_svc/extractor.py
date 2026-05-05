@@ -24,7 +24,7 @@ from services.common.db import get_db
 from services.common.gcs_utils import download_markdown_from_gcs, upload_image_to_gcs
 from services.common.models import ProductUrl, ScrapedProduct, ScrapedVariant
 from services.common.schemas import ProductSchema
-from services.scraper_svc.helpers import log_error, mark_task_done
+from services.scraper_svc.helpers import log_error, mark_task_done, set_next_scrap_at
 
 load_dotenv()
 
@@ -184,7 +184,7 @@ def upsert_to_db(
                     )
                 )
 
-            session.query(ScrapedVariant).filter(ScrapedVariant.productId == product_id).delete()
+            session.query(ScrapedVariant).filter(ScrapedVariant.productId == product_id).delete(synchronize_session=False)
 
             variants = product.variants or []
             if not variants:
@@ -219,6 +219,131 @@ def upsert_to_db(
     except Exception as e:
         print(f"    [!] DB error for {url}: {e}\n{traceback.format_exc()}")
         return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Targeted price/stock update (re-scrape path — no full upsert)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def update_prices_in_db(
+    prod_id:     str,
+    product_url: str,
+    product:     ProductSchema,
+) -> bool:
+    """Update only currentPrice / isInStock / stockQuantity on existing ScrapedVariants.
+    Match extracted variants to existing rows by title (case-insensitive).
+    Single-variant products match directly.
+    Also stamps ProductUrl.lastScrapedAt.
+    """
+    now      = datetime.now(timezone.utc)
+    extracted = product.variants or []
+    if not extracted:
+        print(f"    [!] No variants in re-scrape payload for {product_url[:60]}")
+        return False
+
+    try:
+        with get_db() as session:
+            existing = (
+                session.query(ScrapedVariant)
+                .filter(ScrapedVariant.productId == prod_id)
+                .all()
+            )
+            if not existing:
+                print(f"    [!] No existing variants for product {prod_id} — cannot update prices")
+                return False
+
+            updated = 0
+            if len(existing) == 1:
+                v_ex = extracted[0]
+                session.execute(
+                    sa_update(ScrapedVariant)
+                    .where(ScrapedVariant.id == existing[0].id)
+                    .values(
+                        currentPrice  = float(v_ex.current_price or 0),
+                        originalPrice = float(v_ex.original_price) if v_ex.original_price else None,
+                        isInStock     = bool(v_ex.is_in_stock),
+                        stockQuantity = v_ex.stock_quantity,
+                        updatedAt     = now,
+                    )
+                )
+                updated = 1
+            else:
+                by_title = {v.title.strip().lower(): v for v in existing}
+                for v_ex in extracted:
+                    key  = (v_ex.title or "").strip().lower()
+                    v_db = by_title.get(key)
+                    if not v_db:
+                        continue
+                    session.execute(
+                        sa_update(ScrapedVariant)
+                        .where(ScrapedVariant.id == v_db.id)
+                        .values(
+                            currentPrice  = float(v_ex.current_price or 0),
+                            originalPrice = float(v_ex.original_price) if v_ex.original_price else None,
+                            isInStock     = bool(v_ex.is_in_stock),
+                            stockQuantity = v_ex.stock_quantity,
+                            updatedAt     = now,
+                        )
+                    )
+                    updated += 1
+
+            session.execute(
+                sa_update(ProductUrl)
+                .where(ProductUrl.url == product_url)
+                .values(lastScrapedAt=now)
+            )
+
+            print(f"    [✓] Price/stock updated: {updated}/{len(existing)} variant(s) for {product_url[:60]}")
+            return updated > 0
+
+    except Exception as e:
+        print(f"    [!] Price update DB error for {product_url}: {e}\n{traceback.format_exc()}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 2b: rescrape_extract  (extraction_queue)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.task(name='scraper.rescrape_extract', bind=True, max_retries=3, default_retry_delay=30, rate_limit='3/m')
+def rescrape_extract(self, config_id: str, shop_domain: str, product_url: str, gcs_ref: str, prod_id: str):
+    """GCS download → Groq extract → targeted price/stock update → stamp timestamps."""
+    print(f"[RescrapeExtract] {product_url[:70]}")
+
+    def give_up(error_type: str, detail: str) -> None:
+        print(f"    [!] Giving up rescrape extract {product_url[:60]}: {detail}")
+        log_error(shop_domain, config_id, product_url, error_type, 'scraper.rescrape_extract', gcs_ref, detail)
+        set_next_scrap_at(config_id, product_url)
+
+    markdown = download_markdown_from_gcs(gcs_ref)
+    if not markdown:
+        if self.request.retries >= self.max_retries:
+            give_up("GCS_EMPTY", "empty markdown after max retries")
+            return
+        raise self.retry(exc=ValueError(f"Empty markdown from GCS: {gcs_ref}"))
+
+    try:
+        product = extract_with_groq(markdown, product_url)
+    except GroqRateLimitError:
+        if self.request.retries >= self.max_retries:
+            give_up("GROQ_RATE_LIMIT", "Groq rate limited after max retries")
+            return
+        raise self.retry(countdown=65)
+
+    if not product or not product.title:
+        if self.request.retries >= self.max_retries:
+            give_up("GROQ_FAILED", "Groq returned nothing after max retries")
+            return
+        raise self.retry(exc=ValueError(f"Groq returned nothing for {product_url}"))
+
+    ok = update_prices_in_db(prod_id, product_url, product)
+    if not ok:
+        if self.request.retries >= self.max_retries:
+            give_up("DB_ERROR", "price/stock update failed after max retries")
+            return
+        raise self.retry(exc=RuntimeError(f"Price update failed for {product_url}"))
+
+    set_next_scrap_at(config_id, product_url)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -265,8 +390,13 @@ def extract_product(self, config_id: str, shop_domain: str, product_url: str, gc
 
     prod_id = upsert_to_db(config_id, shop_domain, product_url, product, image_url)
 
-    if prod_id:
-        app.send_task('scraper.generate_variant_semantics', args=[prod_id, config_id, shop_domain, product_url], queue='semantic_queue')
-        print(f"    [>] Queued semantic generation: {prod_id}")
+    if not prod_id:
+        if self.request.retries >= self.max_retries:
+            give_up("DB_ERROR", "DB write failed after max retries")
+            return
+        raise self.retry(exc=RuntimeError(f"DB upsert failed for {product_url}"))
 
+    set_next_scrap_at(config_id, product_url)
+    app.send_task('scraper.generate_variant_semantics', args=[prod_id, config_id, shop_domain, product_url], queue='semantic_queue')
+    print(f"    [>] Queued semantic generation: {prod_id}")
     mark_task_done(config_id)

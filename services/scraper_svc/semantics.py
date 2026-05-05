@@ -12,6 +12,7 @@ import json
 import os
 from datetime import datetime, timezone
 
+from celery.exceptions import Retry as CeleryRetry
 from dotenv import load_dotenv
 from groq import Groq, RateLimitError as GroqRateLimitError
 from sqlalchemy import update as sa_update
@@ -154,11 +155,25 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
 
             print(f"    [✓] semanticText written for {updated}/{len(variants)} variant(s) of '{product.title[:40]}'")
 
+            if updated == 0:
+                if self.request.retries >= self.max_retries:
+                    log_error(shop_domain, config_id, product_url, "SEMANTIC_NO_MATCH",
+                              'scraper.generate_variant_semantics',
+                              detail="Groq returned no matching variant IDs after max retries")
+                    return
+                raise self.retry(exc=ValueError(f"Groq returned no matching variant IDs for {product_id}"))
+
+    except CeleryRetry:
+        raise
     except Exception as exc:
         raise self.retry(exc=exc)
 
-    app.send_task('embedder.generate_embeddings', args=[product_id], queue='embedding_queue')
-    print(f"    [>] Queued embedding: {product_id}")
+    try:
+        app.send_task('embedder.generate_embeddings', args=[product_id], queue='embedding_queue')
+        print(f"    [>] Queued embedding: {product_id}")
+    except Exception as e:
+        print(f"    [!] Failed to queue embedding for {product_id}: {e} — will retry on next semantic run", flush=True)
+        raise self.retry(exc=e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

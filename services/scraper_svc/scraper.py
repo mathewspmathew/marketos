@@ -16,12 +16,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
+from billiard.exceptions import SoftTimeLimitExceeded
 from dotenv import load_dotenv
 from firecrawl import V1FirecrawlApp
 
 from services.common.celery_app import app
 from services.common.gcs_utils import upload_markdown_to_gcs
-from services.scraper_svc.helpers import _redis, update_config_status, URLS_KEY_TTL, PENDING_KEY_TTL
+from services.scraper_svc.helpers import _redis, update_config_status, set_next_scrap_at, URLS_KEY_TTL, PENDING_KEY_TTL
 
 load_dotenv()
 
@@ -100,6 +101,14 @@ def _scrape_product(product_url: str, proxy: str | None, domain: str) -> tuple[s
 @app.task(name='scraper.scrape_listing', time_limit=600, soft_time_limit=540)
 def scrape_listing(config_id: str, shop_domain: str, listing_url: str, num_products: int = 5):
     """Discover product URLs → concurrent scrape → queue extraction tasks."""
+    try:
+        _scrape_listing_inner(config_id, shop_domain, listing_url, num_products)
+    except SoftTimeLimitExceeded:
+        print(f"[!] scrape_listing soft time limit hit for config {config_id} — resetting to IDLE", flush=True)
+        update_config_status(config_id, "IDLE")
+
+
+def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, num_products: int):
     update_config_status(config_id, "RUNNING")
 
     domain       = urlparse(listing_url).netloc
@@ -232,9 +241,12 @@ def scrape_listing(config_id: str, shop_domain: str, listing_url: str, num_produ
     with ThreadPoolExecutor(max_workers=_MAX_SCRAPE_WORKERS) as pool:
         futures = {pool.submit(_scrape_product, url, _proxy, domain): url for url in product_urls}
         for future in as_completed(futures):
-            result = future.result()
-            if result:
-                uploaded_pages.append(result)
+            try:
+                result = future.result()
+                if result:
+                    uploaded_pages.append(result)
+            except Exception as fut_err:
+                print(f"    [!] Scrape thread error: {fut_err}", flush=True)
 
     n = len(uploaded_pages)
     print(f"[✓] {n} pages uploaded — queuing extraction.", flush=True)
@@ -243,12 +255,52 @@ def scrape_listing(config_id: str, shop_domain: str, listing_url: str, num_produ
         update_config_status(config_id, "IDLE")
         return
 
+    # Set counter before sending so tasks that finish fast find the key.
+    # Decrement for any send that fails so the counter stays accurate.
     _redis.set(f"scrape_pending:{config_id}", n, ex=PENDING_KEY_TTL)
 
     for product_url, gcs_ref in uploaded_pages:
-        app.send_task(
-            'scraper.extract_product',
-            args=[config_id, shop_domain, product_url, gcs_ref],
-            queue='extraction_queue',
-        )
-        print(f"    [✓] Queued extraction: {product_url[:70]}", flush=True)
+        try:
+            app.send_task(
+                'scraper.extract_product',
+                args=[config_id, shop_domain, product_url, gcs_ref],
+                queue='extraction_queue',
+            )
+            print(f"    [✓] Queued extraction: {product_url[:70]}", flush=True)
+        except Exception as send_err:
+            print(f"    [!] Failed to queue extraction for {product_url[:60]}: {send_err}", flush=True)
+            remaining = _redis.decr(f"scrape_pending:{config_id}")
+            if remaining <= 0:
+                _redis.delete(f"scrape_pending:{config_id}")
+                update_config_status(config_id, "SCRAPED_FIRST")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task: rescrape_product  (scraping_queue)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.task(name='scraper.rescrape_product', bind=True, max_retries=3, default_retry_delay=60)
+def rescrape_product(self, config_id: str, shop_domain: str, product_url: str, prod_id: str):
+    """Re-scrape a known product URL and queue extraction to update existing records."""
+    domain      = urlparse(product_url).netloc
+    _use_stealth = any(d in domain for d in ('flipkart.com', 'amazon.', 'myntra.com'))
+    _proxy       = 'stealth' if _use_stealth else None
+
+    print(f"[Rescrape] {product_url[:80]}", flush=True)
+    # Human-like delay before hitting the site — on top of the jitter inside _scrape_product
+    time.sleep(random.uniform(2, 5))
+    result = _scrape_product(product_url, _proxy, domain)
+    if not result:
+        if self.request.retries >= self.max_retries:
+            print(f"[Rescrape] Giving up on {product_url[:60]} after {self.max_retries} retries", flush=True)
+            set_next_scrap_at(config_id, product_url)
+            return
+        raise self.retry(exc=ValueError(f"Rescrape failed: {product_url}"))
+
+    _, gcs_ref = result
+    app.send_task(
+        'scraper.rescrape_extract',
+        args=[config_id, shop_domain, product_url, gcs_ref, prod_id],
+        queue='extraction_queue',
+    )
+    print(f"[Rescrape] Queued targeted extraction for {product_url[:70]}", flush=True)

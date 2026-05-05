@@ -194,10 +194,9 @@ model ProductEmbedding {
   prodId     String
   variantId  String?
 
-  vectorText     Unsupported("vector(768)")?
-  vectorImg      Unsupported("vector(768)")?
-  embeddingModel String
-  vectorizedAt   DateTime @default(now())
+  vectorText   Unsupported("vector(768)")?
+  vectorImg    Unsupported("vector(768)")?
+  vectorizedAt DateTime @default(now())
 
   shop    ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
   product ScrapedProduct  @relation(fields: [prodId], references: [id], onDelete: Cascade)
@@ -222,6 +221,7 @@ model ScrapingConfig {
   includeImages     Boolean      @default(true)
   productLimit      Int?
   frequencyInterval Int?
+  frequencyUnit     String?   @default("nofreq")
   nextRunAt         DateTime?
   isActive          Boolean      @default(true)
   status            ScrapeStatus @default(IDLE)
