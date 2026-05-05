@@ -66,11 +66,32 @@ export const action = async ({ request }) => {
         frequencyUnit,
       },
     });
+  } else if (intent === "stopRescraping") {
+    const configId = formData.get("configId");
+    await db.$transaction([
+      db.scrapingConfig.update({
+        where: { id: configId },
+        data: { isActive: false, frequencyUnit: "nofreq", frequencyInterval: null, nextRunAt: null },
+      }),
+      db.productUrl.updateMany({
+        where: { configId },
+        data: { status: "PAUSED" },
+      }),
+    ]);
   } else if (intent === "deleteConfig") {
     const configId = formData.get("configId");
-    await db.scrapingConfig.delete({
-      where: { id: configId },
+
+    const urlRows = await db.productUrl.findMany({
+      where: { configId },
+      select: { prodId: true },
     });
+    const prodIds = [...new Set(urlRows.map((r) => r.prodId))];
+
+    await db.$transaction([
+      db.scrapingError.deleteMany({ where: { configId } }),
+      db.scrapedProduct.deleteMany({ where: { id: { in: prodIds } } }),
+      db.scrapingConfig.delete({ where: { id: configId } }),
+    ]);
   }
 
   return { success: true };
@@ -91,6 +112,12 @@ export default function ControllerPage() {
   const [frequencyInterval, setFrequencyInterval] = useState("1");
 
   const isAdding = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "addConfig";
+  const stoppingId = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "stopRescraping"
+    ? fetcher.formData.get("configId")
+    : null;
+  const deletingId = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "deleteConfig"
+    ? fetcher.formData.get("configId")
+    : null;
 
   const handleAdd = () => {
     if (!competitorUrl) return;
@@ -111,12 +138,13 @@ export default function ControllerPage() {
     setCompetitorUrl("");
   };
 
+  const handleStopRescraping = (id) => {
+    fetcher.submit({ intent: "stopRescraping", configId: id }, { method: "POST" });
+  };
+
   const handleDelete = (id) => {
-    if (confirm("Are you sure you want to remove this competitor?")) {
-      fetcher.submit(
-        { intent: "deleteConfig", configId: id },
-        { method: "POST" }
-      );
+    if (confirm("Delete this competitor and all its scraped data? This cannot be undone.")) {
+      fetcher.submit({ intent: "deleteConfig", configId: id }, { method: "POST" });
     }
   };
 
@@ -233,12 +261,22 @@ export default function ControllerPage() {
                     </s-stack>
 
                     <s-stack direction="inline" gap="base">
-                      <s-button 
-                        variant="plain" 
-                        tone="critical" 
+                      {(config.isActive || (config.frequencyUnit && config.frequencyUnit !== "nofreq")) && (
+                        <s-button
+                          variant="plain"
+                          onClick={() => handleStopRescraping(config.id)}
+                          disabled={stoppingId === config.id}
+                        >
+                          {stoppingId === config.id ? "Stopping..." : "Stop Re-scraping"}
+                        </s-button>
+                      )}
+                      <s-button
+                        variant="plain"
+                        tone="critical"
                         onClick={() => handleDelete(config.id)}
+                        disabled={deletingId === config.id}
                       >
-                        Remove
+                        {deletingId === config.id ? "Deleting..." : "Delete"}
                       </s-button>
                     </s-stack>
                   </s-stack>
