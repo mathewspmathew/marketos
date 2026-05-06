@@ -169,6 +169,16 @@ def generate_embeddings(self, product_id: str):
         print(f"    [!] Embedding failed for {product_id}: {exc} — retrying")
         raise self.retry(exc=exc)
 
+    # Fresh competitor embeddings → re-match every merchant variant for this shop.
+    with get_db() as session:
+        prod = session.query(ScrapedProduct).filter(ScrapedProduct.id == product_id).first()
+        if prod:
+            app.send_task(
+                "matcher.match_for_shop",
+                args=[prod.shopDomain, True],
+                queue="match_queue",
+            )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shopify variant embedding
@@ -201,20 +211,22 @@ def _generate_shopify(variant_id: str) -> None:
 
         row_id = str(uuid.uuid4())
         base_params = {
-            "id":        row_id,
-            "variantId": variant_id,
-            "text_vec":  _vec(text_vec),
+            "id":         row_id,
+            "variantId":  variant_id,
+            "shopDomain": variant.product.shopDomain,
+            "text_vec":   _vec(text_vec),
         }
 
         if image_vec:
             session.execute(
                 text(
                     'INSERT INTO "ShopifyEmbedding" '
-                    '(id, "variantId", "textEmbedding", "imageEmbedding", "embeddedAt", "updatedAt") '
-                    'VALUES (:id, :variantId, CAST(:text_vec AS vector), CAST(:img_vec AS vector), NOW(), NOW()) '
+                    '(id, "variantId", "shopDomain", "vectorText", "vectorImg", "embeddedAt", "updatedAt") '
+                    'VALUES (:id, :variantId, :shopDomain, CAST(:text_vec AS vector), CAST(:img_vec AS vector), NOW(), NOW()) '
                     'ON CONFLICT ("variantId") DO UPDATE SET '
-                    '"textEmbedding" = EXCLUDED."textEmbedding", '
-                    '"imageEmbedding" = EXCLUDED."imageEmbedding", '
+                    '"shopDomain" = EXCLUDED."shopDomain", '
+                    '"vectorText" = EXCLUDED."vectorText", '
+                    '"vectorImg" = EXCLUDED."vectorImg", '
                     '"updatedAt" = NOW()'
                 ),
                 {**base_params, "img_vec": _vec(image_vec)},
@@ -223,10 +235,11 @@ def _generate_shopify(variant_id: str) -> None:
             session.execute(
                 text(
                     'INSERT INTO "ShopifyEmbedding" '
-                    '(id, "variantId", "textEmbedding", "embeddedAt", "updatedAt") '
-                    'VALUES (:id, :variantId, CAST(:text_vec AS vector), NOW(), NOW()) '
+                    '(id, "variantId", "shopDomain", "vectorText", "embeddedAt", "updatedAt") '
+                    'VALUES (:id, :variantId, :shopDomain, CAST(:text_vec AS vector), NOW(), NOW()) '
                     'ON CONFLICT ("variantId") DO UPDATE SET '
-                    '"textEmbedding" = EXCLUDED."textEmbedding", '
+                    '"shopDomain" = EXCLUDED."shopDomain", '
+                    '"vectorText" = EXCLUDED."vectorText", '
                     '"updatedAt" = NOW()'
                 ),
                 base_params,
@@ -245,3 +258,18 @@ def generate_shopify_embeddings(self, variant_id: str):
             return
         print(f"    [!] Shopify embedding failed for {variant_id}: {exc} — retrying")
         raise self.retry(exc=exc)
+
+    # Fresh merchant embedding → match this variant against all competitor domains.
+    with get_db() as session:
+        variant = (
+            session.query(ShopifyVariant)
+            .options(selectinload(ShopifyVariant.product))
+            .filter(ShopifyVariant.id == variant_id)
+            .first()
+        )
+        if variant and variant.product:
+            app.send_task(
+                "matcher.match_for_variant",
+                args=[variant.product.shopDomain, variant_id],
+                queue="match_queue",
+            )

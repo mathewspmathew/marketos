@@ -52,6 +52,7 @@ class ShopifyUser(Base):
     productUrls       = relationship("ProductUrl",        back_populates="shop")
     productEmbeddings = relationship("ProductEmbedding",  back_populates="shop")
     scrapingErrors    = relationship("ScrapingError",     back_populates="shop")
+    productMatches    = relationship("ProductMatch",      back_populates="shop")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -94,16 +95,18 @@ class ShopifyVariant(Base):
     semanticText   = Column("semanticText",   Text)
     updatedAt      = Column("updatedAt",      DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
-    product   = relationship("ShopifyProduct",  back_populates="variants")
-    embedding = relationship("ShopifyEmbedding", back_populates="variant", uselist=False, cascade="all, delete-orphan")
+    product        = relationship("ShopifyProduct",  back_populates="variants")
+    embedding      = relationship("ShopifyEmbedding", back_populates="variant", uselist=False, cascade="all, delete-orphan")
+    productMatches = relationship("ProductMatch",     back_populates="shopifyVariant", cascade="all, delete-orphan")
 
 
 class ShopifyEmbedding(Base):
     __tablename__ = "ShopifyEmbedding"
-    # vector columns (textEmbedding, imageEmbedding) omitted — use raw SQL for pgvector writes
+    # vector columns (vectorText, vectorImg) omitted — use raw SQL for pgvector writes
 
-    id        = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    variantId = Column("variantId", String, ForeignKey("ShopifyVariant.id", ondelete="CASCADE"), nullable=False, unique=True)
+    id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    variantId  = Column("variantId",  String, ForeignKey("ShopifyVariant.id", ondelete="CASCADE"), nullable=False, unique=True)
+    shopDomain = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
     embeddedAt = Column("embeddedAt", DateTime(timezone=True), server_default=func.now())
     updatedAt  = Column("updatedAt",  DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
@@ -155,10 +158,11 @@ class ScrapedProduct(Base):
     createdAt      = Column("createdAt",      DateTime(timezone=True), server_default=func.now())
     updatedAt      = Column("updatedAt",      DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
-    shop       = relationship("ShopifyUser",    back_populates="scrapedProducts")
-    variants   = relationship("ScrapedVariant", back_populates="product", cascade="all, delete-orphan")
-    urls       = relationship("ProductUrl",      back_populates="product", cascade="all, delete-orphan")
-    embeddings = relationship("ProductEmbedding", back_populates="product", cascade="all, delete-orphan")
+    shop           = relationship("ShopifyUser",    back_populates="scrapedProducts")
+    variants       = relationship("ScrapedVariant", back_populates="product", cascade="all, delete-orphan")
+    urls           = relationship("ProductUrl",      back_populates="product", cascade="all, delete-orphan")
+    embeddings     = relationship("ProductEmbedding", back_populates="product", cascade="all, delete-orphan")
+    productMatches = relationship("ProductMatch",    back_populates="competitorProduct", cascade="all, delete-orphan")
 
 
 class ScrapedVariant(Base):
@@ -178,8 +182,9 @@ class ScrapedVariant(Base):
     createdAt     = Column("createdAt",    DateTime(timezone=True), server_default=func.now())
     updatedAt     = Column("updatedAt",    DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
-    product    = relationship("ScrapedProduct",  back_populates="variants")
-    embeddings = relationship("ProductEmbedding", back_populates="variant", cascade="all, delete-orphan")
+    product        = relationship("ScrapedProduct",  back_populates="variants")
+    embeddings     = relationship("ProductEmbedding", back_populates="variant", cascade="all, delete-orphan")
+    productMatches = relationship("ProductMatch",     back_populates="competitorVariant")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,3 +247,33 @@ class ScrapingError(Base):
 
     shop   = relationship("ShopifyUser",    back_populates="scrapingErrors")
     config = relationship("ScrapingConfig", back_populates="errors")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Similarity matches: merchant variant ↔ competitor variant (one row per pair)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ProductMatch(Base):
+    __tablename__ = "ProductMatch"
+    __table_args__ = (
+        UniqueConstraint("shopifyVariantId", "competitorVariantId", name="ProductMatch_shopifyVariantId_competitorVariantId_key"),
+    )
+
+    id                  = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    shopDomain          = Column("shopDomain",          String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    shopifyVariantId    = Column("shopifyVariantId",    String, ForeignKey("ShopifyVariant.id", ondelete="CASCADE"), nullable=False)
+    competitorVariantId = Column("competitorVariantId", String, ForeignKey("ScrapedVariant.id",  ondelete="SET NULL"), nullable=True)
+    competitorProdId    = Column("competitorProdId",    String, ForeignKey("ScrapedProduct.id",  ondelete="CASCADE"), nullable=False)
+
+    matchScore     = Column("matchScore",     Numeric(5, 2),  nullable=False)
+    matchType      = Column("matchType",      String,         nullable=False, default="semantic")
+    vectorDistance = Column("vectorDistance", Numeric(10, 6), nullable=False)
+    thresholdUsed  = Column("thresholdUsed",  Numeric(5, 4),  nullable=False)
+
+    matchedAt = Column("matchedAt", DateTime(timezone=True), server_default=func.now())
+    updatedAt = Column("updatedAt", DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    shop              = relationship("ShopifyUser",    back_populates="productMatches")
+    shopifyVariant    = relationship("ShopifyVariant", back_populates="productMatches")
+    competitorVariant = relationship("ScrapedVariant", back_populates="productMatches")
+    competitorProduct = relationship("ScrapedProduct", back_populates="productMatches")

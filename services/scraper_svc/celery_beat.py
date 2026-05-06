@@ -5,7 +5,7 @@ from sqlalchemy import distinct, update as sa_update, func
 
 from services.common.celery_app import app
 from services.common.db import get_db
-from services.common.models import ProductUrl, ScrapingConfig, ShopifyVariant
+from services.common.models import ProductUrl, ScrapingConfig, ShopifyUser, ShopifyVariant
 
 _STUCK_TIMEOUT_HOURS = 1
 
@@ -160,5 +160,26 @@ def _shopify_semantic_backfill() -> None:
             )
         except Exception as e:
             print(f"[Beat] Failed to queue Shopify semantics for {product_id}: {e}", flush=True)
+
+
+@app.task(name='services.scraper_svc.celery_beat.matcher_sweep')
+def matcher_sweep():
+    """Nightly safety net: re-match every shop in case event-driven triggers were missed."""
+    with get_db() as session:
+        shop_domains = [r[0] for r in session.query(ShopifyUser.shopDomain).all()]
+
+    if not shop_domains:
+        return
+
+    print(f"[Beat] matcher sweep: queuing match_for_shop for {len(shop_domains)} shop(s)", flush=True)
+    for shop_domain in shop_domains:
+        try:
+            app.send_task(
+                'matcher.match_for_shop',
+                args=[shop_domain, True],
+                queue='match_queue',
+            )
+        except Exception as e:
+            print(f"[Beat] Failed to queue matcher_sweep for {shop_domain}: {e}", flush=True)
 
 

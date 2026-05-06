@@ -48,6 +48,7 @@ model ShopifyUser {
   scrapingErrors    ScrapingError[]
   productUrls       ProductUrl[]
   productEmbeddings ProductEmbedding[]
+  productMatches    ProductMatch[]
 }
 
 // ─────────────────────────────────────────
@@ -98,19 +99,23 @@ model ShopifyVariant {
 
   updatedAt DateTime @updatedAt
 
-  embedding ShopifyEmbedding?
+  embedding      ShopifyEmbedding?
+  productMatches ProductMatch[]
 }
 
 model ShopifyEmbedding {
-  id        String         @id @default(uuid())
-  variantId String         @unique
-  variant   ShopifyVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  id         String         @id @default(uuid())
+  variantId  String         @unique
+  variant    ShopifyVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  shopDomain String
 
-  textEmbedding  Unsupported("vector(768)")?
-  imageEmbedding Unsupported("vector(768)")?
+  vectorText Unsupported("vector(768)")?
+  vectorImg  Unsupported("vector(768)")?
 
   embeddedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  @@index([shopDomain])
 }
 
 // ─────────────────────────────────────────
@@ -133,9 +138,10 @@ model ScrapedProduct {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  variants   ScrapedVariant[]
-  urls       ProductUrl[]
-  embeddings ProductEmbedding[]
+  variants       ScrapedVariant[]
+  urls           ProductUrl[]
+  embeddings     ProductEmbedding[]
+  productMatches ProductMatch[]
 }
 
 model ScrapedVariant {
@@ -156,7 +162,8 @@ model ScrapedVariant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  embeddings ProductEmbedding[]
+  embeddings     ProductEmbedding[]
+  productMatches ProductMatch[]
 }
 
 // ─────────────────────────────────────────
@@ -247,4 +254,32 @@ model ScrapingError {
   errorDetail String?
   taskName    String
   failedAt    DateTime @default(now())
+}
+
+// ─────────────────────────────────────────
+// SIMILARITY MATCHES (merchant variant ↔ competitor variant)
+// ─────────────────────────────────────────
+model ProductMatch {
+  id                  String          @id @default(uuid())
+  shopDomain          String
+  shop                ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
+  shopifyVariantId    String
+  shopifyVariant      ShopifyVariant  @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
+  competitorVariantId String?
+  competitorVariant   ScrapedVariant? @relation(fields: [competitorVariantId], references: [id], onDelete: SetNull)
+  competitorProdId    String
+  competitorProduct   ScrapedProduct  @relation(fields: [competitorProdId], references: [id], onDelete: Cascade)
+
+  matchScore     Decimal @db.Decimal(5, 2)
+  matchType      String  @default("semantic")
+  vectorDistance Decimal @db.Decimal(10, 6)
+  thresholdUsed  Decimal @db.Decimal(5, 4)
+
+  matchedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shopifyVariantId, competitorVariantId])
+  @@index([shopifyVariantId, matchScore(sort: Desc)], map: "idx_pm_shopify")
+  @@index([competitorVariantId], map: "idx_pm_competitor")
+  @@index([shopDomain, matchScore(sort: Desc)], map: "idx_pm_shop_domain")
 }

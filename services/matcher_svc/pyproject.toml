@@ -1,0 +1,4 @@
+[project]
+name = "matcher-svc"
+version = "0.1.0"
+dependencies = ["celery", "redis", "sqlalchemy", "psycopg[binary]", "python-dotenv"]

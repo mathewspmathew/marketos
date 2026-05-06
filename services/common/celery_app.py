@@ -16,6 +16,7 @@ app = Celery(
         'services.scraper_svc.semantics',
         'services.scraper_svc.celery_beat',
         'services.embedding_svc.main',
+        'services.matcher_svc.main',
     ]
 )
 
@@ -38,12 +39,19 @@ app.conf.update(
         'scraper.generate_shopify_variant_semantics':   {'queue': 'semantic_queue'},
         'embedder.generate_embeddings':                 {'queue': 'embedding_queue'},
         'shopify_embedder.generate_shopify_embeddings': {'queue': 'embedding_queue'},
+        'matcher.match_for_shop':                       {'queue': 'match_queue'},
+        'matcher.match_for_variant':                    {'queue': 'match_queue'},
         'services.scraper_svc.celery_beat.check_idle_configs': {'queue': 'scheduler_queue'},
+        'services.scraper_svc.celery_beat.matcher_sweep':      {'queue': 'scheduler_queue'},
     },
     beat_schedule={
         'check-idle-configs-every-30-seconds': {
             'task': 'services.scraper_svc.celery_beat.check_idle_configs',
             'schedule': 30.0,
+        },
+        'matcher-sweep-nightly': {
+            'task': 'services.scraper_svc.celery_beat.matcher_sweep',
+            'schedule': 24 * 60 * 60.0,  # once per day
         },
     }
 )
