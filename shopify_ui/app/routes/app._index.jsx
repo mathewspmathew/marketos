@@ -254,8 +254,11 @@ export default function HomePage() {
   const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
   return (
-    <s-page heading="Dynamic Pricing — Home">
-      <s-section>
+    <s-page
+      heading="Dynamic Pricing"
+      subheading={`${filteredProducts.length} of ${products.length} product${products.length === 1 ? "" : "s"}`}
+    >
+      <s-section heading="Filters">
         <s-stack direction="inline" gap="base" wrap>
           <s-text-field
             label="Search products"
@@ -288,9 +291,14 @@ export default function HomePage() {
         </s-stack>
       </s-section>
 
-      <s-section>
+      <s-section heading="Products">
         {filteredProducts.length === 0 ? (
-          <s-paragraph>No products match your filters.</s-paragraph>
+          <s-stack direction="block" gap="tight" align="center">
+            <s-text emphasis="bold">No products match your filters</s-text>
+            <s-text tone="subdued">
+              Try clearing the search or selecting a different tag or category.
+            </s-text>
+          </s-stack>
         ) : (
           <s-resource-list>
             {filteredProducts.map((product) => {

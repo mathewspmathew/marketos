@@ -149,11 +149,14 @@ export default function ControllerPage() {
   };
 
   return (
-    <s-page heading="Scraping Controller">
+    <s-page
+      heading="Scraping Controller"
+      subheading="Track competitor websites and configure how often they’re scraped."
+    >
       <s-stack direction="block" gap="loose">
-        
+
         {/* ── Add New Competitor Section ── */}
-        <s-section heading="Add Competitor Website">
+        <s-section heading="Add competitor website">
           <s-stack direction="block" gap="base">
             <s-text-field
               label="Competitor URL"
@@ -235,53 +238,64 @@ export default function ControllerPage() {
         </s-section>
 
         {/* ── Configured Competitors List ── */}
-        <s-section heading="Managed Competitors">
+        <s-section heading={`Managed competitors${configs.length ? ` (${configs.length})` : ""}`}>
           {configs.length === 0 ? (
-            <s-paragraph tone="subdued">No competitors configured yet.</s-paragraph>
+            <s-stack direction="block" gap="tight" align="center">
+              <s-text emphasis="bold">No competitors yet</s-text>
+              <s-text tone="subdued">
+                Add a competitor URL above to start tracking their products.
+              </s-text>
+            </s-stack>
           ) : (
             <s-resource-list>
-              {configs.map((config) => (
-                <s-resource-item key={config.id} id={config.id}>
-                  <s-stack direction="block" gap="tight">
-                    <s-stack direction="inline" gap="base" align="center">
-                      <s-text emphasis="bold">{config.competitorUrl}</s-text>
-                      <s-badge tone={config.isActive ? "success" : "subdued"}>
-                        {config.isActive ? "Active" : "Inactive"}
-                      </s-badge>
-                    </s-stack>
-                    
-                    <s-stack direction="inline" gap="loose">
-                      <s-text tone="subdued">Limit: {config.productLimit ?? "None"}</s-text>
-                      <s-text tone="subdued">
-                        Freq: {config.frequencyUnit === "nofreq" || !config.frequencyUnit
-                          ? "None"
-                          : `Every ${config.frequencyInterval} ${config.frequencyUnit}`}
-                      </s-text>
-                      <s-text tone="subdued">Images: {config.includeImages ? "Yes" : "No"}</s-text>
-                    </s-stack>
-
-                    <s-stack direction="inline" gap="base">
-                      {(config.isActive || (config.frequencyUnit && config.frequencyUnit !== "nofreq")) && (
+              {configs.map((config) => {
+                const freqLabel =
+                  !config.frequencyUnit || config.frequencyUnit === "nofreq"
+                    ? "One-time"
+                    : `Every ${config.frequencyInterval} ${config.frequencyUnit}`;
+                return (
+                  <s-resource-item key={config.id} id={config.id}>
+                    <s-stack direction="block" gap="base">
+                      <s-stack direction="inline" gap="base" align="center">
+                        <s-text emphasis="bold">{config.competitorUrl}</s-text>
+                        <s-badge tone={config.isActive ? "success" : "subdued"}>
+                          {config.isActive ? "Active" : "Inactive"}
+                        </s-badge>
+                        <s-spacer />
+                        {(config.isActive ||
+                          (config.frequencyUnit &&
+                            config.frequencyUnit !== "nofreq")) && (
+                          <s-button
+                            variant="plain"
+                            onClick={() => handleStopRescraping(config.id)}
+                            disabled={stoppingId === config.id}
+                          >
+                            {stoppingId === config.id
+                              ? "Stopping…"
+                              : "Stop re-scraping"}
+                          </s-button>
+                        )}
                         <s-button
                           variant="plain"
-                          onClick={() => handleStopRescraping(config.id)}
-                          disabled={stoppingId === config.id}
+                          tone="critical"
+                          onClick={() => handleDelete(config.id)}
+                          disabled={deletingId === config.id}
                         >
-                          {stoppingId === config.id ? "Stopping..." : "Stop Re-scraping"}
+                          {deletingId === config.id ? "Deleting…" : "Delete"}
                         </s-button>
-                      )}
-                      <s-button
-                        variant="plain"
-                        tone="critical"
-                        onClick={() => handleDelete(config.id)}
-                        disabled={deletingId === config.id}
-                      >
-                        {deletingId === config.id ? "Deleting..." : "Delete"}
-                      </s-button>
+                      </s-stack>
+
+                      <s-stack direction="inline" gap="loose">
+                        <s-badge>Limit: {config.productLimit ?? "None"}</s-badge>
+                        <s-badge>{freqLabel}</s-badge>
+                        <s-badge tone={config.includeImages ? "info" : "subdued"}>
+                          {config.includeImages ? "Images on" : "Images off"}
+                        </s-badge>
+                      </s-stack>
                     </s-stack>
-                  </s-stack>
-                </s-resource-item>
-              ))}
+                  </s-resource-item>
+                );
+              })}
             </s-resource-list>
           )}
         </s-section>
