@@ -1,4 +1,4 @@
 [project]
 name = "embedding-svc"
 version = "0.1.0"
-dependencies = ["celery", "redis", "google-cloud-aiplatform", "python-dotenv"]
+dependencies = ["celery", "redis", "google-cloud-aiplatform", "google-genai", "python-dotenv"]

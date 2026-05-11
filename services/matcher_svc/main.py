@@ -164,6 +164,16 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
             {"svid": variant_id},
         )
 
+        # Mark this merchant embedding clean — the dirty-flag selector uses
+        # matchedAt vs. updatedAt to decide which variants need re-matching.
+        session.execute(
+            text(
+                'UPDATE "ShopifyEmbedding" SET "matchedAt" = NOW() '
+                'WHERE "variantId" = :vid'
+            ),
+            {"vid": variant_id},
+        )
+
     print(f"[matcher] variant {variant_id[:8]} → {written} match row(s) ({len(domains)} domain(s))", flush=True)
     return written
 
@@ -184,15 +194,40 @@ def _select_pending_variants(session, shop_domain: str, full: bool) -> list[str]
         ).all()
         return [r[0] for r in rows]
 
+    # Competitor-side dirtiness: any ProductEmbedding in this shop whose
+    # current vector hasn't been consumed by the matcher yet. If even one
+    # exists, every merchant variant in the shop needs a re-match because
+    # the new competitor row could be a candidate for any of them.
+    competitor_dirty = session.execute(
+        text(
+            'SELECT 1 FROM "ProductEmbedding" pe '
+            'WHERE pe."shopDomain" = :sd '
+            '  AND pe."vectorText" IS NOT NULL '
+            '  AND (pe."matchedAt" IS NULL OR pe."matchedAt" < pe."vectorizedAt") '
+            'LIMIT 1'
+        ),
+        {"sd": shop_domain},
+    ).first() is not None
+
+    if competitor_dirty:
+        rows = session.execute(
+            text(
+                'SELECT se."variantId" '
+                'FROM "ShopifyEmbedding" se '
+                'WHERE se."shopDomain" = :sd AND se."vectorText" IS NOT NULL'
+            ),
+            {"sd": shop_domain},
+        ).all()
+        return [r[0] for r in rows]
+
+    # Merchant-side dirtiness: embedding fresher than last match.
     rows = session.execute(
         text(
-            'SELECT v.id '
-            'FROM "ShopifyVariant" v '
-            'JOIN "ShopifyEmbedding" se ON se."variantId" = v.id '
-            'LEFT JOIN "ProductMatch" pm ON pm."shopifyVariantId" = v.id '
-            'WHERE se."shopDomain" = :sd AND se."vectorText" IS NOT NULL '
-            'GROUP BY v.id, v."updatedAt" '
-            'HAVING MAX(pm."matchedAt") IS NULL OR v."updatedAt" > MAX(pm."matchedAt")'
+            'SELECT se."variantId" '
+            'FROM "ShopifyEmbedding" se '
+            'WHERE se."shopDomain" = :sd '
+            '  AND se."vectorText" IS NOT NULL '
+            '  AND (se."matchedAt" IS NULL OR se."matchedAt" < se."updatedAt")'
         ),
         {"sd": shop_domain},
     ).all()
@@ -235,6 +270,19 @@ def match_for_shop(self, shop_domain: str, full: bool = False):
                 args=[shop_domain, vid],
                 queue="match_queue",
             )
+
+        # Optimistically mark competitor embeddings clean now that variants
+        # consuming them are queued. A PE write that lands after this stamp
+        # bumps vectorizedAt above matchedAt and re-arms the dirty flag.
+        with get_db() as session:
+            session.execute(
+                text(
+                    'UPDATE "ProductEmbedding" SET "matchedAt" = NOW() '
+                    'WHERE "shopDomain" = :sd AND "vectorText" IS NOT NULL'
+                ),
+                {"sd": shop_domain},
+            )
+
         return len(variant_ids)
     finally:
         _release_shop_lock(shop_domain)

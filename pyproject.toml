@@ -12,6 +12,7 @@ dependencies = [
     "groq",
     "google-cloud-storage",
     "google-cloud-aiplatform",
+    "google-genai",
     "pydantic",
     "python-dotenv",
     "requests",

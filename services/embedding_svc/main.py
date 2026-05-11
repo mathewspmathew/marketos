@@ -8,16 +8,17 @@ Task: generate_embeddings  (embedding_queue)
   Write one ProductEmbedding row per variant via raw SQL (pgvector has no ORM type).
 """
 
+import base64
 import os
 import uuid
 
 import requests
-import vertexai
 from dotenv import load_dotenv
+from google import genai
+from google.cloud import aiplatform_v1
+from google.genai.types import EmbedContentConfig
 from sqlalchemy import text
 from sqlalchemy.orm import selectinload
-from vertexai.language_models import TextEmbeddingModel
-from vertexai.vision_models import Image, MultiModalEmbeddingModel
 
 from services.common.celery_app import app
 from services.common.db import get_db
@@ -28,20 +29,33 @@ load_dotenv()
 VERTEX_PROJECT  = os.getenv("VERTEX_PROJECT", "marketos-494011")
 VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
 
-if VERTEX_PROJECT:
-    vertexai.init(project=VERTEX_PROJECT, location=VERTEX_LOCATION)
-
+# google-genai client backed by Vertex AI for text embeddings.
 try:
-    _text_model = TextEmbeddingModel.from_pretrained("text-embedding-004")
-except Exception:
-    _text_model = None
+    _genai_client = genai.Client(
+        vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION,
+    )
+except Exception as e:
+    print(f"[!] google-genai init failed: {e}")
+    _genai_client = None
 
+# Vertex AI prediction client for the multimodal image embedding model.
+# google-genai does not expose multimodalembedding@001 directly; the underlying
+# PredictionServiceClient is the non-deprecated path.
 try:
-    _image_model = MultiModalEmbeddingModel.from_pretrained("multimodalembedding@001")
-except Exception:
-    _image_model = None
+    _predict_client = aiplatform_v1.PredictionServiceClient(
+        client_options={"api_endpoint": f"{VERTEX_LOCATION}-aiplatform.googleapis.com"}
+    )
+    _image_endpoint = (
+        f"projects/{VERTEX_PROJECT}/locations/{VERTEX_LOCATION}"
+        f"/publishers/google/models/multimodalembedding@001"
+    )
+except Exception as e:
+    print(f"[!] aiplatform PredictionServiceClient init failed: {e}")
+    _predict_client = None
+    _image_endpoint = None
 
 _EMBEDDING_MODEL_TAG = "text-embedding-004+multimodalembedding@001"
+_TEXT_EMBED_DIMENSIONS = 768
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,28 +63,45 @@ _EMBEDDING_MODEL_TAG = "text-embedding-004+multimodalembedding@001"
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_text_embedding(text_input: str) -> list[float] | None:
-    if not text_input or not _text_model:
+    if not text_input or not _genai_client:
         return None
     try:
-        result = _text_model.get_embeddings([text_input])
-        return result[0].values
+        result = _genai_client.models.embed_content(
+            model="text-embedding-004",
+            contents=[text_input],
+            config=EmbedContentConfig(
+                output_dimensionality=_TEXT_EMBED_DIMENSIONS,
+                task_type="RETRIEVAL_DOCUMENT",
+            ),
+        )
+        return list(result.embeddings[0].values)
     except Exception as e:
         print(f"    [!] Text embedding error: {e}")
         return None
 
 
 def get_image_embedding(image_url: str) -> list[float] | None:
-    if not image_url or not _image_model:
+    if not image_url or not _predict_client or not _image_endpoint:
         return None
     try:
         if image_url.startswith("https://storage.googleapis.com/"):
-            path  = image_url.replace("https://storage.googleapis.com/", "")
-            image = Image(gcs_uri=f"gs://{path}")
+            gcs_uri = "gs://" + image_url.replace("https://storage.googleapis.com/", "")
+            image_payload = {"gcsUri": gcs_uri}
         else:
             image_bytes = requests.get(image_url, timeout=15).content
-            image = Image(image_bytes=image_bytes)
-        result = _image_model.get_embeddings(image=image, dimension=768)
-        return result.image_embedding
+            image_payload = {"bytesBase64Encoded": base64.b64encode(image_bytes).decode("ascii")}
+
+        response = _predict_client.predict(
+            endpoint=_image_endpoint,
+            instances=[{"image": image_payload}],
+            parameters={"dimension": 768},
+        )
+        if not response.predictions:
+            return None
+        # PredictionServiceClient returns proto Struct values — convert to dict.
+        prediction = dict(response.predictions[0])
+        embedding = prediction.get("imageEmbedding")
+        return list(embedding) if embedding else None
     except Exception as e:
         print(f"    [!] Image embedding error: {e}")
         return None
@@ -169,13 +200,15 @@ def generate_embeddings(self, product_id: str):
         print(f"    [!] Embedding failed for {product_id}: {exc} — retrying")
         raise self.retry(exc=exc)
 
-    # Fresh competitor embeddings → re-match every merchant variant for this shop.
+    # Fresh competitor embeddings → re-match only what's actually dirty.
+    # The competitor PEs we just wrote carry matchedAt=NULL, so the dirty
+    # selector in match_for_shop picks up the affected merchant variants.
     with get_db() as session:
         prod = session.query(ScrapedProduct).filter(ScrapedProduct.id == product_id).first()
         if prod:
             app.send_task(
                 "matcher.match_for_shop",
-                args=[prod.shopDomain, True],
+                args=[prod.shopDomain, False],
                 queue="match_queue",
             )
 
