@@ -32,6 +32,7 @@ load_dotenv()
 _HNSW_EF_SEARCH = 100
 _PER_DOMAIN_LIMIT = 50
 _SHOP_LOCK_TTL_SECONDS = 30 * 60  # 30 minutes
+_SUGGESTION_DEBOUNCE_SECONDS = 60  # one suggestion run per product per minute
 
 _redis_client: redis.Redis | None = None
 
@@ -241,13 +242,35 @@ def _select_pending_variants(session, shop_domain: str, full: bool) -> list[str]
 @app.task(name="matcher.match_for_variant", bind=True, max_retries=3, default_retry_delay=60)
 def match_for_variant(self, shop_domain: str, shopify_variant_id: str):
     try:
-        return _match_variant(shop_domain, shopify_variant_id)
+        written = _match_variant(shop_domain, shopify_variant_id)
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             print(f"[matcher] variant {shopify_variant_id} permanently failed: {exc}", flush=True)
             return 0
         print(f"[matcher] variant {shopify_variant_id} failed: {exc} — retrying", flush=True)
         raise self.retry(exc=exc)
+
+    # Fresh matches landed → kick off a product-level suggestion run.
+    # Debounced per product so sibling variants matching back-to-back don't
+    # fan out N parallel suggestion tasks for the same product.
+    if written > 0:
+        with get_db() as session:
+            prod_row = session.execute(
+                text('SELECT "productId" FROM "ShopifyVariant" WHERE id = :vid'),
+                {"vid": shopify_variant_id},
+            ).first()
+        if prod_row and prod_row[0]:
+            product_id = prod_row[0]
+            lock_key = f"suggestion:debounce:{product_id}"
+            if _redis().set(lock_key, "1", nx=True, ex=_SUGGESTION_DEBOUNCE_SECONDS):
+                app.send_task(
+                    "suggestion.suggest_for_product",
+                    args=[shop_domain, product_id],
+                    queue="suggestion_queue",
+                )
+                print(f"[matcher] queued suggestion for product {product_id[:8]}", flush=True)
+
+    return written
 
 
 @app.task(name="matcher.match_for_shop", bind=True)
