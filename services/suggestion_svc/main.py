@@ -132,6 +132,7 @@ def suggest_for_shop(shop_domain: str, scope: str = "first_time_and_showed") -> 
                 LEFT JOIN "ProductSuggestion" ps ON ps."shopifyProductId" = sv."productId"
                 WHERE pm."shopDomain" = :shop
                   AND pm."matchScore" >= :threshold
+                  AND pm."dismissedAt" IS NULL
                   AND (
                     :scope = 'all'
                     OR ps."status" IS NULL
@@ -192,6 +193,7 @@ def suggest_for_product(self, shop_domain: str, shopify_product_id: str) -> dict
                     JOIN "ScrapedProduct" sp ON sp."id" = sv."productId"
                     WHERE pm."shopifyVariantId" = :vid
                       AND pm."matchScore" >= :threshold
+                      AND pm."dismissedAt" IS NULL
                     ORDER BY pm."matchScore" DESC
                 """),
                 {"vid": v.id, "threshold": MATCH_THRESHOLD},
