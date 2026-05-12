@@ -281,13 +281,15 @@ model ProductMatch {
   vectorDistance Decimal  @db.Decimal(10, 6)
   thresholdUsed  Decimal  @db.Decimal(5, 4)
 
-  matchedAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  matchedAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  dismissedAt DateTime?
 
   @@unique([shopifyVariantId, competitorVariantId])
   @@index([shopifyVariantId, matchScore(sort: Desc)], map: "idx_pm_shopify")
   @@index([competitorVariantId], map: "idx_pm_competitor")
   @@index([shopDomain, matchScore(sort: Desc)], map: "idx_pm_shop_domain")
+  @@index([shopDomain, dismissedAt], map: "idx_pm_shop_dismissed")
 }
 
 // ─────────────────────────────────────────

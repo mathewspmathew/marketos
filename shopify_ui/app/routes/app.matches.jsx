@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useLoaderData, useRouteError } from "react-router";
+import { useFetcher, useLoaderData, useRouteError } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
@@ -8,9 +8,14 @@ import db from "../db.server";
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
+  const url = new URL(request.url);
+  const showDismissed = url.searchParams.get("showDismissed") === "1";
 
   const matches = await db.productMatch.findMany({
-    where: { shopDomain: shop },
+    where: {
+      shopDomain: shop,
+      ...(showDismissed ? {} : { dismissedAt: null }),
+    },
     orderBy: [{ matchScore: "desc" }],
     include: {
       shopifyVariant: {
@@ -52,6 +57,7 @@ export const loader = async ({ request }) => {
       competitorVariantTitle: m.competitorVariant?.title || null,
       matchScore:        Number(m.matchScore),
       matchedAt:         m.matchedAt,
+      dismissedAt:       m.dismissedAt,
     });
   }
 
@@ -59,8 +65,110 @@ export const loader = async ({ request }) => {
     (a, b) => b.matches.length - a.matches.length,
   );
 
-  return { products, totalMatches: matches.length, shop };
+  return { products, totalMatches: matches.length, shop, showDismissed };
 };
+
+// ─── Action ──────────────────────────────────────────────────────────────────
+// Soft-delete a ProductMatch (or restore it) and recompute the affected
+// VariantPriceSuggestion + ProductSuggestion stats inline so the Suggestions
+// page reflects the change immediately. We keep the row so the matcher worker
+// won't resurrect it on the next upsert.
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+  const matchId = formData.get("matchId");
+
+  if (intent !== "dismissMatch" && intent !== "restoreMatch") {
+    return { ok: false, error: `Unknown intent: ${intent}` };
+  }
+
+  const match = await db.productMatch.findFirst({
+    where: { id: matchId, shopDomain: shop },
+    select: { id: true, shopifyVariantId: true },
+  });
+  if (!match) return { ok: false, error: "Forbidden" };
+
+  await db.productMatch.update({
+    where: { id: matchId },
+    data: { dismissedAt: intent === "dismissMatch" ? new Date() : null },
+  });
+
+  await recomputeForVariant(shop, match.shopifyVariantId);
+  return { ok: true };
+};
+
+// Recompute price-suggestion stats from the currently-live matches for one
+// variant, then roll up product-level matchCount/avgMatchScore. Mirrors what
+// the suggestion worker would compute, minus the LLM call — we leave the
+// suggested title/description untouched.
+async function recomputeForVariant(shop, shopifyVariantId) {
+  const variant = await db.shopifyVariant.findUnique({
+    where: { id: shopifyVariantId },
+    select: { productId: true },
+  });
+  if (!variant) return;
+
+  const liveMatches = await db.productMatch.findMany({
+    where: { shopifyVariantId, dismissedAt: null },
+    include: { competitorVariant: { select: { currentPrice: true } } },
+  });
+
+  const prices = liveMatches
+    .map((m) => m.competitorVariant?.currentPrice)
+    .filter((p) => p != null)
+    .map((p) => Number(p))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+
+  const count = prices.length;
+  const min = count ? prices[0] : null;
+  const max = count ? prices[count - 1] : null;
+  const median = count
+    ? count % 2
+      ? prices[(count - 1) / 2]
+      : (prices[count / 2 - 1] + prices[count / 2]) / 2
+    : null;
+
+  const existing = await db.variantPriceSuggestion.findUnique({
+    where: { shopifyVariantId },
+    select: { status: true },
+  });
+  if (existing) {
+    await db.variantPriceSuggestion.update({
+      where: { shopifyVariantId },
+      data: {
+        competitorMin: min,
+        competitorMedian: median,
+        competitorMax: max,
+        competitorCount: count,
+      },
+    });
+  }
+
+  // Product-level rollup
+  const productLiveMatches = await db.productMatch.findMany({
+    where: {
+      shopifyVariant: { productId: variant.productId },
+      dismissedAt: null,
+    },
+    select: { matchScore: true },
+  });
+  const productCount = productLiveMatches.length;
+  const avg = productCount
+    ? productLiveMatches.reduce((s, m) => s + Number(m.matchScore), 0) /
+      productCount
+    : null;
+
+  await db.productSuggestion.updateMany({
+    where: { shopifyProductId: variant.productId, shopDomain: shop },
+    data: {
+      matchCount: productCount,
+      avgMatchScore: avg != null ? avg.toFixed(2) : null,
+    },
+  });
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function priceDelta(yours, competitor) {
@@ -78,8 +186,16 @@ function scoreTone(score) {
 
 // ─── UI ──────────────────────────────────────────────────────────────────────
 export default function MatchesPage() {
-  const { products, totalMatches } = useLoaderData();
+  const { products, totalMatches, showDismissed } = useLoaderData();
+  const fetcher = useFetcher();
   const [query, setQuery] = useState("");
+
+  const toggleDismissed = () => {
+    const next = new URL(window.location.href);
+    if (showDismissed) next.searchParams.delete("showDismissed");
+    else next.searchParams.set("showDismissed", "1");
+    window.location.href = next.toString();
+  };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -110,14 +226,20 @@ export default function MatchesPage() {
     >
       <s-stack direction="block" gap="loose">
         <s-section>
-          <s-text-field
-            label="Search your products"
-            placeholder="Search by product name…"
-            value={query}
-            onInput={(e) => setQuery(e.currentTarget.value)}
-            clearButton
-            onClearButtonClick={() => setQuery("")}
-          />
+          <s-stack direction="inline" gap="base" align="center">
+            <s-text-field
+              label="Search your products"
+              placeholder="Search by product name…"
+              value={query}
+              onInput={(e) => setQuery(e.currentTarget.value)}
+              clearButton
+              onClearButtonClick={() => setQuery("")}
+            />
+            <s-spacer />
+            <s-button variant="secondary" onClick={toggleDismissed}>
+              {showDismissed ? "Hide removed" : "Show removed"}
+            </s-button>
+          </s-stack>
         </s-section>
 
         {filtered.length === 0 ? (
@@ -168,6 +290,20 @@ export default function MatchesPage() {
               <s-stack direction="block" gap="tight">
                 {p.matches.map((m) => {
                   const delta = priceDelta(m.shopifyPrice, m.competitorPrice);
+                  const isDismissed = !!m.dismissedAt;
+                  const isBusyOnThis =
+                    fetcher.state !== "idle" &&
+                    fetcher.formData?.get("matchId") === m.id;
+                  const handleDismiss = () => {
+                    if (!isDismissed && !confirm("Remove this match? It will be excluded from suggestions.")) return;
+                    fetcher.submit(
+                      {
+                        intent: isDismissed ? "restoreMatch" : "dismissMatch",
+                        matchId: m.id,
+                      },
+                      { method: "POST" },
+                    );
+                  };
                   return (
                     <s-box
                       key={m.id}
@@ -229,6 +365,22 @@ export default function MatchesPage() {
                             View
                           </s-link>
                         ) : null}
+
+                        {isDismissed ? (
+                          <s-badge tone="subdued">Removed</s-badge>
+                        ) : null}
+                        <s-button
+                          variant="plain"
+                          tone={isDismissed ? undefined : "critical"}
+                          onClick={handleDismiss}
+                          disabled={isBusyOnThis}
+                        >
+                          {isBusyOnThis
+                            ? "Saving…"
+                            : isDismissed
+                              ? "Restore"
+                              : "Remove"}
+                        </s-button>
                       </s-stack>
                     </s-box>
                   );
