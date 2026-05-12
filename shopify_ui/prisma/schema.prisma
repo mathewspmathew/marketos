@@ -112,7 +112,7 @@ model ShopifyEmbedding {
   shopDomain String
 
   vectorText Unsupported("vector(768)")?
-  vectorImg  Unsupported("vector(768)")?
+  vectorImg  Unsupported("vector(1408)")?
 
   embeddedAt DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -205,7 +205,7 @@ model ProductEmbedding {
   variantId  String?
 
   vectorText   Unsupported("vector(768)")?
-  vectorImg    Unsupported("vector(768)")?
+  vectorImg    Unsupported("vector(1408)")?
   vectorizedAt DateTime  @default(now())
   matchedAt    DateTime?
 
@@ -274,10 +274,12 @@ model ProductMatch {
   competitorProdId    String
   competitorProduct   ScrapedProduct  @relation(fields: [competitorProdId], references: [id], onDelete: Cascade)
 
-  matchScore     Decimal @db.Decimal(5, 2)
-  matchType      String  @default("semantic")
-  vectorDistance Decimal @db.Decimal(10, 6)
-  thresholdUsed  Decimal @db.Decimal(5, 4)
+  matchScore     Decimal  @db.Decimal(5, 2)
+  textScore      Decimal? @db.Decimal(5, 2)
+  imageScore     Decimal? @db.Decimal(5, 2)
+  matchType      String   @default("semantic")
+  vectorDistance Decimal  @db.Decimal(10, 6)
+  thresholdUsed  Decimal  @db.Decimal(5, 4)
 
   matchedAt DateTime @default(now())
   updatedAt DateTime @updatedAt

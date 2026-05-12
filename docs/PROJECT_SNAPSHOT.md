@@ -19,6 +19,10 @@ A Shopify merchant installs the app, configures competitor URLs, and the system 
 
 ## User Flow Diagram (with files + dispatch path)
 
+> Visual version: [`docs/marketos_flow.png`](docs/marketos_flow.png) — regenerate via `uv run python scripts/generate_flow_diagram.py`.
+
+![MarketOS data flow](docs/marketos_flow.png)
+
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
 │                       MERCHANT (Shopify Admin)                            │

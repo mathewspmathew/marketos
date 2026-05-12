@@ -34,6 +34,10 @@ _PER_DOMAIN_LIMIT = 50
 _SHOP_LOCK_TTL_SECONDS = 30 * 60  # 30 minutes
 _SUGGESTION_DEBOUNCE_SECONDS = 60  # one suggestion run per product per minute
 
+# Hybrid scoring: re-rank text HNSW top-K by α·text_sim + (1-α)·img_sim when both
+# vectors are available. Falls back to text-only if either side lacks vectorImg.
+_HYBRID_TEXT_WEIGHT = 0.6
+
 _redis_client: redis.Redis | None = None
 
 
@@ -46,7 +50,7 @@ def _redis() -> redis.Redis:
         )
     return _redis_client
 
-
+# nx mean Not eXists, ex means Expire time in seconds. So this command sets a key with a value and an expiration time, but only if the key does not already exist.
 def _acquire_shop_lock(shop_domain: str) -> bool:
     return bool(_redis().set(f"match:lock:{shop_domain}", "1", nx=True, ex=_SHOP_LOCK_TTL_SECONDS))
 
@@ -59,25 +63,27 @@ def _release_shop_lock(shop_domain: str) -> None:
 # Per-variant matcher
 # ─────────────────────────────────────────────────────────────────────────────
 
+# takes ONE merchant variant - which competitor variants are similar enough to be considered matches? Writes ProductMatch rows.
 def _match_variant(shop_domain: str, variant_id: str) -> int:
     """Returns the count of ProductMatch rows written/updated."""
     written = 0
 
     with get_db() as session:
-        # Load this variant's text vector once (string repr, casts back to vector in SQL).
+        # Load this variant's text + image vectors (string repr, casts back to vector in SQL).
         vec_row = session.execute(
             text(
-                'SELECT "vectorText"::text AS v '
+                'SELECT "vectorText"::text AS vt, "vectorImg"::text AS vi '
                 'FROM "ShopifyEmbedding" '
                 'WHERE "variantId" = :vid AND "vectorText" IS NOT NULL'
             ),
             {"vid": variant_id},
         ).first()
-        if not vec_row or not vec_row.v:
-            print(f"[matcher] no vector for ShopifyVariant {variant_id[:8]} — skipping", flush=True)
+        if not vec_row or not vec_row.vt:
+            print(f"[matcher] no text vector for ShopifyVariant {variant_id[:8]} — skipping", flush=True)
             return 0
-        query_vec = vec_row.v
-
+        query_text_vec = vec_row.vt
+        query_img_vec = vec_row.vi  # may be None — falls back to text-only re-ranking
+        
         # Distinct competitor domains tracked by this shop.
         domains = [
             r[0] for r in session.execute(
@@ -94,59 +100,87 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
         session.execute(text(f"SET LOCAL hnsw.ef_search = {_HNSW_EF_SEARCH}"))
 
         for domain in domains:
+            # Text HNSW retrieves top-K candidates; image distance comes along
+            # for the ride so we can re-rank without a second round-trip. The
+            # image distance is NULL for competitor rows missing vectorImg.
             rows = session.execute(
                 text(
                     'SELECT pe."variantId" AS comp_variant_id, '
                     '       pe."prodId"    AS comp_prod_id, '
-                    '       pe."vectorText" <=> CAST(:qv AS vector) AS distance '
+                    '       pe."vectorText" <=> CAST(:qvt AS vector) AS dist_text, '
+                    '       CASE WHEN pe."vectorImg" IS NOT NULL AND CAST(:qvi AS text) IS NOT NULL '
+                    '            THEN pe."vectorImg" <=> CAST(:qvi AS vector) '
+                    '            ELSE NULL END AS dist_img '
                     'FROM "ProductEmbedding" pe '
                     'JOIN "ScrapedProduct" sp ON sp.id = pe."prodId" '
                     'WHERE pe."shopDomain" = :sd '
                     '  AND sp.domain = :dom '
                     '  AND pe."variantId" IS NOT NULL '
-                    'ORDER BY pe."vectorText" <=> CAST(:qv AS vector) '
+                    'ORDER BY pe."vectorText" <=> CAST(:qvt AS vector) '
                     f'LIMIT {_PER_DOMAIN_LIMIT}'
                 ),
-                {"qv": query_vec, "sd": shop_domain, "dom": domain},
+                {"qvt": query_text_vec, "qvi": query_img_vec,
+                 "sd": shop_domain, "dom": domain},
             ).all()
             if not rows:
                 continue
 
-            candidates = [
-                (r.comp_variant_id, r.comp_prod_id, float(r.distance), 1.0 - float(r.distance))
-                for r in rows
-            ]
+            # Re-rank: when both sides have an image vector, score is
+            # α·text_sim + (1-α)·img_sim; otherwise text-only.
+            candidates = []
+            for r in rows:
+                text_sim = 1.0 - float(r.dist_text)
+                if r.dist_img is not None:
+                    img_sim = 1.0 - float(r.dist_img)
+                    score = _HYBRID_TEXT_WEIGHT * text_sim + (1.0 - _HYBRID_TEXT_WEIGHT) * img_sim
+                    mtype = "hybrid"
+                else:
+                    img_sim = None
+                    score = text_sim
+                    mtype = "semantic"
+                candidates.append((r.comp_variant_id, r.comp_prod_id,
+                                   float(r.dist_text), score, mtype,
+                                   text_sim, img_sim))
+
             scores = [c[3] for c in candidates]
             threshold = compute_domain_threshold(scores)
             kept = [c for c in candidates if c[3] >= threshold]
             if not kept:
                 continue
 
-            for comp_variant_id, comp_prod_id, distance, similarity in kept:
+            for (comp_variant_id, comp_prod_id, dist_text, score, mtype,
+                 text_sim, img_sim) in kept:
                 session.execute(
                     text(
                         'INSERT INTO "ProductMatch" '
                         '(id, "shopDomain", "shopifyVariantId", "competitorVariantId", '
-                        ' "competitorProdId", "matchScore", "matchType", '
-                        ' "vectorDistance", "thresholdUsed", "matchedAt", "updatedAt") '
-                        'VALUES (:id, :sd, :svid, :cvid, :cpid, :score, \'semantic\', '
-                        '        :dist, :thr, NOW(), NOW()) '
+                        ' "competitorProdId", "matchScore", "textScore", "imageScore", '
+                        ' "matchType", "vectorDistance", "thresholdUsed", '
+                        ' "matchedAt", "updatedAt") '
+                        'VALUES (:id, :sd, :svid, :cvid, :cpid, :score, :tscore, :iscore, '
+                        '        :mtype, :dist, :thr, NOW(), NOW()) '
                         'ON CONFLICT ("shopifyVariantId", "competitorVariantId") DO UPDATE SET '
                         '  "competitorProdId" = EXCLUDED."competitorProdId", '
                         '  "matchScore"       = EXCLUDED."matchScore", '
+                        '  "textScore"        = EXCLUDED."textScore", '
+                        '  "imageScore"       = EXCLUDED."imageScore", '
+                        '  "matchType"        = EXCLUDED."matchType", '
                         '  "vectorDistance"   = EXCLUDED."vectorDistance", '
                         '  "thresholdUsed"    = EXCLUDED."thresholdUsed", '
                         '  "updatedAt"        = NOW()'
                     ),
                     {
-                        "id":    str(uuid.uuid4()),
-                        "sd":    shop_domain,
-                        "svid":  variant_id,
-                        "cvid":  comp_variant_id,
-                        "cpid":  comp_prod_id,
-                        "score": round(similarity * 100.0, 2),
-                        "dist":  round(distance, 6),
-                        "thr":   round(threshold, 4),
+                        "id":     str(uuid.uuid4()),
+                        "sd":     shop_domain,
+                        "svid":   variant_id,
+                        "cvid":   comp_variant_id,
+                        "cpid":   comp_prod_id,
+                        "score":  round(score * 100.0, 2),
+                        "tscore": round(text_sim * 100.0, 2),
+                        "iscore": round(img_sim * 100.0, 2) if img_sim is not None else None,
+                        "mtype":  mtype,
+                        "dist":   round(dist_text, 6),
+                        "thr":    round(threshold, 4),
                     },
                 )
                 written += 1

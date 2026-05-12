@@ -9,6 +9,7 @@ Task: generate_embeddings  (embedding_queue)
 """
 
 import base64
+import io
 import os
 import uuid
 
@@ -17,6 +18,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.cloud import aiplatform_v1
 from google.genai.types import EmbedContentConfig
+from PIL import Image
 from sqlalchemy import text
 from sqlalchemy.orm import selectinload
 
@@ -56,6 +58,7 @@ except Exception as e:
 
 _EMBEDDING_MODEL_TAG = "text-embedding-004+multimodalembedding@001"
 _TEXT_EMBED_DIMENSIONS = 768
+_IMAGE_EMBED_DIMENSIONS = 1408  # multimodalembedding@001 supports 128/256/512/1408 only
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,17 +87,21 @@ def get_image_embedding(image_url: str) -> list[float] | None:
     if not image_url or not _predict_client or not _image_endpoint:
         return None
     try:
-        if image_url.startswith("https://storage.googleapis.com/"):
-            gcs_uri = "gs://" + image_url.replace("https://storage.googleapis.com/", "")
-            image_payload = {"gcsUri": gcs_uri}
-        else:
-            image_bytes = requests.get(image_url, timeout=15).content
-            image_payload = {"bytesBase64Encoded": base64.b64encode(image_bytes).decode("ascii")}
+        # Always download and normalize to JPEG. multimodalembedding@001 rejects
+        # WEBP and other formats, and URL extensions can't be trusted — scraped
+        # images often end in .jpeg but are actually WEBP.
+        raw = requests.get(image_url, timeout=15).content
+        img = Image.open(io.BytesIO(raw))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        image_payload = {"bytesBase64Encoded": base64.b64encode(buf.getvalue()).decode("ascii")}
 
         response = _predict_client.predict(
             endpoint=_image_endpoint,
             instances=[{"image": image_payload}],
-            parameters={"dimension": 768},
+            parameters={"dimension": _IMAGE_EMBED_DIMENSIONS},
         )
         if not response.predictions:
             return None
@@ -103,7 +110,7 @@ def get_image_embedding(image_url: str) -> list[float] | None:
         embedding = prediction.get("imageEmbedding")
         return list(embedding) if embedding else None
     except Exception as e:
-        print(f"    [!] Image embedding error: {e}")
+        print(f"    [!] Image embedding error ({type(e).__name__}): {e}", flush=True)
         return None
 
 
