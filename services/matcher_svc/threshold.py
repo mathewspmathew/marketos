@@ -25,11 +25,18 @@ LOW_STD_BYPASS = 0.05
 
 
 def compute_domain_threshold(scores: list[float]) -> float:
+    
+    # no scores means no candidates, so we return 1.0 to reject everything. We want to be strict when there's no strong evidence.
     if not scores:
         return 1.0
+    
+    # If there's only one candidate, we can't compute std or mean - apply a simple decay to the single score to be slightly more forgiving, but still reject very low scores.
     if len(scores) == 1:
         return max(FLOOR, scores[0] * 0.85)
 
+    # in normal case we compute mean and std, but if std is very low, we assume all candidates are similarly good and just apply the floor threshold to keep them all.  
+    
+    # big std means scores are spread out, so we want to be more selective (mean - 0.5*std). Low std means scores are clustered together, so we want to keep them all if they're above the floor.
     std = statistics.stdev(scores)
     if std < LOW_STD_BYPASS:
         return FLOOR

@@ -77,7 +77,8 @@ model ShopifyProduct {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  variants ShopifyVariant[]
+  variants    ShopifyVariant[]
+  suggestion  ProductSuggestion?
 }
 
 model ShopifyVariant {
@@ -99,8 +100,9 @@ model ShopifyVariant {
 
   updatedAt DateTime @updatedAt
 
-  embedding      ShopifyEmbedding?
-  productMatches ProductMatch[]
+  embedding        ShopifyEmbedding?
+  productMatches   ProductMatch[]
+  priceSuggestion  VariantPriceSuggestion?
 }
 
 model ShopifyEmbedding {
@@ -110,10 +112,11 @@ model ShopifyEmbedding {
   shopDomain String
 
   vectorText Unsupported("vector(768)")?
-  vectorImg  Unsupported("vector(768)")?
+  vectorImg  Unsupported("vector(1408)")?
 
-  embeddedAt DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  embeddedAt DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  matchedAt  DateTime?
 
   @@index([shopDomain])
 }
@@ -202,8 +205,9 @@ model ProductEmbedding {
   variantId  String?
 
   vectorText   Unsupported("vector(768)")?
-  vectorImg    Unsupported("vector(768)")?
-  vectorizedAt DateTime @default(now())
+  vectorImg    Unsupported("vector(1408)")?
+  vectorizedAt DateTime  @default(now())
+  matchedAt    DateTime?
 
   shop    ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
   product ScrapedProduct  @relation(fields: [prodId], references: [id], onDelete: Cascade)
@@ -270,10 +274,12 @@ model ProductMatch {
   competitorProdId    String
   competitorProduct   ScrapedProduct  @relation(fields: [competitorProdId], references: [id], onDelete: Cascade)
 
-  matchScore     Decimal @db.Decimal(5, 2)
-  matchType      String  @default("semantic")
-  vectorDistance Decimal @db.Decimal(10, 6)
-  thresholdUsed  Decimal @db.Decimal(5, 4)
+  matchScore     Decimal  @db.Decimal(5, 2)
+  textScore      Decimal? @db.Decimal(5, 2)
+  imageScore     Decimal? @db.Decimal(5, 2)
+  matchType      String   @default("semantic")
+  vectorDistance Decimal  @db.Decimal(10, 6)
+  thresholdUsed  Decimal  @db.Decimal(5, 4)
 
   matchedAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -282,4 +288,64 @@ model ProductMatch {
   @@index([shopifyVariantId, matchScore(sort: Desc)], map: "idx_pm_shopify")
   @@index([competitorVariantId], map: "idx_pm_competitor")
   @@index([shopDomain, matchScore(sort: Desc)], map: "idx_pm_shop_domain")
+}
+
+// ─────────────────────────────────────────
+// PRODUCT SUGGESTIONS (LLM-generated title/description + competitor price stats)
+// ─────────────────────────────────────────
+enum SuggestionStatus {
+  FIRST_TIME
+  SHOWED
+  SKIPPED
+  APPLIED
+}
+
+model ProductSuggestion {
+  id               String         @id @default(uuid())
+  shopDomain       String
+  shopifyProductId String         @unique
+  product          ShopifyProduct @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+
+  suggestedTitle           String?
+  suggestedDescriptionHtml String?
+  contentRationale         String?
+
+  editedTitle           String?
+  editedDescriptionHtml String?
+
+  appliedTitle           String?
+  appliedDescriptionHtml String?
+
+  matchCount      Int     @default(0)
+  avgMatchScore   Decimal? @db.Decimal(5, 2)
+
+  status           SuggestionStatus @default(FIRST_TIME)
+  generatedAt      DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  appliedAt        DateTime?
+
+  @@index([shopDomain, status])
+}
+
+model VariantPriceSuggestion {
+  id               String         @id @default(uuid())
+  shopDomain       String
+  shopifyVariantId String         @unique
+  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
+
+  competitorMin    Decimal? @db.Decimal(10, 2)
+  competitorMedian Decimal? @db.Decimal(10, 2)
+  competitorMax    Decimal? @db.Decimal(10, 2)
+  competitorCount  Int      @default(0)
+  priceRationale   String?
+
+  chosenPrice      Decimal? @db.Decimal(10, 2)   // user-edited / picked value
+  appliedPrice     Decimal? @db.Decimal(10, 2)
+
+  status           SuggestionStatus @default(FIRST_TIME)
+  generatedAt      DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  appliedAt        DateTime?
+
+  @@index([shopDomain, status])
 }

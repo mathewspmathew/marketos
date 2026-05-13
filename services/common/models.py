@@ -109,6 +109,7 @@ class ShopifyEmbedding(Base):
     shopDomain = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
     embeddedAt = Column("embeddedAt", DateTime(timezone=True), server_default=func.now())
     updatedAt  = Column("updatedAt",  DateTime(timezone=True), default=func.now(), onupdate=func.now())
+    matchedAt  = Column("matchedAt",  DateTime(timezone=True), nullable=True)
 
     variant = relationship("ShopifyVariant", back_populates="embedding")
 
@@ -222,6 +223,7 @@ class ProductEmbedding(Base):
     prodId         = Column("prodId",         String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
     variantId      = Column("variantId",      String, ForeignKey("ScrapedVariant.id",  ondelete="SET NULL"), nullable=True)
     vectorizedAt = Column("vectorizedAt", DateTime(timezone=True), server_default=func.now())
+    matchedAt    = Column("matchedAt",    DateTime(timezone=True), nullable=True)
 
     shop    = relationship("ShopifyUser",    back_populates="productEmbeddings")
     product = relationship("ScrapedProduct", back_populates="embeddings")
