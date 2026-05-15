@@ -156,7 +156,7 @@ def _shopify_semantic_backfill() -> None:
             app.send_task(
                 'scraper.generate_shopify_variant_semantics',
                 args=[product_id],
-                queue='semantic_queue',
+                queue='shopify_semantic_queue',
             )
         except Exception as e:
             print(f"[Beat] Failed to queue Shopify semantics for {product_id}: {e}", flush=True)

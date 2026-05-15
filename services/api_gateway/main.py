@@ -32,7 +32,7 @@ def shopify_product_updated(product_id: str):
     celery_app.send_task(
         'scraper.generate_shopify_variant_semantics',
         args=[product_id],
-        queue='semantic_queue',
+        queue='shopify_semantic_queue',
     )
     return {"queued": True, "product_id": product_id}
 

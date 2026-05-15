@@ -31,30 +31,33 @@ load_dotenv()
 VERTEX_PROJECT  = os.getenv("VERTEX_PROJECT", "marketos-494011")
 VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
 
-# google-genai client backed by Vertex AI for text embeddings.
-try:
-    _genai_client = genai.Client(
-        vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION,
-    )
-except Exception as e:
-    print(f"[!] google-genai init failed: {e}")
-    _genai_client = None
+# Vertex clients are lazy-initialized so workers that don't run embedding tasks
+# (but still autodiscover this module) don't need GCP credentials at boot.
+_genai_client = None
+_predict_client = None
+_image_endpoint = None
 
-# Vertex AI prediction client for the multimodal image embedding model.
-# google-genai does not expose multimodalembedding@001 directly; the underlying
-# PredictionServiceClient is the non-deprecated path.
-try:
-    _predict_client = aiplatform_v1.PredictionServiceClient(
-        client_options={"api_endpoint": f"{VERTEX_LOCATION}-aiplatform.googleapis.com"}
-    )
-    _image_endpoint = (
-        f"projects/{VERTEX_PROJECT}/locations/{VERTEX_LOCATION}"
-        f"/publishers/google/models/multimodalembedding@001"
-    )
-except Exception as e:
-    print(f"[!] aiplatform PredictionServiceClient init failed: {e}")
-    _predict_client = None
-    _image_endpoint = None
+
+def _get_genai_client():
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client(
+            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION,
+        )
+    return _genai_client
+
+
+def _get_predict_client():
+    global _predict_client, _image_endpoint
+    if _predict_client is None:
+        _predict_client = aiplatform_v1.PredictionServiceClient(
+            client_options={"api_endpoint": f"{VERTEX_LOCATION}-aiplatform.googleapis.com"}
+        )
+        _image_endpoint = (
+            f"projects/{VERTEX_PROJECT}/locations/{VERTEX_LOCATION}"
+            f"/publishers/google/models/multimodalembedding@001"
+        )
+    return _predict_client, _image_endpoint
 
 _EMBEDDING_MODEL_TAG = "text-embedding-004+multimodalembedding@001"
 _TEXT_EMBED_DIMENSIONS = 768
@@ -66,10 +69,11 @@ _IMAGE_EMBED_DIMENSIONS = 1408  # multimodalembedding@001 supports 128/256/512/1
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_text_embedding(text_input: str) -> list[float] | None:
-    if not text_input or not _genai_client:
+    if not text_input:
         return None
     try:
-        result = _genai_client.models.embed_content(
+        client = _get_genai_client()
+        result = client.models.embed_content(
             model="text-embedding-004",
             contents=[text_input],
             config=EmbedContentConfig(
@@ -84,9 +88,10 @@ def get_text_embedding(text_input: str) -> list[float] | None:
 
 
 def get_image_embedding(image_url: str) -> list[float] | None:
-    if not image_url or not _predict_client or not _image_endpoint:
+    if not image_url:
         return None
     try:
+        predict_client, image_endpoint = _get_predict_client()
         # Always download and normalize to JPEG. multimodalembedding@001 rejects
         # WEBP and other formats, and URL extensions can't be trusted — scraped
         # images often end in .jpeg but are actually WEBP.
@@ -98,8 +103,8 @@ def get_image_embedding(image_url: str) -> list[float] | None:
         img.save(buf, format="JPEG", quality=90)
         image_payload = {"bytesBase64Encoded": base64.b64encode(buf.getvalue()).decode("ascii")}
 
-        response = _predict_client.predict(
-            endpoint=_image_endpoint,
+        response = predict_client.predict(
+            endpoint=image_endpoint,
             instances=[{"image": image_payload}],
             parameters={"dimension": _IMAGE_EMBED_DIMENSIONS},
         )

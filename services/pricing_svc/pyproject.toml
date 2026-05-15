@@ -1,0 +1,4 @@
+[project]
+name = "pricing-svc"
+version = "0.1.0"
+dependencies = ["celery", "sqlalchemy", "psycopg[binary]", "python-dotenv"]

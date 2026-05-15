@@ -57,23 +57,25 @@ export const action = async ({ request }) => {
       await db.shopifyVariant.upsert({
         where: { id: variantId },
         update: {
-          title:          v.title,
-          currentPrice:   v.price,
-          compareAtPrice: v.compare_at_price ?? null,
-          sku:            v.sku   ?? null,
-          barcode:        v.barcode ?? null,
+          title:             v.title,
+          currentPrice:      v.price,
+          compareAtPrice:    v.compare_at_price ?? null,
+          sku:               v.sku   ?? null,
+          barcode:           v.barcode ?? null,
           options,
-          semanticText:   null, // reset so pipeline regenerates embedding
+          inventoryQuantity: v.inventory_quantity ?? null,
+          semanticText:      null, // reset so pipeline regenerates embedding
         },
         create: {
-          id:             variantId,
-          productId:      shopifyId,
-          title:          v.title,
-          currentPrice:   v.price,
-          compareAtPrice: v.compare_at_price ?? null,
-          sku:            v.sku   ?? null,
-          barcode:        v.barcode ?? null,
+          id:                variantId,
+          productId:         shopifyId,
+          title:             v.title,
+          currentPrice:      v.price,
+          compareAtPrice:    v.compare_at_price ?? null,
+          sku:               v.sku   ?? null,
+          barcode:           v.barcode ?? null,
           options,
+          inventoryQuantity: v.inventory_quantity ?? null,
         },
       });
     }

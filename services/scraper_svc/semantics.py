@@ -3,9 +3,11 @@ services/scraper_svc/semantics.py
 
 Task 3 — generate_variant_semantics (semantic_queue)
   One Groq call for all ScrapedVariants → bulk-update semanticText → queue embeddings.
+  Uses GROQ_API_KEY.
 
-Task 4 — generate_shopify_variant_semantics (semantic_queue)
+Task 4 — generate_shopify_variant_semantics (shopify_semantic_queue)
   Same flow for ShopifyVariants. Triggered by the API gateway on product create/update.
+  Uses GROQ_API_KEY_SHOPIFY (separate key for TPM isolation from competitor scraping).
 """
 
 import json
@@ -24,7 +26,10 @@ from services.scraper_svc.helpers import log_error
 
 load_dotenv()
 
-_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
+# Two separate Groq clients so competitor (scraper) and Shopify-side semantic
+# generation each get their own TPM budget on the Groq free tier.
+_groq_client         = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
+_groq_client_shopify = Groq(api_key=os.getenv("GROQ_API_KEY_SHOPIFY", os.getenv("GROQ_API_KEY", "not-set")))
 
 GROQ_SEMANTIC_PROMPT = """You are an expert e-commerce copywriter specialising in semantic search optimisation.
 
@@ -59,8 +64,9 @@ One key per variant ID provided. No markdown, no extra keys."""
 # Groq helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _groq_semantic_call(prompt: str) -> dict[str, str]:
-    response = _groq_client.chat.completions.create(
+def _groq_semantic_call(prompt: str, *, shopify: bool = False) -> dict[str, str]:
+    client = _groq_client_shopify if shopify else _groq_client
+    response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[
             {"role": "system", "content": "Output JSON only."},
@@ -229,7 +235,8 @@ def generate_shopify_variant_semantics(self, product_id: str):
                         product.title, product.vendor, product.productType,
                         product.description, product.tags, None,
                         variants_payload,
-                    )
+                    ),
+                    shopify=True,
                 )
             except GroqRateLimitError:
                 raise self.retry(countdown=65)

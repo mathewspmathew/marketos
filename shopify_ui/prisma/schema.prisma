@@ -49,6 +49,17 @@ model ShopifyUser {
   productUrls       ProductUrl[]
   productEmbeddings ProductEmbedding[]
   productMatches    ProductMatch[]
+
+  competitors            Competitor[]
+  competitorObservations CompetitorPriceObservation[]
+  productLevelMatches    ProductLevelMatch[]
+  pricingRules           PricingRule[]
+  pricingConfig          PricingConfig?
+  priceDecisions         PriceDecision[]
+  priceChanges           PriceChange[]
+  pricingAlerts          PricingAlert[]
+  promotionWindows       PromotionWindow[]
+  shopAuth               ShopAuth?
 }
 
 // ─────────────────────────────────────────
@@ -68,17 +79,18 @@ model ShopifyProduct {
   handle      String?
   status      String  @default("ACTIVE")
 
-  dynamicPricingEnabled Boolean  @default(false)
-  syncPrice             Boolean  @default(true)
-  syncDescription       Boolean  @default(false)
-  syncTitle             Boolean  @default(false)
+  dynamicPricingEnabled Boolean   @default(false)
+  syncPrice             Boolean   @default(true)
+  syncDescription       Boolean   @default(false)
+  syncTitle             Boolean   @default(false)
   syncedAt              DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  variants    ShopifyVariant[]
-  suggestion  ProductSuggestion?
+  variants            ShopifyVariant[]
+  suggestion          ProductSuggestion?
+  productLevelMatches ProductLevelMatch[]
 }
 
 model ShopifyVariant {
@@ -86,23 +98,32 @@ model ShopifyVariant {
   productId String
   product   ShopifyProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  sku          String?
-  barcode      String?
-  title        String  @default("Default Title")
-  options      Json?
-  imageUrl     String?
+  sku      String?
+  barcode  String?
+  title    String  @default("Default Title")
+  options  Json?
+  imageUrl String?
 
-  currentPrice   Decimal  @db.Decimal(10, 2)
-  compareAtPrice Decimal? @db.Decimal(10, 2)
-  isInStock      Boolean  @default(true)
-  stockQuantity  Int?
-  semanticText   String?
+  currentPrice      Decimal  @db.Decimal(10, 2)
+  compareAtPrice    Decimal? @db.Decimal(10, 2)
+  cost              Decimal? @db.Decimal(10, 2)
+  isInStock         Boolean  @default(true)
+  stockQuantity     Int?
+  inventoryQuantity Int?
+  autoPriceEnabled  Boolean  @default(false)
+  useMlSuggestion   Boolean  @default(false)
+  semanticText      String?
 
   updatedAt DateTime @updatedAt
 
-  embedding        ShopifyEmbedding?
-  productMatches   ProductMatch[]
-  priceSuggestion  VariantPriceSuggestion?
+  embedding       ShopifyEmbedding?
+  productMatches  ProductMatch[]
+  priceSuggestion VariantPriceSuggestion?
+  competitorStats VariantCompetitorStats?
+  priceDecisions  PriceDecision[]
+  priceChanges    PriceChange[]
+  pricingAlerts   PricingAlert[]
+  salesAggregate  SalesAggregate?
 }
 
 model ShopifyEmbedding {
@@ -141,10 +162,11 @@ model ScrapedProduct {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  variants       ScrapedVariant[]
-  urls           ProductUrl[]
-  embeddings     ProductEmbedding[]
-  productMatches ProductMatch[]
+  variants            ScrapedVariant[]
+  urls                ProductUrl[]
+  embeddings          ProductEmbedding[]
+  productMatches      ProductMatch[]
+  productLevelMatches ProductLevelMatch[]
 }
 
 model ScrapedVariant {
@@ -158,6 +180,7 @@ model ScrapedVariant {
   options       Json?
   currentPrice  Decimal  @db.Decimal(10, 2)
   originalPrice Decimal? @db.Decimal(10, 2)
+  currency      String   @default("INR") @db.VarChar(3)
   isInStock     Boolean  @default(true)
   stockQuantity Int?
   semanticText  String?
@@ -167,6 +190,7 @@ model ScrapedVariant {
 
   embeddings     ProductEmbedding[]
   productMatches ProductMatch[]
+  observations   CompetitorPriceObservation[]
 }
 
 // ─────────────────────────────────────────
@@ -206,10 +230,10 @@ model ProductEmbedding {
 
   vectorText   Unsupported("vector(768)")?
   vectorImg    Unsupported("vector(1408)")?
-  vectorizedAt DateTime  @default(now())
+  vectorizedAt DateTime                     @default(now())
   matchedAt    DateTime?
 
-  shop    ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
+  shop    ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
   product ScrapedProduct  @relation(fields: [prodId], references: [id], onDelete: Cascade)
   variant ScrapedVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
 }
@@ -232,7 +256,7 @@ model ScrapingConfig {
   includeImages     Boolean      @default(true)
   productLimit      Int?
   frequencyInterval Int?
-  frequencyUnit     String?   @default("nofreq")
+  frequencyUnit     String?      @default("nofreq")
   nextRunAt         DateTime?
   isActive          Boolean      @default(true)
   status            ScrapeStatus @default(IDLE)
@@ -247,9 +271,9 @@ model ScrapingConfig {
 // SCRAPING ERRORS
 // ─────────────────────────────────────────
 model ScrapingError {
-  id          String      @id @default(uuid())
+  id          String         @id @default(uuid())
   shopDomain  String
-  shop        ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
+  shop        ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
   configId    String
   config      ScrapingConfig @relation(fields: [configId], references: [id])
   productUrl  String
@@ -257,7 +281,7 @@ model ScrapingError {
   errorType   String
   errorDetail String?
   taskName    String
-  failedAt    DateTime @default(now())
+  failedAt    DateTime       @default(now())
 }
 
 // ─────────────────────────────────────────
@@ -280,6 +304,11 @@ model ProductMatch {
   matchType      String   @default("semantic")
   vectorDistance Decimal  @db.Decimal(10, 6)
   thresholdUsed  Decimal  @db.Decimal(5, 4)
+
+  confidence     Decimal?             @db.Decimal(4, 3)
+  confidenceTier MatchConfidenceTier?
+  productMatchId String?
+  productMatch   ProductLevelMatch?   @relation(fields: [productMatchId], references: [id], onDelete: SetNull)
 
   matchedAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -318,13 +347,13 @@ model ProductSuggestion {
   appliedTitle           String?
   appliedDescriptionHtml String?
 
-  matchCount      Int     @default(0)
-  avgMatchScore   Decimal? @db.Decimal(5, 2)
+  matchCount    Int      @default(0)
+  avgMatchScore Decimal? @db.Decimal(5, 2)
 
-  status           SuggestionStatus @default(FIRST_TIME)
-  generatedAt      DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  appliedAt        DateTime?
+  status      SuggestionStatus @default(FIRST_TIME)
+  generatedAt DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  appliedAt   DateTime?
 
   @@index([shopDomain, status])
 }
@@ -341,13 +370,279 @@ model VariantPriceSuggestion {
   competitorCount  Int      @default(0)
   priceRationale   String?
 
-  chosenPrice      Decimal? @db.Decimal(10, 2)   // user-edited / picked value
-  appliedPrice     Decimal? @db.Decimal(10, 2)
+  chosenPrice  Decimal? @db.Decimal(10, 2) // user-edited / picked value
+  appliedPrice Decimal? @db.Decimal(10, 2)
 
-  status           SuggestionStatus @default(FIRST_TIME)
-  generatedAt      DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  appliedAt        DateTime?
+  status      SuggestionStatus @default(FIRST_TIME)
+  generatedAt DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  appliedAt   DateTime?
 
   @@index([shopDomain, status])
+}
+
+// ─────────────────────────────────────────
+// DYNAMIC PRICING — competitors, observations, stats
+// ─────────────────────────────────────────
+enum CompetitorTier {
+  PREMIUM
+  MIDMARKET
+  BUDGET
+}
+
+enum MatchConfidenceTier {
+  CONFIRMED
+  LIKELY
+  WEAK
+}
+
+model Competitor {
+  id          String         @id @default(uuid())
+  shopDomain  String
+  shop        ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
+  domain      String
+  displayName String?
+  tier        CompetitorTier @default(MIDMARKET)
+  weight      Decimal        @default(0.5) @db.Decimal(3, 2)
+  enabled     Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  observations CompetitorPriceObservation[]
+
+  @@unique([shopDomain, domain])
+  @@index([shopDomain, enabled])
+}
+
+// Hypertable on observedAt (created via raw SQL after migration).
+model CompetitorPriceObservation {
+  id                  String         @id @default(uuid())
+  shopDomain          String
+  shop                ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
+  competitorId        String?
+  competitor          Competitor?    @relation(fields: [competitorId], references: [id], onDelete: SetNull)
+  competitorVariantId String
+  competitorVariant   ScrapedVariant @relation(fields: [competitorVariantId], references: [id], onDelete: Cascade)
+  price               Decimal        @db.Decimal(10, 2)
+  currency            String         @default("INR") @db.VarChar(3)
+  isInStock           Boolean        @default(true)
+  observedAt          DateTime       @default(now())
+
+  @@index([competitorVariantId, observedAt(sort: Desc)])
+  @@index([shopDomain, observedAt(sort: Desc)])
+}
+
+model VariantCompetitorStats {
+  shopifyVariantId String         @id
+  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
+  shopDomain       String
+
+  competitorCount    Int      @default(0)
+  minPrice           Decimal? @db.Decimal(10, 2)
+  p25                Decimal? @db.Decimal(10, 2)
+  median             Decimal? @db.Decimal(10, 2)
+  p75                Decimal? @db.Decimal(10, 2)
+  maxPrice           Decimal? @db.Decimal(10, 2)
+  weightedMin        Decimal? @db.Decimal(10, 2)
+  weightedMedian     Decimal? @db.Decimal(10, 2)
+  volatility24h      Decimal? @db.Decimal(6, 4)
+  avgMatchConfidence Decimal? @db.Decimal(4, 3)
+  lastUpdatedAt      DateTime @default(now())
+
+  @@index([shopDomain])
+}
+
+model ProductLevelMatch {
+  id               String         @id @default(uuid())
+  shopDomain       String
+  shop             ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
+  shopifyProductId String
+  shopifyProduct   ShopifyProduct @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+  scrapedProductId String
+  scrapedProduct   ScrapedProduct @relation(fields: [scrapedProductId], references: [id], onDelete: Cascade)
+
+  confidence          Decimal             @db.Decimal(4, 3)
+  confidenceTier      MatchConfidenceTier
+  source              String              @default("RERANKER") // ANN | RERANKER | MANUAL
+  confirmedByMerchant Boolean             @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variantMatches ProductMatch[]
+
+  @@unique([shopifyProductId, scrapedProductId])
+  @@index([shopDomain, confidenceTier])
+}
+
+// ─────────────────────────────────────────
+// DYNAMIC PRICING — rules, decisions, audit
+// ─────────────────────────────────────────
+enum PricingRuleScope {
+  SHOP
+  COLLECTION
+  TAG
+  PRODUCT
+  VARIANT
+}
+
+enum PricingRuleType {
+  MATCH_LOWEST
+  BEAT_BY_PCT
+  STAY_ABOVE_COST_PCT
+  MATCH_TIER_LOWEST
+}
+
+model PricingRule {
+  id         String      @id @default(uuid())
+  shopDomain String
+  shop       ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
+
+  scope    PricingRuleScope @default(SHOP)
+  scopeRef String? // collection id / tag / product id / variant id; null for SHOP
+
+  ruleType PricingRuleType
+  params   Json            @default("{}")
+
+  floorPrice          Decimal? @db.Decimal(10, 2)
+  ceilingPrice        Decimal? @db.Decimal(10, 2)
+  maxDailyDeltaPct    Decimal? @db.Decimal(5, 2)
+  tierFilter          String[]
+  maxStalenessSeconds Int      @default(86400)
+
+  autoApply     Boolean @default(false)
+  mlBlendWeight Decimal @default(0.0) @db.Decimal(3, 2)
+  priority      Int     @default(100)
+  enabled       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  decisions PriceDecision[]
+
+  @@index([shopDomain, enabled, priority])
+  @@index([shopDomain, scope, scopeRef])
+}
+
+model PricingConfig {
+  shopDomain String      @id
+  shop       ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
+
+  sparseNudgeAmplitude Decimal @default(0.02) @db.Decimal(4, 3)
+  hotVelocityRatio     Decimal @default(1.3) @db.Decimal(4, 2)
+  coolVelocityRatio    Decimal @default(0.7) @db.Decimal(4, 2)
+  lowStockDays         Int     @default(7)
+  highStockDays        Int     @default(90)
+  killSwitch           Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+}
+
+model PriceDecision {
+  id               String         @id @default(uuid())
+  shopDomain       String
+  shop             ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
+  shopifyVariantId String
+  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
+  ruleId           String?
+  rule             PricingRule?   @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  oldPrice           Decimal  @db.Decimal(10, 2)
+  newPrice           Decimal  @db.Decimal(10, 2)
+  ruleSuggestedPrice Decimal? @db.Decimal(10, 2)
+  mlSuggestedPrice   Decimal? @db.Decimal(10, 2)
+  mlConfidence       Decimal? @db.Decimal(4, 3)
+  modelVersion       String?
+  reason             String
+  blockedBy          String?
+  confidence         Decimal? @db.Decimal(4, 3)
+  statsSnapshot      Json?
+  signalsSnapshot    Json?
+
+  decidedAt DateTime  @default(now())
+  appliedAt DateTime?
+
+  changes PriceChange[]
+
+  @@index([shopDomain, decidedAt(sort: Desc)])
+  @@index([shopifyVariantId, decidedAt(sort: Desc)])
+  @@index([shopDomain, appliedAt])
+}
+
+model PriceChange {
+  id               String         @id @default(uuid())
+  shopDomain       String
+  shop             ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
+  shopifyVariantId String
+  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
+  decisionId       String?
+  decision         PriceDecision? @relation(fields: [decisionId], references: [id], onDelete: SetNull)
+
+  oldPrice        Decimal   @db.Decimal(10, 2)
+  newPrice        Decimal   @db.Decimal(10, 2)
+  shopifyResponse Json?
+  appliedAt       DateTime  @default(now())
+  revertedAt      DateTime?
+
+  @@index([shopDomain, appliedAt(sort: Desc)])
+  @@index([shopifyVariantId, appliedAt(sort: Desc)])
+}
+
+model PricingAlert {
+  id               String          @id @default(uuid())
+  shopDomain       String
+  shop             ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
+  shopifyVariantId String?
+  variant          ShopifyVariant? @relation(fields: [shopifyVariantId], references: [id], onDelete: SetNull)
+
+  type     String // e.g. COMPETITOR_DROP | GUARDRAIL_BLOCK | LOW_CONFIDENCE | STALE_DATA
+  severity String @default("INFO") // INFO | WARN | CRITICAL
+  payload  Json?
+
+  createdAt   DateTime  @default(now())
+  dismissedAt DateTime?
+
+  @@index([shopDomain, dismissedAt, createdAt(sort: Desc)])
+}
+
+model PromotionWindow {
+  id               String           @id @default(uuid())
+  shopDomain       String
+  shop             ShopifyUser      @relation(fields: [shopDomain], references: [shopDomain])
+  scope            PricingRuleScope @default(SHOP)
+  scopeRef         String?
+  startsAt         DateTime
+  endsAt           DateTime
+  pauseAutoPricing Boolean          @default(true)
+  note             String?
+  createdAt        DateTime         @default(now())
+
+  @@index([shopDomain, startsAt, endsAt])
+}
+
+model SalesAggregate {
+  shopifyVariantId String         @id
+  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
+  shopDomain       String
+
+  orders7d    Int      @default(0)
+  revenue7d   Decimal  @default(0) @db.Decimal(12, 2)
+  orders28d   Int      @default(0)
+  revenue28d  Decimal  @default(0) @db.Decimal(12, 2)
+  daysOfStock Decimal? @db.Decimal(8, 2)
+
+  updatedAt DateTime @updatedAt
+
+  @@index([shopDomain])
+}
+
+// Long-lived offline access token per shop. Distinct from the Session model,
+// which stores online (user-bound) tokens used by Shopify's auth middleware.
+model ShopAuth {
+  shopDomain         String      @id
+  shop               ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
+  offlineAccessToken String
+  scopes             String
+  installedAt        DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 }

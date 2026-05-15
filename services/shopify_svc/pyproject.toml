@@ -1,0 +1,4 @@
+[project]
+name = "shopify-svc"
+version = "0.1.0"
+dependencies = ["celery", "requests", "sqlalchemy", "psycopg[binary]", "python-dotenv"]

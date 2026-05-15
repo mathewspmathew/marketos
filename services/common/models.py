@@ -177,6 +177,7 @@ class ScrapedVariant(Base):
     options       = Column("options",      JSONB)
     currentPrice  = Column("currentPrice", Numeric(10, 2), nullable=False)
     originalPrice = Column("originalPrice",Numeric(10, 2))
+    currency      = Column("currency",     String(3), nullable=False, default="INR")
     isInStock     = Column("isInStock",    Boolean, default=True)
     stockQuantity = Column("stockQuantity",Integer)
     semanticText  = Column("semanticText", Text)
@@ -186,6 +187,51 @@ class ScrapedVariant(Base):
     product        = relationship("ScrapedProduct",  back_populates="variants")
     embeddings     = relationship("ProductEmbedding", back_populates="variant", cascade="all, delete-orphan")
     productMatches = relationship("ProductMatch",     back_populates="competitorVariant")
+    observations   = relationship("CompetitorPriceObservation", back_populates="competitorVariant", cascade="all, delete-orphan")
+
+
+_competitor_tier = PgEnum(
+    "PREMIUM", "MIDMARKET", "BUDGET",
+    name="CompetitorTier",
+    create_type=False,
+)
+
+
+class Competitor(Base):
+    __tablename__ = "Competitor"
+
+    id          = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    shopDomain  = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    domain      = Column("domain", String, nullable=False)
+    displayName = Column("displayName", String)
+    tier        = Column("tier", _competitor_tier, nullable=False, default="MIDMARKET")
+    weight      = Column("weight", Numeric(3, 2), nullable=False, default=0.5)
+    enabled     = Column("enabled", Boolean, nullable=False, default=True)
+    createdAt   = Column("createdAt", DateTime(timezone=True), server_default=func.now())
+    updatedAt   = Column("updatedAt", DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    __table_args__ = (UniqueConstraint("shopDomain", "domain", name="Competitor_shopDomain_domain_key"),)
+
+
+class CompetitorPriceObservation(Base):
+    """Append-only price observation for a competitor variant.
+
+    TimescaleDB hypertable on `observedAt`. The primary key is
+    `(id, observedAt)` — Timescale requires the partitioning column to
+    participate in any unique constraint.
+    """
+    __tablename__ = "CompetitorPriceObservation"
+
+    id                  = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    shopDomain          = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    competitorId        = Column("competitorId", String, ForeignKey("Competitor.id", ondelete="SET NULL"))
+    competitorVariantId = Column("competitorVariantId", String, ForeignKey("ScrapedVariant.id", ondelete="CASCADE"), nullable=False)
+    price               = Column("price", Numeric(10, 2), nullable=False)
+    currency            = Column("currency", String(3), nullable=False, default="INR")
+    isInStock           = Column("isInStock", Boolean, default=True)
+    observedAt          = Column("observedAt", DateTime(timezone=True), primary_key=True, server_default=func.now())
+
+    competitorVariant   = relationship("ScrapedVariant", back_populates="observations")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
