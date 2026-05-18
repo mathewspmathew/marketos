@@ -22,6 +22,7 @@ app = Celery(
         'services.shopify_svc.main',
         'services.pricing_svc.main',
         'services.pricing_svc.stats',
+        'services.elasticity_svc.main',
     ]
 )
 
@@ -55,6 +56,8 @@ app.conf.update(
         'pricing.decide_for_variant':                   {'queue': 'pricing_queue'},
         'shopify_writer.apply_decision':                {'queue': 'writer_queue'},
         'shopify_writer.sweep_pending':                 {'queue': 'writer_queue'},
+        'elasticity.train_for_shop':                    {'queue': 'elasticity_queue'},
+        'elasticity.train_all_shops':                   {'queue': 'elasticity_queue'},
         'services.scraper_svc.celery_beat.check_idle_configs': {'queue': 'scheduler_queue'},
     },
     beat_schedule={
@@ -75,6 +78,13 @@ app.conf.update(
         'writer-sweep-every-minute': {
             'task': 'shopify_writer.sweep_pending',
             'schedule': 60.0,
+        },
+        # Nightly elasticity model retrain. Shadow-mode predictions ride
+        # alongside every PriceDecision; the merchant opts in per variant
+        # via ShopifyVariant.useMlSuggestion to actually shift the decision.
+        'retrain-elasticity-models-nightly': {
+            'task': 'elasticity.train_all_shops',
+            'schedule': crontab(hour=2, minute=30),
         },
     }
 )

@@ -72,6 +72,8 @@ class ShopifyProduct(Base):
     imageUrl    = Column("imageUrl",    String)
     handle      = Column("handle",      String)
     status      = Column("status",      String, default="ACTIVE")
+    categoryTop   = Column("categoryTop",   String)
+    productGender = Column("productGender", String)
     createdAt   = Column("createdAt",   DateTime(timezone=True), server_default=func.now())
     updatedAt   = Column("updatedAt",   DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
@@ -156,6 +158,8 @@ class ScrapedProduct(Base):
     tags           = Column("tags",           JSONB, default=list)
     imageUrl       = Column("imageUrl",       String)
     specifications = Column("specifications", JSONB)
+    categoryTop    = Column("categoryTop",    String)
+    productGender  = Column("productGender",  String)
     createdAt      = Column("createdAt",      DateTime(timezone=True), server_default=func.now())
     updatedAt      = Column("updatedAt",      DateTime(timezone=True), default=func.now(), onupdate=func.now())
 

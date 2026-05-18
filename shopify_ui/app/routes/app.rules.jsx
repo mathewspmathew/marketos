@@ -5,12 +5,11 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 
-const SCOPES = ["SHOP", "PRODUCT", "VARIANT"];
 const RULE_TYPES = [
-  { value: "MATCH_LOWEST",        label: "Match lowest competitor" },
-  { value: "BEAT_BY_PCT",         label: "Beat competitor by %" },
-  { value: "STAY_ABOVE_COST_PCT", label: "Stay above cost by %" },
-  { value: "MATCH_TIER_LOWEST",   label: "Match lowest in tier(s)" },
+  { value: "MATCH_LOWEST",        label: "Match the lowest competitor price" },
+  { value: "BEAT_BY_PCT",         label: "Undercut the lowest competitor by a %" },
+  { value: "STAY_ABOVE_COST_PCT", label: "Always keep margin above cost (no competitor reference)" },
+  { value: "MATCH_TIER_LOWEST",   label: "Match the lowest in chosen tiers only" },
 ];
 const TIERS = ["PREMIUM", "MIDMARKET", "BUDGET"];
 
@@ -31,8 +30,19 @@ export const loader = async ({ request }) => {
   });
   const countMap = Object.fromEntries(counts.map((r) => [r.ruleId, r._count._all]));
 
+  // Products list for the per-product picker (replaces raw GID input).
+  // Only show products that have at least one variant — variant-less products
+  // can't be priced anyway.
+  const products = await db.shopifyProduct.findMany({
+    where: { shopDomain: shop, variants: { some: {} } },
+    orderBy: { title: "asc" },
+    select: { id: true, title: true, vendor: true, imageUrl: true },
+    take: 500,
+  });
+
   return {
     shop,
+    products,
     rules: rules.map((r) => ({
       ...r,
       floorPrice:       r.floorPrice       != null ? Number(r.floorPrice)       : null,
@@ -50,9 +60,45 @@ export const action = async ({ request }) => {
   const fd = await request.formData();
   const intent = fd.get("intent");
 
+  // One-click "get started" rule: shop-wide, match lowest, auto-apply on,
+  // conservative 5% daily delta. Idempotent — won't create duplicates.
+  if (intent === "createDefault") {
+    const existing = await db.pricingRule.findFirst({
+      where: { shopDomain: shop, scope: "SHOP", ruleType: "MATCH_LOWEST" },
+    });
+    if (existing) {
+      await db.pricingRule.update({
+        where: { id: existing.id },
+        data:  { enabled: true, autoApply: true },
+      });
+      return { ok: true, intent };
+    }
+    await db.pricingRule.create({
+      data: {
+        shopDomain:          shop,
+        scope:               "SHOP",
+        scopeRef:            null,
+        ruleType:            "MATCH_LOWEST",
+        params:              { charm: "ninety_nine" },
+        floorPrice:          null,
+        ceilingPrice:        null,
+        maxDailyDeltaPct:    5,
+        tierFilter:          [],
+        maxStalenessSeconds: 86400,
+        autoApply:           true,
+        priority:            10,
+        enabled:             true,
+      },
+    });
+    return { ok: true, intent };
+  }
+
   if (intent === "create") {
     const scope = String(fd.get("scope") || "SHOP");
     const scopeRef = scope === "SHOP" ? null : (String(fd.get("scopeRef") || "").trim() || null);
+    if (scope !== "SHOP" && !scopeRef) {
+      return { ok: false, error: "missing_product" };
+    }
     const ruleType = String(fd.get("ruleType") || "MATCH_LOWEST");
     const pct = fd.get("pct");
     const charm = String(fd.get("charm") || "");
@@ -80,11 +126,11 @@ export const action = async ({ request }) => {
         params,
         floorPrice:          toNum("floorPrice"),
         ceilingPrice:        toNum("ceilingPrice"),
-        maxDailyDeltaPct:    toNum("maxDailyDeltaPct") ?? 20,
+        maxDailyDeltaPct:    toNum("maxDailyDeltaPct") ?? 5,
         tierFilter,
-        maxStalenessSeconds: Number(fd.get("maxStalenessSeconds") || 86400),
+        maxStalenessSeconds: 86400,
         autoApply:           fd.get("autoApply") === "true",
-        priority:            Number(fd.get("priority") || 100),
+        priority:            scope === "VARIANT" ? 300 : scope === "PRODUCT" ? 200 : 100,
         enabled:             true,
       },
     });
@@ -115,68 +161,116 @@ export const action = async ({ request }) => {
 };
 
 export default function RulesPage() {
-  const { rules } = useLoaderData();
+  const { rules, products } = useLoaderData();
+  const hasShopWide = rules.some((r) => r.scope === "SHOP" && r.enabled);
+
   return (
-    <s-page heading="Pricing Rules">
-      <s-section heading="Existing rules">
+    <s-page heading="Pricing rules">
+      <s-section>
+        <s-text>
+          A rule tells the engine <em>how</em> to set prices once it sees
+          competitors. Without at least one rule, no prices change.
+        </s-text>
+      </s-section>
+
+      {!hasShopWide ? <GetStartedCard /> : null}
+
+      <s-section heading={`Your rules (${rules.length})`}>
         {rules.length === 0 ? (
-          <s-text>No rules yet. Create one below to enable pricing decisions.</s-text>
+          <s-text tone="subdued">No rules yet. Use the Get started card above, or build a custom one below.</s-text>
         ) : (
           <s-stack gap="base">
-            {rules.map((r) => <RuleCard key={r.id} rule={r} />)}
+            {rules.map((r) => <RuleCard key={r.id} rule={r} products={products} />)}
           </s-stack>
         )}
       </s-section>
 
-      <s-section heading="Create new rule">
-        <CreateRuleForm />
+      <s-section heading="Build a custom rule">
+        <CreateRuleForm products={products} />
       </s-section>
     </s-page>
   );
 }
 
-function RuleCard({ rule }) {
+function GetStartedCard() {
   const fetcher = useFetcher();
-  const ruleTypeLabel =
-    RULE_TYPES.find((t) => t.value === rule.ruleType)?.label || rule.ruleType;
+  const busy = fetcher.state !== "idle";
+  return (
+    <s-section>
+      <s-stack gap="tight" style={{
+        padding: 12, borderRadius: 8, background: "#eef5ff",
+        border: "1px solid #d3e3fd",
+      }}>
+        <s-text emphasis="bold">Get started in one click</s-text>
+        <s-text>
+          Creates one shop-wide rule: <strong>match the lowest competitor price</strong>,
+          auto-apply to Shopify, and never move a price by more than <strong>5%</strong> in
+          a day. Applies to every product that has a confirmed competitor match
+          and auto-pricing turned on. You can fine-tune or delete it any time.
+        </s-text>
+        <fetcher.Form method="post">
+          <input type="hidden" name="intent" value="createDefault" />
+          <s-button type="submit" variant="primary" disabled={busy}>
+            {busy ? "Creating…" : "Create default rule"}
+          </s-button>
+        </fetcher.Form>
+      </s-stack>
+    </s-section>
+  );
+}
+
+function ruleScopeLabel(r, products) {
+  if (r.scope === "SHOP")    return "All products in this shop";
+  if (r.scope === "PRODUCT") {
+    const p = products.find((x) => x.id === r.scopeRef);
+    return p ? `Product: ${p.title}` : `Product: ${r.scopeRef}`;
+  }
+  if (r.scope === "VARIANT") return `Variant: ${r.scopeRef}`;
+  return r.scope;
+}
+
+function ruleSummary(r) {
+  if (r.ruleType === "MATCH_LOWEST")        return "Match the lowest competitor price.";
+  if (r.ruleType === "BEAT_BY_PCT")         return `Undercut the lowest competitor by ${r.params?.pct ?? 0}%.`;
+  if (r.ruleType === "STAY_ABOVE_COST_PCT") return `Keep at least ${r.params?.pct ?? 0}% margin above cost.`;
+  if (r.ruleType === "MATCH_TIER_LOWEST")   return `Match the lowest competitor in tiers: ${(r.tierFilter || []).join(", ") || "(none)"}.`;
+  return r.ruleType;
+}
+
+function RuleCard({ rule, products }) {
+  const fetcher = useFetcher();
 
   return (
     <s-section>
       <s-stack direction="inline" gap="base" alignment="space-between">
-        <s-stack gap="tight">
-          <s-text emphasis="bold">{ruleTypeLabel}</s-text>
-          <s-text tone="subdued">
-            scope: {rule.scope}{rule.scopeRef ? ` (${rule.scopeRef})` : ""}
-            {" • "}priority: {rule.priority}
-            {" • "}decisions logged: {rule.decisionCount}
+        <s-stack gap="tight" style={{ flex: 2 }}>
+          <s-text emphasis="bold">{ruleSummary(rule)}</s-text>
+          <s-text tone="subdued">{ruleScopeLabel(rule, products)}</s-text>
+          <s-text tone="subdued" style={{ fontSize: 12 }}>
+            Max daily change: <strong>{rule.maxDailyDeltaPct ?? "—"}%</strong>
+            {rule.floorPrice != null    ? ` · floor ₹${rule.floorPrice}` : ""}
+            {rule.ceilingPrice != null  ? ` · ceiling ₹${rule.ceilingPrice}` : ""}
+            {" · "}decisions logged: <strong>{rule.decisionCount}</strong>
+            {!rule.enabled ? " · DISABLED" : ""}
           </s-text>
-          <s-text tone="subdued">
-            {rule.params?.pct != null ? `pct=${rule.params.pct}  ·  ` : ""}
-            floor: {rule.floorPrice ?? "—"}  ·  ceiling: {rule.ceilingPrice ?? "—"}  ·
-            maxΔ/day: {rule.maxDailyDeltaPct ?? "—"}%  ·
-            stale-after: {rule.maxStalenessSeconds}s
-          </s-text>
-          {rule.tierFilter?.length ? (
-            <s-text tone="subdued">tiers: {rule.tierFilter.join(", ")}</s-text>
-          ) : null}
         </s-stack>
 
-        <s-stack gap="tight">
-          <fetcher.Form method="post">
-            <input type="hidden" name="intent" value="toggleEnabled" />
-            <input type="hidden" name="id" value={rule.id} />
-            <input type="hidden" name="enabled" value={String(!rule.enabled)} />
-            <s-button type="submit" variant={rule.enabled ? "secondary" : "primary"}>
-              {rule.enabled ? "Disable" : "Enable"}
-            </s-button>
-          </fetcher.Form>
-
+        <s-stack gap="tight" alignment="end" style={{ flex: 1 }}>
           <fetcher.Form method="post">
             <input type="hidden" name="intent" value="toggleAutoApply" />
             <input type="hidden" name="id" value={rule.id} />
             <input type="hidden" name="autoApply" value={String(!rule.autoApply)} />
             <s-button type="submit" variant={rule.autoApply ? "primary" : "secondary"}>
-              {rule.autoApply ? "Auto-apply ON" : "Auto-apply OFF"}
+              {rule.autoApply ? "Pushes to Shopify: ON" : "Suggestions only"}
+            </s-button>
+          </fetcher.Form>
+
+          <fetcher.Form method="post">
+            <input type="hidden" name="intent" value="toggleEnabled" />
+            <input type="hidden" name="id" value={rule.id} />
+            <input type="hidden" name="enabled" value={String(!rule.enabled)} />
+            <s-button type="submit" variant={rule.enabled ? "secondary" : "primary"}>
+              {rule.enabled ? "Disable rule" : "Enable rule"}
             </s-button>
           </fetcher.Form>
 
@@ -191,12 +285,13 @@ function RuleCard({ rule }) {
   );
 }
 
-function CreateRuleForm() {
+function CreateRuleForm({ products }) {
   const fetcher = useFetcher();
-  const [scope, setScope] = useState("SHOP");
+  const [scope, setScope]       = useState("SHOP");
   const [ruleType, setRuleType] = useState("MATCH_LOWEST");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const needsPct = ruleType === "BEAT_BY_PCT" || ruleType === "STAY_ABOVE_COST_PCT";
+  const needsPct   = ruleType === "BEAT_BY_PCT" || ruleType === "STAY_ABOVE_COST_PCT";
   const needsTiers = ruleType === "MATCH_TIER_LOWEST";
 
   return (
@@ -206,24 +301,28 @@ function CreateRuleForm() {
       <s-stack gap="base">
         <s-select
           name="scope"
-          label="Scope"
+          label="Apply this rule to"
           value={scope}
           onChange={(e) => setScope(e.target.value)}
         >
-          {SCOPES.map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="SHOP">All my products</option>
+          <option value="PRODUCT">A specific product</option>
         </s-select>
 
-        {scope !== "SHOP" && (
-          <s-text-field
-            name="scopeRef"
-            label={scope === "PRODUCT" ? "Shopify product ID (gid)" : "Shopify variant ID (gid)"}
-            placeholder="gid://shopify/Product/..."
-          />
+        {scope === "PRODUCT" && (
+          <s-select name="scopeRef" label="Which product">
+            <option value="">— pick a product —</option>
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.title}{p.vendor ? ` · ${p.vendor}` : ""}
+              </option>
+            ))}
+          </s-select>
         )}
 
         <s-select
           name="ruleType"
-          label="Rule type"
+          label="Pricing strategy"
           value={ruleType}
           onChange={(e) => setRuleType(e.target.value)}
         >
@@ -234,14 +333,14 @@ function CreateRuleForm() {
           <s-text-field
             name="pct"
             type="number"
-            label={ruleType === "BEAT_BY_PCT" ? "Beat competitor by (%)" : "Margin above cost (%)"}
+            label={ruleType === "BEAT_BY_PCT" ? "Undercut by (%)" : "Margin above cost (%)"}
             placeholder={ruleType === "BEAT_BY_PCT" ? "5" : "30"}
           />
         )}
 
         {needsTiers && (
           <s-stack gap="tight">
-            <s-text>Competitor tiers to include</s-text>
+            <s-text>Which competitor tiers should I consider?</s-text>
             {TIERS.map((t) => (
               <s-checkbox key={t} name={`tier_${t}`} value="true" label={t} />
             ))}
@@ -249,40 +348,35 @@ function CreateRuleForm() {
         )}
 
         <s-text-field
-          name="floorPrice"
-          type="number"
-          label="Floor price (never go below)"
-          placeholder="0"
-        />
-        <s-text-field
-          name="ceilingPrice"
-          type="number"
-          label="Ceiling price (never go above)"
-          placeholder="100000"
-        />
-        <s-text-field
           name="maxDailyDeltaPct"
           type="number"
-          label="Max daily price change (%)"
-          placeholder="20"
+          label="Max change per day (%)"
+          placeholder="5"
         />
-        <s-text-field
-          name="maxStalenessSeconds"
-          type="number"
-          label="Reject stats older than (seconds)"
-          placeholder="86400"
-        />
-        <s-text-field
-          name="priority"
-          type="number"
-          label="Priority (higher wins within same scope)"
-          placeholder="100"
-        />
-        <s-select name="charm" label="Charm rounding">
-          <option value="">2 decimal places</option>
-          <option value="ninety_nine">.99 ending</option>
-        </s-select>
-        <s-checkbox name="autoApply" value="true" label="Auto-apply to Shopify (requires CONFIRMED match)" />
+
+        <s-checkbox name="autoApply" value="true"
+                    label="Push approved prices to Shopify automatically" />
+
+        <s-button type="button" variant="secondary"
+                  onClick={() => setShowAdvanced(!showAdvanced)}>
+          {showAdvanced ? "Hide advanced options ▲" : "Show advanced options ▼"}
+        </s-button>
+
+        {showAdvanced && (
+          <s-stack gap="base" style={{
+            padding: 12, borderRadius: 6, background: "#fafbfb",
+            border: "1px solid #e4e5e7",
+          }}>
+            <s-text-field name="floorPrice" type="number"
+              label="Floor — never go below this price" placeholder="(none)" />
+            <s-text-field name="ceilingPrice" type="number"
+              label="Ceiling — never go above this price" placeholder="(none)" />
+            <s-select name="charm" label="Price ending">
+              <option value="">Two decimal places (₹24.97)</option>
+              <option value="ninety_nine">.99 ending (₹24.99)</option>
+            </s-select>
+          </s-stack>
+        )}
 
         <s-button type="submit" variant="primary">Create rule</s-button>
       </s-stack>

@@ -31,33 +31,56 @@ load_dotenv()
 _groq_client         = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
 _groq_client_shopify = Groq(api_key=os.getenv("GROQ_API_KEY_SHOPIFY", os.getenv("GROQ_API_KEY", "not-set")))
 
-GROQ_SEMANTIC_PROMPT = """You are an expert e-commerce copywriter specialising in semantic search optimisation.
+GROQ_SEMANTIC_PROMPT = """You are a product cataloguing assistant. For each variant below
+produce a STRUCTURED FINGERPRINT used to compare this product against the same product
+listed on other stores. Two listings of the same physical product MUST produce nearly
+identical text. Different products MUST produce clearly different text.
 
-Generate a rich, buyer-intent keyword description for EACH variant listed below.
-This text powers a vector similarity search engine — when shoppers type queries like
-"affordable red running shoe size 10 under 5000" or "wireless earbuds with noise cancellation",
-your text must surface the right variant.
+Hard rules:
+- NO marketing language, NO synonyms, NO buyer prose, NO use-case suggestions.
+- NO price, NO discount, NO availability, NO stock state.
+- Lower-case everywhere except proper nouns (brand names, model names, ISBNs, etc.).
+- Stable, deterministic, attribute-anchored. Same product on two sites → same text.
+- Works for ANY category: clothing, electronics, books, kitchenware, bags, beauty,
+  furniture, food, toys, tools, jewellery — pick the attributes that matter for THIS
+  product's category. Leave fields blank if unknown; never invent values.
+
+Output format per variant (literal six lines, in this order, with these labels):
+BRAND: <brand name or 'unknown'>
+CATEGORY: <top-level> > <subcategory>          (e.g. clothing > t-shirt,
+                                                 electronics > laptop,
+                                                 kitchenware > frying-pan,
+                                                 books > fiction-novel,
+                                                 bags > backpack)
+MODEL: <product line / model number / book title / sku family — empty if none>
+ATTRIBUTES: key=value; key=value; key=value; ...
+            (pick 4–8 defining attributes for this category. Examples:
+             clothing: material, color, fit, sleeve, neckline, pattern, gender, size
+             electronics: cpu, ram, storage, screen, ports, battery, color
+             books: author, genre, format, language, pages, isbn
+             kitchenware: material, diameter_or_capacity, induction, coating
+             bags: capacity_l, material, color, laptop_fit_in, waterproof
+             beauty: shade, finish, volume, vegan, spf
+             furniture: material, dimensions, color, assembly_required
+             — use lower_snake_case keys. Values lower-case unless proper noun.)
+IDENTITY: <one short factual phrase, max 12 words, uniquely fingerprinting this product
+           — typically brand + model + key disambiguating attribute. No prose, no fluff.>
+GENDER: <men / women / unisex / kids / not-applicable>
 
 Product context:
   Name: {title}
   Brand: {vendor}
-  Category: {product_type}
-  Description: {description}
+  Category hint: {product_type}
+  Description (truncated, may contain marketing fluff — extract facts only): {description}
   Tags: {tags}
   Specifications: {specs}
 
 Variants to describe (use the exact IDs as JSON keys):
 {variants_json}
 
-For each variant write exactly 2-3 sentences that:
-1. Open with brand + product name + the defining option (colour, size, material, pack size, storage)
-2. State price naturally — "priced at ₹X" or "on sale from ₹X down to ₹Y" — and availability
-3. Weave in category, use-case, and 2-3 key specs buyers actually search for
-4. Include synonyms and buyer vocabulary (e.g. "sneaker / trainer" not just "shoe")
-5. Sound like a knowledgeable human, not a data dump
-
-Return ONLY valid JSON: {{"<variant_id>": "<description>", ...}}
-One key per variant ID provided. No markdown, no extra keys."""
+Return ONLY valid JSON: {{"<variant_id>": "<six-line structured fingerprint>", ...}}
+One key per variant ID provided. The value is the literal six-line block — embed newlines
+as \\n in the JSON string. No markdown, no extra keys, no commentary."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -96,6 +119,50 @@ def _build_semantic_prompt(
         specs=json.dumps(specs or {}, ensure_ascii=False),
         variants_json=json.dumps(variants_payload, ensure_ascii=False),
     )
+
+
+_VALID_GENDERS = {"men", "women", "unisex", "kids", "not-applicable"}
+
+
+def _parse_fingerprint_fields(fingerprint: str) -> dict[str, str | None]:
+    """Extract structured columns from a six-line semanticText fingerprint.
+
+    Returns {'categoryTop': str|None, 'productGender': str|None}.
+    Tolerates whitespace, missing lines, malformed values. Never raises.
+    """
+    category_top: str | None = None
+    gender: str | None = None
+    for raw_line in (fingerprint or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("category:"):
+            value = line.split(":", 1)[1].strip().lower()
+            # "clothing > t-shirt" → "clothing"; "kitchenware" → "kitchenware"
+            top = value.split(">", 1)[0].strip()
+            if top and top != "unknown":
+                category_top = top
+        elif line.lower().startswith("gender:"):
+            value = line.split(":", 1)[1].strip().lower()
+            if value in _VALID_GENDERS:
+                gender = value
+    return {"categoryTop": category_top, "productGender": gender}
+
+
+def _consolidate_product_fields(parsed_per_variant: list[dict]) -> dict[str, str | None]:
+    """Pick one categoryTop + one productGender for the product.
+
+    All variants of the same product should yield the same category/gender, but
+    the LLM occasionally varies. We take the most common non-null value per
+    field; ties are broken by first occurrence.
+    """
+    from collections import Counter
+    cat = Counter(p["categoryTop"] for p in parsed_per_variant if p["categoryTop"])
+    gen = Counter(p["productGender"] for p in parsed_per_variant if p["productGender"])
+    return {
+        "categoryTop":   cat.most_common(1)[0][0] if cat else None,
+        "productGender": gen.most_common(1)[0][0] if gen else None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -149,6 +216,7 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
 
             now     = datetime.now(timezone.utc)
             updated = 0
+            parsed_per_variant: list[dict] = []
             for v in variants:
                 text = semantic_map.get(v.id, "")
                 if text:
@@ -158,6 +226,20 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
                         .values(semanticText=text, updatedAt=now)
                     )
                     updated += 1
+                    parsed_per_variant.append(_parse_fingerprint_fields(text))
+
+            if parsed_per_variant:
+                product_fields = _consolidate_product_fields(parsed_per_variant)
+                if product_fields["categoryTop"] or product_fields["productGender"]:
+                    session.execute(
+                        sa_update(ScrapedProduct)
+                        .where(ScrapedProduct.id == product_id)
+                        .values(
+                            categoryTop=product_fields["categoryTop"],
+                            productGender=product_fields["productGender"],
+                            updatedAt=now,
+                        )
+                    )
 
             print(f"    [✓] semanticText written for {updated}/{len(variants)} variant(s) of '{product.title[:40]}'")
 
@@ -247,6 +329,7 @@ def generate_shopify_variant_semantics(self, product_id: str):
                 raise self.retry(exc=e)
 
             now = datetime.now(timezone.utc)
+            parsed_per_variant: list[dict] = []
             for short_key, full_id in id_map.items():
                 text = semantic_map.get(short_key, "")
                 if text:
@@ -256,6 +339,20 @@ def generate_shopify_variant_semantics(self, product_id: str):
                         .values(semanticText=text, updatedAt=now)
                     )
                     updated_ids.append(full_id)
+                    parsed_per_variant.append(_parse_fingerprint_fields(text))
+
+            if parsed_per_variant:
+                product_fields = _consolidate_product_fields(parsed_per_variant)
+                if product_fields["categoryTop"] or product_fields["productGender"]:
+                    session.execute(
+                        sa_update(ShopifyProduct)
+                        .where(ShopifyProduct.id == product_id)
+                        .values(
+                            categoryTop=product_fields["categoryTop"],
+                            productGender=product_fields["productGender"],
+                            updatedAt=now,
+                        )
+                    )
 
             print(f"    [✓] semanticText written for {len(updated_ids)}/{len(variants)} Shopify variant(s) of '{product.title[:40]}'")
 

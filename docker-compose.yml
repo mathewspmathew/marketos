@@ -164,6 +164,26 @@ services:
     # concurrency=1 + rate_limit='3/m' keeps Groq TPM usage separate from extraction/semantic
     command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "suggestion_queue", "-n", "suggestion-worker@%h", "--concurrency=1", "--loglevel=info"]
 
+  # Nightly elasticity training. CPU-only LightGBM; not memory-hungry but
+  # we keep it on its own container so the bigger model load doesn't share
+  # process memory with hot-path pricing decisions.
+  elasticity-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: elasticity_worker
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services:/app/services
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker",
+              "-Q", "elasticity_queue",
+              "-n", "elasticity-worker@%h", "--concurrency=1", "--loglevel=info"]
+
   # Single worker handles all dynamic-pricing queues — stats, pricing decisions,
   # Shopify sync (orders/inventory pulls), and Shopify write-back. Combined to
   # keep dev-laptop memory low; split into 4 workers in production for

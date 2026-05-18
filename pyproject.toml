@@ -19,5 +19,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pillow>=12.2.0",
+    "lightgbm>=4.5",
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
 ]
 

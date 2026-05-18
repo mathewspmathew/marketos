@@ -26,8 +26,11 @@ from sqlalchemy import text
 from services.common.celery_app import app
 from services.common.db import get_db
 from services.matcher_svc.scoring import (
+    ABSOLUTE_HYBRID_FLOOR,
     CONFIRMED_THRESHOLD,
     LIKELY_THRESHOLD,
+    PRICE_RATIO_LIMIT,
+    brand_match,
     compute_confidence,
     confidence_tier,
 )
@@ -91,11 +94,14 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
         query_text_vec = vec_row.vt
         query_img_vec = vec_row.vi  # may be None — falls back to text-only re-ranking
 
-        # Merchant-side structured attributes used for confidence scoring + the
-        # brand pre-filter. NULLs are fine — scoring degrades gracefully.
+        # Merchant-side structured attributes used for SQL hard-filters and
+        # confidence scoring. NULLs are tolerated — every filter degrades
+        # permissively when either side lacks the field.
         attr_row = session.execute(
             text(
-                'SELECT sp."id" AS prod_id, sp.vendor, sp."productType", sv."currentPrice" '
+                'SELECT sp."id" AS prod_id, sp.vendor, sp."productType", '
+                '       sp."categoryTop", sp."productGender", '
+                '       sv."currentPrice" '
                 'FROM "ShopifyVariant" sv '
                 'JOIN "ShopifyProduct" sp ON sp.id = sv."productId" '
                 'WHERE sv.id = :vid'
@@ -105,6 +111,8 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
         merchant_prod_id   = attr_row.prod_id if attr_row else None
         merchant_vendor    = attr_row.vendor if attr_row else None
         merchant_type      = attr_row.productType if attr_row else None
+        merchant_category  = attr_row.categoryTop if attr_row else None
+        merchant_gender    = attr_row.productGender if attr_row else None
         merchant_price     = float(attr_row.currentPrice) if attr_row and attr_row.currentPrice else None
         
         # Distinct competitor domains tracked by this shop.
@@ -134,6 +142,8 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
                     '       pe."prodId"    AS comp_prod_id, '
                     '       sp.vendor      AS comp_vendor, '
                     '       sp."productType" AS comp_type, '
+                    '       sp."categoryTop" AS comp_category, '
+                    '       sp."productGender" AS comp_gender, '
                     '       sv."currentPrice" AS comp_price, '
                     '       pe."vectorText" <=> CAST(:qvt AS vector) AS dist_text, '
                     '       CASE WHEN pe."vectorImg" IS NOT NULL AND CAST(:qvi AS text) IS NOT NULL '
@@ -145,14 +155,40 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
                     'WHERE pe."shopDomain" = :sd '
                     '  AND sp.domain = :dom '
                     '  AND pe."variantId" IS NOT NULL '
+                    # Brand pre-filter — only fires when BOTH sides have a vendor.
                     '  AND ( CAST(:mvendor AS text) IS NULL OR sp.vendor IS NULL '
                     '        OR LOWER(sp.vendor) = LOWER(CAST(:mvendor AS text)) ) '
+                    # Top-level category hard filter — clothing vs electronics
+                    # are never compared. Null on either side stays permissive.
+                    '  AND ( CAST(:mcategory AS text) IS NULL OR sp."categoryTop" IS NULL '
+                    '        OR sp."categoryTop" = CAST(:mcategory AS text) ) '
+                    # Gender hard filter — men\'s product never matched to a
+                    # women\'s product even if the rest of the signal aligns.
+                    '  AND ( CAST(:mgender AS text) IS NULL OR sp."productGender" IS NULL '
+                    '        OR sp."productGender" = CAST(:mgender AS text) ) '
+                    # Price-ratio sanity — reject candidates whose latest price
+                    # is >5x or <1/5x of the merchant variant. Permissive when
+                    # either price is null (extractor may have failed).
+                    '  AND ( CAST(:mprice AS numeric) IS NULL OR sv."currentPrice" IS NULL '
+                    '        OR sv."currentPrice" BETWEEN CAST(:mprice AS numeric) / :ratio '
+                    '                                  AND CAST(:mprice AS numeric) * :ratio ) '
+                    # Suppress pairs the merchant has already rejected in review.
+                    '  AND NOT EXISTS ( '
+                    '        SELECT 1 FROM "ProductLevelMatch" plm '
+                    '        WHERE plm."shopifyProductId" = :mprod '
+                    '          AND plm."scrapedProductId" = pe."prodId" '
+                    '          AND plm."rejectedByMerchant" = TRUE ) '
                     'ORDER BY pe."vectorText" <=> CAST(:qvt AS vector) '
                     f'LIMIT {_PER_DOMAIN_LIMIT}'
                 ),
                 {"qvt": query_text_vec, "qvi": query_img_vec,
                  "sd": shop_domain, "dom": domain,
-                 "mvendor": merchant_vendor},
+                 "mvendor":   merchant_vendor,
+                 "mcategory": merchant_category,
+                 "mgender":   merchant_gender,
+                 "mprice":    merchant_price,
+                 "mprod":     merchant_prod_id,
+                 "ratio":     PRICE_RATIO_LIMIT},
             ).all()
             if not rows:
                 continue
@@ -183,11 +219,29 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
                     "img_sim":         img_sim,
                 })
 
+            # Absolute hybrid floor: ignore anything below this regardless of
+            # what the domain-adaptive threshold would have allowed. Prevents
+            # a domain with all-bad candidates from letting the best-bad through.
+            candidates = [c for c in candidates if c["score"] >= ABSOLUTE_HYBRID_FLOOR]
+            if not candidates:
+                continue
+
             scores = [c["score"] for c in candidates]
             threshold = compute_domain_threshold(scores)
             kept = [c for c in candidates if c["score"] >= threshold]
             if not kept:
                 continue
+
+            # Top-1 per competitor product: a single competitor product with
+            # N sibling variants would otherwise produce N near-identical
+            # matches. We keep only the highest-scoring variant per product —
+            # the one we are most confident corresponds to this merchant variant.
+            best_by_product: dict[str, dict] = {}
+            for c in kept:
+                pid = c["comp_prod_id"]
+                if pid not in best_by_product or c["score"] > best_by_product[pid]["score"]:
+                    best_by_product[pid] = c
+            kept = list(best_by_product.values())
 
             for c in kept:
                 confidence = compute_confidence(
@@ -199,7 +253,12 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
                     merchant_price=merchant_price,
                     competitor_price=c["comp_price"],
                 )
-                tier = confidence_tier(confidence)
+                # Confidence may collapse to 0 from the hard price-ratio reject
+                # in scoring.py. Skip the insert in that case.
+                if confidence <= 0:
+                    continue
+                has_brand = brand_match(merchant_vendor, c["comp_vendor"])
+                tier = confidence_tier(confidence, has_brand_match=has_brand)
                 session.execute(
                     text(
                         'INSERT INTO "ProductMatch" '
@@ -242,7 +301,7 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
                 if merchant_prod_id:
                     product_pair_scores.setdefault(
                         (merchant_prod_id, c["comp_prod_id"]), []
-                    ).append(confidence)
+                    ).append((confidence, has_brand))
 
         # Orphan cleanup only: rows whose competitor variant was deleted upstream
         # (FK SetNull) and weren't refreshed by this run. We deliberately keep
@@ -264,9 +323,14 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
         # best variant pairing is N% sure" rather than diluting with weaker
         # sibling variants.
         if product_pair_scores and merchant_prod_id:
-            for (m_prod_id, c_prod_id), confs in product_pair_scores.items():
-                pair_conf = max(confs)
-                pair_tier = confidence_tier(pair_conf)
+            for (m_prod_id, c_prod_id), pairs in product_pair_scores.items():
+                # Each entry is (confidence, has_brand). Pair confidence is
+                # the max across variants; brand match is held if ANY variant
+                # in the pair had it (a single brand-confirmed variant is
+                # enough evidence that the product pair shares a brand).
+                pair_conf = max(p[0] for p in pairs)
+                pair_brand = any(p[1] for p in pairs)
+                pair_tier = confidence_tier(pair_conf, has_brand_match=pair_brand)
                 row = session.execute(
                     text(
                         'INSERT INTO "ProductLevelMatch" '
@@ -277,8 +341,16 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
                         '        :src, false, NOW(), NOW()) '
                         'ON CONFLICT ("shopifyProductId", "scrapedProductId") DO UPDATE SET '
                         '  confidence       = GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence), '
+                        # Recomputed tier respects brand-match: only let the
+                        # row reach CONFIRMED when this run carried brand
+                        # evidence. If the prior tier was already CONFIRMED
+                        # (merchant or earlier brand-evidence run), keep it.
                         '  "confidenceTier" = CASE '
-                        '     WHEN GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence) >= :confirmed '
+                        '     WHEN "ProductLevelMatch"."confidenceTier" = '
+                        '          CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
+                        '       THEN CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
+                        '     WHEN :brand_match = TRUE '
+                        '       AND GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence) >= :confirmed '
                         '       THEN CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
                         '     WHEN GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence) >= :likely '
                         '       THEN CAST(\'LIKELY\' AS "MatchConfidenceTier") '
@@ -293,6 +365,7 @@ def _match_variant(shop_domain: str, variant_id: str) -> int:
                         "cpid": c_prod_id,
                         "conf": round(pair_conf, 3),
                         "tier": pair_tier,
+                        "brand_match": pair_brand,
                         "src":  "RERANKER",
                         "confirmed": CONFIRMED_THRESHOLD,
                         "likely":    LIKELY_THRESHOLD,

@@ -56,8 +56,6 @@ model ShopifyUser {
   pricingRules           PricingRule[]
   pricingConfig          PricingConfig?
   priceDecisions         PriceDecision[]
-  priceChanges           PriceChange[]
-  pricingAlerts          PricingAlert[]
   promotionWindows       PromotionWindow[]
   shopAuth               ShopAuth?
 }
@@ -78,6 +76,11 @@ model ShopifyProduct {
   imageUrl    String?
   handle      String?
   status      String  @default("ACTIVE")
+
+  // Parsed from the structured semanticText fingerprint. Used by the matcher
+  // SQL pre-filter as a hard gate before HNSW similarity is computed.
+  categoryTop   String? // e.g. "clothing", "electronics", "kitchenware"
+  productGender String? // men / women / unisex / kids / not-applicable
 
   dynamicPricingEnabled Boolean   @default(false)
   syncPrice             Boolean   @default(true)
@@ -118,11 +121,8 @@ model ShopifyVariant {
 
   embedding       ShopifyEmbedding?
   productMatches  ProductMatch[]
-  priceSuggestion VariantPriceSuggestion?
   competitorStats VariantCompetitorStats?
   priceDecisions  PriceDecision[]
-  priceChanges    PriceChange[]
-  pricingAlerts   PricingAlert[]
   salesAggregate  SalesAggregate?
 }
 
@@ -158,6 +158,11 @@ model ScrapedProduct {
   tags           Json    @default("[]")
   imageUrl       String?
   specifications Json?
+
+  // Parsed from the structured semanticText fingerprint. Used by the matcher
+  // SQL pre-filter as a hard gate before HNSW similarity is computed.
+  categoryTop   String? // e.g. "clothing", "electronics", "kitchenware"
+  productGender String? // men / women / unisex / kids / not-applicable
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -287,6 +292,7 @@ model ScrapingError {
 // ─────────────────────────────────────────
 // SIMILARITY MATCHES (merchant variant ↔ competitor variant)
 // ─────────────────────────────────────────
+// variant level matching
 model ProductMatch {
   id                  String          @id @default(uuid())
   shopDomain          String
@@ -358,29 +364,6 @@ model ProductSuggestion {
   @@index([shopDomain, status])
 }
 
-model VariantPriceSuggestion {
-  id               String         @id @default(uuid())
-  shopDomain       String
-  shopifyVariantId String         @unique
-  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
-
-  competitorMin    Decimal? @db.Decimal(10, 2)
-  competitorMedian Decimal? @db.Decimal(10, 2)
-  competitorMax    Decimal? @db.Decimal(10, 2)
-  competitorCount  Int      @default(0)
-  priceRationale   String?
-
-  chosenPrice  Decimal? @db.Decimal(10, 2) // user-edited / picked value
-  appliedPrice Decimal? @db.Decimal(10, 2)
-
-  status      SuggestionStatus @default(FIRST_TIME)
-  generatedAt DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  appliedAt   DateTime?
-
-  @@index([shopDomain, status])
-}
-
 // ─────────────────────────────────────────
 // DYNAMIC PRICING — competitors, observations, stats
 // ─────────────────────────────────────────
@@ -396,6 +379,7 @@ enum MatchConfidenceTier {
   WEAK
 }
 
+// for entering just the competitor details only
 model Competitor {
   id          String         @id @default(uuid())
   shopDomain  String
@@ -432,6 +416,8 @@ model CompetitorPriceObservation {
   @@index([shopDomain, observedAt(sort: Desc)])
 }
 
+
+// this table is for Shopify products where it saves the stats of merchant's shopify products
 model VariantCompetitorStats {
   shopifyVariantId String         @id
   variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
@@ -452,6 +438,8 @@ model VariantCompetitorStats {
   @@index([shopDomain])
 }
 
+// from ProductMatch data is taken - Product level matching - matched with max(variant_confidence) - best variant for a product
+
 model ProductLevelMatch {
   id               String         @id @default(uuid())
   shopDomain       String
@@ -465,6 +453,8 @@ model ProductLevelMatch {
   confidenceTier      MatchConfidenceTier
   source              String              @default("RERANKER") // ANN | RERANKER | MANUAL
   confirmedByMerchant Boolean             @default(false)
+  rejectedByMerchant  Boolean             @default(false)
+  reviewedAt          DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -473,6 +463,7 @@ model ProductLevelMatch {
 
   @@unique([shopifyProductId, scrapedProductId])
   @@index([shopDomain, confidenceTier])
+  @@index([shopDomain, reviewedAt])
 }
 
 // ─────────────────────────────────────────
@@ -559,50 +550,23 @@ model PriceDecision {
   statsSnapshot      Json?
   signalsSnapshot    Json?
 
+  // Folded from PriceChange: outcome of the Shopify write attempt.
+  shopifyResponse Json?
+  revertedAt      DateTime?
+
+  // Folded from PricingAlert: a non-null alertReason means this decision
+  // surfaces in the alerts feed. Severity is INFO | WARN | CRITICAL.
+  alertReason     String?
+  alertSeverity   String?
+  alertDismissedAt DateTime?
+
   decidedAt DateTime  @default(now())
   appliedAt DateTime?
-
-  changes PriceChange[]
 
   @@index([shopDomain, decidedAt(sort: Desc)])
   @@index([shopifyVariantId, decidedAt(sort: Desc)])
   @@index([shopDomain, appliedAt])
-}
-
-model PriceChange {
-  id               String         @id @default(uuid())
-  shopDomain       String
-  shop             ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
-  shopifyVariantId String
-  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
-  decisionId       String?
-  decision         PriceDecision? @relation(fields: [decisionId], references: [id], onDelete: SetNull)
-
-  oldPrice        Decimal   @db.Decimal(10, 2)
-  newPrice        Decimal   @db.Decimal(10, 2)
-  shopifyResponse Json?
-  appliedAt       DateTime  @default(now())
-  revertedAt      DateTime?
-
-  @@index([shopDomain, appliedAt(sort: Desc)])
-  @@index([shopifyVariantId, appliedAt(sort: Desc)])
-}
-
-model PricingAlert {
-  id               String          @id @default(uuid())
-  shopDomain       String
-  shop             ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
-  shopifyVariantId String?
-  variant          ShopifyVariant? @relation(fields: [shopifyVariantId], references: [id], onDelete: SetNull)
-
-  type     String // e.g. COMPETITOR_DROP | GUARDRAIL_BLOCK | LOW_CONFIDENCE | STALE_DATA
-  severity String @default("INFO") // INFO | WARN | CRITICAL
-  payload  Json?
-
-  createdAt   DateTime  @default(now())
-  dismissedAt DateTime?
-
-  @@index([shopDomain, dismissedAt, createdAt(sort: Desc)])
+  @@index([shopDomain, alertDismissedAt, decidedAt(sort: Desc)])
 }
 
 model PromotionWindow {

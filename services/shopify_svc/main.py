@@ -277,26 +277,31 @@ mutation productVariantUpdate($productId: ID!, $variants: [ProductVariantsBulkIn
 """
 
 
-def _alert(session, shop_domain: str, variant_id: str | None, type_: str, severity: str, payload: dict) -> None:
-    import json, uuid
+def _flag_decision(session, decision_id: str, reason: str, severity: str, payload: dict | None = None) -> None:
+    """Mark a PriceDecision as alert-worthy. Folded from the old PricingAlert
+    table: alertReason != NULL means it surfaces in the alerts feed; payload
+    is stashed under shopifyResponse so the UI can render details."""
+    import json
     session.execute(
         text(
-            'INSERT INTO "PricingAlert"(id, "shopDomain", "shopifyVariantId", '
-            'type, severity, payload, "createdAt") '
-            'VALUES (:i, :s, :v, :t, :sv, CAST(:p AS jsonb), NOW())'
+            'UPDATE "PriceDecision" SET '
+            '  "alertReason"     = :r, '
+            '  "alertSeverity"   = :sv, '
+            '  "shopifyResponse" = COALESCE("shopifyResponse", CAST(:p AS jsonb)) '
+            'WHERE id = :i'
         ),
-        {"i": str(uuid.uuid4()), "s": shop_domain, "v": variant_id,
-         "t": type_, "sv": severity, "p": json.dumps(payload, default=str)},
+        {"i": decision_id, "r": reason, "sv": severity,
+         "p": json.dumps(payload or {}, default=str)},
     )
 
 
 def _apply_one_decision(decision_id: str) -> dict:
     """Pull the decision, validate it's still applicable, push to Shopify,
-    record PriceChange + flip PriceDecision.appliedAt.
+    flip PriceDecision.appliedAt + persist shopifyResponse.
 
     Idempotent: if the variant is already at the decision's newPrice we
     short-circuit. Safe to retry."""
-    import json, uuid
+    import json
     with get_db() as session:
         d = session.execute(
             text("""
@@ -340,8 +345,8 @@ def _apply_one_decision(decision_id: str) -> dict:
 
         token = _get_offline_token(shop_domain)
         if not token:
-            _alert(session, shop_domain, d.shopifyVariantId, "MISSING_OFFLINE_TOKEN", "CRITICAL",
-                   {"decisionId": decision_id, "hint": "merchant must reopen the app to refresh OAuth"})
+            _flag_decision(session, decision_id, "MISSING_OFFLINE_TOKEN", "CRITICAL",
+                           {"hint": "merchant must reopen the app to refresh OAuth"})
             return {"ok": False, "reason": "no_offline_token"}
 
         try:
@@ -353,31 +358,26 @@ def _apply_one_decision(decision_id: str) -> dict:
                 },
             )
         except Exception as exc:
-            _alert(session, shop_domain, d.shopifyVariantId, "SHOPIFY_WRITE_FAILED", "WARN",
-                   {"decisionId": decision_id, "error": str(exc)})
+            _flag_decision(session, decision_id, "SHOPIFY_WRITE_FAILED", "WARN",
+                           {"error": str(exc)})
             raise  # let Celery retry
 
         result = data.get("productVariantsBulkUpdate", {})
         user_errors = result.get("userErrors") or []
         if user_errors:
-            _alert(session, shop_domain, d.shopifyVariantId, "SHOPIFY_USER_ERROR", "WARN",
-                   {"decisionId": decision_id, "userErrors": user_errors})
+            _flag_decision(session, decision_id, "SHOPIFY_USER_ERROR", "WARN",
+                           {"userErrors": user_errors})
             return {"ok": False, "reason": "user_errors", "userErrors": user_errors}
 
-        # Persist audit + flip applied + update local snapshot of current price.
+        # Flip applied + persist Shopify response + update local price snapshot.
         session.execute(
             text(
-                'INSERT INTO "PriceChange"(id, "shopDomain", "shopifyVariantId", '
-                '"decisionId", "oldPrice", "newPrice", "shopifyResponse", "appliedAt") '
-                'VALUES (:i, :s, :v, :d, :op, :np, CAST(:r AS jsonb), NOW())'
+                'UPDATE "PriceDecision" SET '
+                '  "appliedAt"       = NOW(), '
+                '  "shopifyResponse" = CAST(:r AS jsonb) '
+                'WHERE id = :i'
             ),
-            {"i": str(uuid.uuid4()), "s": shop_domain, "v": d.shopifyVariantId,
-             "d": decision_id, "op": round(current or 0.0, 2), "np": round(new_price, 2),
-             "r": json.dumps(result, default=str)},
-        )
-        session.execute(
-            text('UPDATE "PriceDecision" SET "appliedAt" = NOW() WHERE id = :i'),
-            {"i": decision_id},
+            {"i": decision_id, "r": json.dumps(result, default=str)},
         )
         session.execute(
             text('UPDATE "ShopifyVariant" SET "currentPrice" = :p WHERE id = :v'),

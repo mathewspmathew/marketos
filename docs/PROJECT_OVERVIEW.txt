@@ -1,0 +1,83 @@
+MarketOS — Project Overview
+============================
+
+What it is
+----------
+MarketOS is an intelligence platform that lives inside a merchant's Shopify
+admin. It watches competitor websites, understands what products are being
+sold and at what prices, compares those products against the merchant's own
+catalog, and then recommends smarter prices the merchant can apply with one
+click.
+
+In short: it helps online stores stay competitive automatically, instead of
+the owner manually checking rival sites every day.
+
+
+Who uses it
+-----------
+- Shopify store owners and their teams.
+- They install MarketOS like any other Shopify app and use it from inside
+  their normal Shopify dashboard.
+
+
+How a merchant uses it (the journey)
+------------------------------------
+1. The merchant tells MarketOS which competitor websites or product pages
+   to keep an eye on.
+
+2. MarketOS visits those pages in the background, on a schedule, and reads
+   them — product names, descriptions, images, prices, variants, stock.
+
+3. It then matches each competitor product to the closest product in the
+   merchant's own store. For example, "our Blue Running Shoe Size 9" is
+   recognised as the same item as a rival's listing, even when the titles
+   and photos are different.
+
+4. For each matched product, MarketOS suggests a new price. The suggestion
+   takes into account what competitors are charging and how sensitive the
+   product is to price changes (price elasticity).
+
+5. The merchant reviews suggestions on a clean dashboard, approves the ones
+   they like, and the new prices are pushed straight back into Shopify.
+
+6. The merchant also gets alerts when something important changes — a
+   competitor drops their price, a new rival product appears, or a match
+   needs human review.
+
+
+The main pages the merchant sees
+--------------------------------
+- Dashboard       : a quick health view of the store vs the market.
+- Scraping setup  : where to add and manage competitor sources.
+- Matches         : merchant products paired with their competitor
+                    equivalents, with a review screen for uncertain matches.
+- Suggestions     : recommended price changes, accept / reject.
+- Pricing         : per-product price history and controls.
+- Alerts          : notable market events worth the merchant's attention.
+
+
+What happens behind the scenes
+------------------------------
+The system runs as a set of small background workers, each doing one job:
+
+- A scraper visits competitor pages and pulls the raw content.
+- An extractor turns that raw content into clean structured product data
+  using an AI model.
+- An embedder converts product text and images into a mathematical
+  fingerprint so similar products can be compared.
+- A matcher uses those fingerprints to pair competitor products with the
+  merchant's own products.
+- A pricing engine looks at the matches and produces price suggestions.
+- An elasticity engine estimates how customers will react to a price
+  change.
+- A writer pushes approved prices back to Shopify.
+
+All of these workers talk to a shared database so the dashboard always
+shows the latest picture.
+
+
+The value in one line
+---------------------
+MarketOS replaces the slow, manual work of watching competitors and
+adjusting prices with an automated loop: watch the market, understand it,
+recommend a move, and apply it — all from inside Shopify.
