@@ -17,11 +17,16 @@ from datetime import datetime, timezone
 from celery.exceptions import Retry as CeleryRetry
 from dotenv import load_dotenv
 from groq import Groq, RateLimitError as GroqRateLimitError
-from sqlalchemy import update as sa_update
+from sqlalchemy import text as sa_text, update as sa_update
 
 from services.common.celery_app import app
 from services.common.db import get_db
 from services.common.models import ScrapedProduct, ScrapedVariant, ShopifyProduct, ShopifyVariant
+from services.common.vertex_embed import (
+    embed_text,
+    invalidate_search_query_vector,
+    save_search_query_vector,
+)
 from services.scraper_svc.helpers import log_error
 
 load_dotenv()
@@ -99,6 +104,69 @@ def _groq_semantic_call(prompt: str, *, shopify: bool = False) -> dict[str, str]
         temperature=0.2,
     )
     return json.loads(response.choices[0].message.content)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# searchQuery generation — a compact 5-7 keyword phrase used to retrieve this
+# product on Google. Separate Groq call from the semantic fingerprint so the
+# two have independent prompts and one can fail without taking the other down.
+# ─────────────────────────────────────────────────────────────────────────────
+GROQ_SEARCH_QUERY_PROMPT = """Produce a Google search query that will retrieve product-detail pages
+selling the same product. Output 4–7 plain lowercase keywords, no quotes, no punctuation.
+
+Rules:
+- Lead with brand + product model/family if known.
+- Include the most disambiguating attribute (color, size, capacity, edition, etc.).
+- Do NOT include marketing words, adjectives like "best", "premium", or descriptors of intent
+  like "online" or "buy".
+- Do NOT include the merchant's own store domain or city/country names.
+- If the product is generic (no brand/model), use category + 1–2 strong attributes.
+
+Product:
+  title: {title}
+  vendor: {vendor}
+  category: {category}
+  description: {description}
+
+Return STRICT JSON: {{"query": "your keywords here"}}"""
+
+
+def _groq_search_query(
+    *,
+    title: str,
+    vendor: str | None,
+    category: str | None,
+    description: str | None,
+    shopify: bool = True,
+) -> str | None:
+    """One small Groq call → product-level search query string, or None on failure."""
+    client = _groq_client_shopify if shopify else _groq_client
+    prompt = GROQ_SEARCH_QUERY_PROMPT.format(
+        title=title or "",
+        vendor=vendor or "Unknown Brand",
+        category=category or "Product",
+        description=(description or "")[:400],
+    )
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "Output JSON only."},
+                {"role": "user",   "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+        )
+        data = json.loads(response.choices[0].message.content)
+        q = (data.get("query") or "").strip().lower()
+        # Keep keywords-only: strip punctuation noise an LLM sometimes adds.
+        q = " ".join(
+            tok for tok in q.replace(",", " ").replace('"', " ").split() if tok
+        )
+        return q or None
+    except Exception as exc:
+        print(f"[!] search query generation failed: {exc}")
+        return None
 
 
 def _build_semantic_prompt(
@@ -283,78 +351,122 @@ def generate_shopify_variant_semantics(self, product_id: str):
     try:
         with get_db() as session:
             product  = session.query(ShopifyProduct).filter(ShopifyProduct.id == product_id).first()
+            if not product:
+                print(f"[!] ShopifyProduct {product_id} not found — skipping")
+                return
+
             variants = session.query(ShopifyVariant).filter(
                 ShopifyVariant.productId == product_id,
                 ShopifyVariant.semanticText == None,  # noqa: E711
             ).all()
 
-            if not product:
-                print(f"[!] ShopifyProduct {product_id} not found — skipping")
+            needs_search_query = (
+                not product.searchQuery
+                and not product.searchQueryOverride
+            )
+
+            # If neither variants nor the product itself need anything, we're done.
+            if not variants and not needs_search_query:
+                print(f"[!] Nothing to generate for ShopifyProduct {product_id} — skipping")
                 return
-            if not variants:
-                print(f"[!] No variants needing semanticText for ShopifyProduct {product_id} — skipping")
-                return
-
-            # Use the numeric tail of the GID as the Groq key — LLMs reproduce
-            # short integers reliably, unlike full GID strings with slashes/colons.
-            id_map = {_short_id(v.id): v.id for v in variants}
-
-            variants_payload = [
-                {
-                    "id":             _short_id(v.id),
-                    "title":          v.title,
-                    "options":        v.options or {},
-                    "current_price":  float(v.currentPrice or 0),
-                    "original_price": float(v.compareAtPrice) if v.compareAtPrice else None,
-                    "is_in_stock":    v.isInStock,
-                }
-                for v in variants
-            ]
-
-            try:
-                semantic_map = _groq_semantic_call(
-                    _build_semantic_prompt(
-                        product.title, product.vendor, product.productType,
-                        product.description, product.tags, None,
-                        variants_payload,
-                    ),
-                    shopify=True,
-                )
-            except GroqRateLimitError:
-                raise self.retry(countdown=65)
-            except Exception as e:
-                if self.request.retries >= self.max_retries:
-                    print(f"[!] Giving up on Shopify semantics for {product_id}: {e}")
-                    return
-                raise self.retry(exc=e)
 
             now = datetime.now(timezone.utc)
             parsed_per_variant: list[dict] = []
-            for short_key, full_id in id_map.items():
-                text = semantic_map.get(short_key, "")
-                if text:
-                    session.execute(
-                        sa_update(ShopifyVariant)
-                        .where(ShopifyVariant.id == full_id)
-                        .values(semanticText=text, updatedAt=now)
-                    )
-                    updated_ids.append(full_id)
-                    parsed_per_variant.append(_parse_fingerprint_fields(text))
 
-            if parsed_per_variant:
-                product_fields = _consolidate_product_fields(parsed_per_variant)
-                if product_fields["categoryTop"] or product_fields["productGender"]:
+            # ── Variant-level semanticText (only for variants missing it) ──
+            if variants:
+                id_map = {_short_id(v.id): v.id for v in variants}
+                variants_payload = [
+                    {
+                        "id":             _short_id(v.id),
+                        "title":          v.title,
+                        "options":        v.options or {},
+                        "current_price":  float(v.currentPrice or 0),
+                        "original_price": float(v.compareAtPrice) if v.compareAtPrice else None,
+                        "is_in_stock":    v.isInStock,
+                    }
+                    for v in variants
+                ]
+                try:
+                    semantic_map = _groq_semantic_call(
+                        _build_semantic_prompt(
+                            product.title, product.vendor, product.productType,
+                            product.description, product.tags, None,
+                            variants_payload,
+                        ),
+                        shopify=True,
+                    )
+                except GroqRateLimitError:
+                    raise self.retry(countdown=65)
+                except Exception as e:
+                    if self.request.retries >= self.max_retries:
+                        print(f"[!] Giving up on Shopify semantics for {product_id}: {e}")
+                        return
+                    raise self.retry(exc=e)
+
+                for short_key, full_id in id_map.items():
+                    text = semantic_map.get(short_key, "")
+                    if text:
+                        session.execute(
+                            sa_update(ShopifyVariant)
+                            .where(ShopifyVariant.id == full_id)
+                            .values(semanticText=text, updatedAt=now)
+                        )
+                        updated_ids.append(full_id)
+                        parsed_per_variant.append(_parse_fingerprint_fields(text))
+
+            product_fields = _consolidate_product_fields(parsed_per_variant) if parsed_per_variant else {}
+            category_for_query = product_fields.get("categoryTop") if product_fields else (product.categoryTop or None)
+            if product_fields and (product_fields.get("categoryTop") or product_fields.get("productGender")):
+                session.execute(
+                    sa_update(ShopifyProduct)
+                    .where(ShopifyProduct.id == product_id)
+                    .values(
+                        categoryTop=product_fields["categoryTop"],
+                        productGender=product_fields["productGender"],
+                        updatedAt=now,
+                    )
+                )
+
+            # ── searchQuery generation (runs independently of variants) ────
+            # Generate when:
+            #   - no override pinned, AND
+            #   - product.searchQuery is currently empty
+            # If an override IS pinned, we don't touch searchQuery but we DO
+            # refresh the vector cache against the effective (override) query.
+            if not product.searchQueryOverride and not product.searchQuery:
+                new_query = _groq_search_query(
+                    title=product.title,
+                    vendor=product.vendor,
+                    category=category_for_query or product.productType,
+                    description=product.description,
+                )
+                if new_query:
                     session.execute(
                         sa_update(ShopifyProduct)
                         .where(ShopifyProduct.id == product_id)
                         .values(
-                            categoryTop=product_fields["categoryTop"],
-                            productGender=product_fields["productGender"],
+                            searchQuery=new_query,
                             updatedAt=now,
                         )
                     )
+                    # Vector lives in ShopifyProductEmbedding now — drop the
+                    # row so the embed call below refills it cleanly.
+                    invalidate_search_query_vector(session, product_id)
+                    product.searchQuery = new_query
 
-            print(f"    [✓] semanticText written for {len(updated_ids)}/{len(variants)} Shopify variant(s) of '{product.title[:40]}'")
+            # Cache the Vertex embedding of the effective query (override wins).
+            effective_query = (product.searchQueryOverride or product.searchQuery or "").strip()
+            if effective_query:
+                vec = embed_text(effective_query, task_type="RETRIEVAL_DOCUMENT")
+                if vec:
+                    save_search_query_vector(session, product_id, vec)
+
+            print(
+                f"    [✓] semantics updated for '{product.title[:40]}' — "
+                f"variants={len(updated_ids)}/{len(variants)} "
+                f"searchQuery={'set' if product.searchQuery else 'missing'}"
+            )
 
     except Exception as exc:
         raise self.retry(exc=exc)

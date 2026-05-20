@@ -3,7 +3,7 @@ services/scraper_svc/extractor.py
 
 Task 2 — extract_product (extraction_queue)
   Download .md from GCS → Groq extraction → upsert via ProductUrl.
-  On permanent failure: log to ScrapingError table (DLQ).
+  On permanent failure: log via helpers.log_error (stderr).
   Queue generate_variant_semantics.
 """
 
@@ -23,7 +23,6 @@ from services.common.celery_app import app
 from services.common.db import get_db
 from services.common.gcs_utils import download_markdown_from_gcs, upload_image_to_gcs
 from services.common.models import (
-    Competitor,
     CompetitorPriceObservation,
     ProductUrl,
     ScrapedProduct,
@@ -108,40 +107,9 @@ def extract_with_groq(markdown: str, url: str) -> ProductSchema | None:
         return None
 
 
-def _ensure_competitor(session, shop_domain: str, domain: str) -> str | None:
-    """Upsert a Competitor row for (shopDomain, domain). Returns its id.
-
-    Auto-creates with default weight=0.5 / tier=MIDMARKET so observations can
-    always link to a competitor; merchant configures weight/tier later in UI.
-    """
-    if not domain or domain == "unknown":
-        return None
-    now = datetime.now(timezone.utc)
-    row = session.execute(
-        pg_insert(Competitor)
-        .values(
-            id=str(uuid.uuid4()),
-            shopDomain=shop_domain,
-            domain=domain,
-            tier="MIDMARKET",
-            weight=0.5,
-            enabled=True,
-            createdAt=now,
-            updatedAt=now,
-        )
-        .on_conflict_do_update(
-            index_elements=["shopDomain", "domain"],
-            set_={"updatedAt": now},
-        )
-        .returning(Competitor.id)
-    ).first()
-    return row[0] if row else None
-
-
 def _record_observations(
     session,
     shop_domain: str,
-    competitor_id: str | None,
     rows: list[dict],
 ) -> None:
     """Append CompetitorPriceObservation rows. `rows` is a list of
@@ -160,7 +128,6 @@ def _record_observations(
             {
                 "id":                  str(uuid.uuid4()),
                 "shopDomain":          shop_domain,
-                "competitorId":        competitor_id,
                 "competitorVariantId": r["competitorVariantId"],
                 "price":               r["price"],
                 "currency":            r.get("currency", "INR"),
@@ -288,9 +255,8 @@ def upsert_to_db(
             ]
             session.execute(pg_insert(ScrapedVariant), variant_rows)
 
-            competitor_id = _ensure_competitor(session, shop_domain, domain)
             _record_observations(
-                session, shop_domain, competitor_id,
+                session, shop_domain,
                 [
                     {
                         "competitorVariantId": row["id"],
@@ -403,9 +369,8 @@ def update_prices_in_db(
                     .where(ScrapedProduct.id == prod_id)
                 ).first()
                 if meta:
-                    shop_domain, domain = meta
-                    competitor_id = _ensure_competitor(session, shop_domain, domain)
-                    _record_observations(session, shop_domain, competitor_id, observation_rows)
+                    shop_domain, _domain = meta
+                    _record_observations(session, shop_domain, observation_rows)
 
             print(f"    [✓] Price/stock updated: {updated}/{len(existing)} variant(s) for {product_url[:60]}")
             return updated > 0

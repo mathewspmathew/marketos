@@ -74,6 +74,22 @@ services:
       - ./services:/app/services
     command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "scheduler_queue", "--concurrency=1", "--loglevel=info"]
 
+  discovery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: discovery_worker
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - SERPER_API_KEY=${SERPER_API_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services:/app/services
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "discovery_queue", "-n", "discovery-worker@%h", "--concurrency=2", "--loglevel=info"]
+
   semantic-worker:
     build:
       context: .

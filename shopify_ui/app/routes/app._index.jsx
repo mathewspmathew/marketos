@@ -24,18 +24,48 @@ export const loader = async ({ request }) => {
 
   const products = await db.shopifyProduct.findMany({
     where: { shopDomain },
-    include: { variants: { take: 1 } },
+    include: {
+      variants: { take: 1 },
+      _count: { select: { competitorCandidates: true, productLevelMatches: true } },
+    },
     orderBy: { updatedAt: "desc" },
   });
 
   const flattened = products.map((p) => ({
-    ...p,
+    id: p.id,
+    title: p.title,
+    productType: p.productType,
+    tags: p.tags,
+    imageUrl: p.imageUrl,
     price: p.variants[0]?.currentPrice?.toString() ?? "0.00",
     compareAtPrice: p.variants[0]?.compareAtPrice?.toString() ?? null,
+    dynamicPricingEnabled: p.dynamicPricingEnabled,
+    syncPrice: p.syncPrice,
+    syncDescription: p.syncDescription,
+    syncTitle: p.syncTitle,
+    searchQuery: p.searchQuery ?? "",
+    searchQueryOverride: p.searchQueryOverride ?? "",
+    floorPrice: p.floorPrice?.toString() ?? "",
+    ceilingPrice: p.ceilingPrice?.toString() ?? "",
+    frequencyInterval: p.frequencyInterval ?? "",
+    frequencyUnit: p.frequencyUnit ?? "",
+    discoveryNumResults: p.discoveryNumResults ?? 10,
+    lastDiscoveryAt: p.lastDiscoveryAt ? p.lastDiscoveryAt.toISOString() : null,
+    matchCount: p._count.productLevelMatches,
+    candidateCount: p._count.competitorCandidates,
   }));
 
   return { products: flattened };
 };
+
+// Canonical frequency-unit dropdown — keep in sync with
+// services/common/frequency.py::CANONICAL_UNITS / UNIT_LABELS.
+const FREQ_UNITS = [
+  { value: "never",  label: "Never (one-time discovery)" },
+  { value: "minute", label: "Minutes" },
+  { value: "hour",   label: "Hours"   },
+  { value: "day",    label: "Days"    },
+];
 
 // ─── GraphQL full sync helper ─────────────────────────────────────────────────
 async function syncProductsFromShopify(admin, shopDomain) {
@@ -148,6 +178,8 @@ export const action = async ({ request }) => {
   const productId = formData.get("productId");
 
   if (intent === "toggleDynamic") {
+    // Disable-only path. Enabling now goes through "saveAndEnable" so the
+    // overrides are committed atomically with the toggle flip.
     const enabled = formData.get("enabled") === "true";
     await db.shopifyProduct.update({
       where: { id: productId },
@@ -161,6 +193,58 @@ export const action = async ({ request }) => {
         syncDescription: formData.get("syncDescription") === "true",
         syncTitle: formData.get("syncTitle") === "true",
       },
+    });
+  } else if (intent === "saveAndEnable" || intent === "updateOverrides") {
+    // Strict validation: frequencyUnit must be a canonical option; floor/ceiling
+    // must parse as positive numbers when provided.
+    const allowedUnits = new Set(["never", "minute", "hour", "day"]);
+    const rawUnit     = formData.get("frequencyUnit") || "";
+    const rawInterval = formData.get("frequencyInterval");
+    const rawFloor    = formData.get("floorPrice");
+    const rawCeiling  = formData.get("ceilingPrice");
+    const rawOverride = (formData.get("searchQueryOverride") || "").toString().trim();
+    const rawNumResults = formData.get("discoveryNumResults");
+
+    const data = {
+      searchQueryOverride: rawOverride === "" ? null : rawOverride,
+    };
+
+    if (rawUnit && allowedUnits.has(rawUnit)) {
+      data.frequencyUnit = rawUnit;
+    } else if (rawUnit === "") {
+      data.frequencyUnit = null;
+    }
+
+    if (rawInterval === "" || rawInterval === null) {
+      data.frequencyInterval = null;
+    } else {
+      const n = parseInt(rawInterval, 10);
+      if (Number.isFinite(n) && n > 0) data.frequencyInterval = n;
+    }
+
+    const parseDecimal = (raw) => {
+      if (raw === "" || raw === null) return null;
+      const n = parseFloat(raw);
+      return Number.isFinite(n) && n >= 0 ? n : undefined;
+    };
+
+    const floor   = parseDecimal(rawFloor);
+    const ceiling = parseDecimal(rawCeiling);
+    if (floor   !== undefined) data.floorPrice   = floor;
+    if (ceiling !== undefined) data.ceilingPrice = ceiling;
+
+    if (rawNumResults !== null && rawNumResults !== "") {
+      const n = parseInt(rawNumResults, 10);
+      if (Number.isFinite(n) && n > 0) data.discoveryNumResults = Math.min(n, 50);
+    }
+
+    if (intent === "saveAndEnable") {
+      data.dynamicPricingEnabled = true;
+    }
+
+    await db.shopifyProduct.update({
+      where: { id: productId },
+      data,
     });
   }
 
@@ -185,6 +269,12 @@ export default function HomePage() {
         syncPrice: p.syncPrice,
         syncDescription: p.syncDescription,
         syncTitle: p.syncTitle,
+        searchQueryOverride: p.searchQueryOverride,
+        floorPrice: p.floorPrice,
+        ceilingPrice: p.ceilingPrice,
+        frequencyInterval: p.frequencyInterval === "" ? "" : String(p.frequencyInterval),
+        frequencyUnit: p.frequencyUnit,
+        discoveryNumResults: p.discoveryNumResults ?? 10,
       };
     }
     return map;
@@ -221,18 +311,63 @@ export default function HomePage() {
       syncPrice: true,
       syncDescription: false,
       syncTitle: false,
+      searchQueryOverride: "",
+      floorPrice: "",
+      ceilingPrice: "",
+      frequencyInterval: "",
+      frequencyUnit: "",
+      discoveryNumResults: 10,
     };
 
-  const handleToggle = (productId, currentValue) => {
-    const newValue = !currentValue;
+  const setOverrideField = (productId, field, value) => {
     setLocalState((prev) => ({
       ...prev,
-      [productId]: { ...prev[productId], dynamicPricingEnabled: newValue },
+      [productId]: { ...getLocal(productId), [field]: value },
     }));
+  };
+
+  const submitOverrides = (productId, opts = {}) => {
+    const local = getLocal(productId);
+    const intent = opts.enable ? "saveAndEnable" : "updateOverrides";
+    if (opts.enable) {
+      // Reflect the enabled state locally so the UI flips immediately.
+      setLocalState((prev) => ({
+        ...prev,
+        [productId]: { ...local, dynamicPricingEnabled: true },
+      }));
+    }
     fetcher.submit(
-      { intent: "toggleDynamic", productId, enabled: String(newValue) },
+      {
+        intent,
+        productId,
+        searchQueryOverride: local.searchQueryOverride ?? "",
+        floorPrice:          local.floorPrice ?? "",
+        ceilingPrice:        local.ceilingPrice ?? "",
+        frequencyInterval:   local.frequencyInterval ?? "",
+        frequencyUnit:       local.frequencyUnit ?? "",
+        discoveryNumResults: String(local.discoveryNumResults ?? 10),
+      },
       { method: "POST" },
     );
+  };
+
+  // Toggle now opens the panel for enabling (commit deferred to Save) or
+  // disables immediately (no panel data to commit on the way down).
+  const handleToggle = (productId, currentValue) => {
+    if (currentValue) {
+      // Disable path — commit immediately.
+      setLocalState((prev) => ({
+        ...prev,
+        [productId]: { ...prev[productId], dynamicPricingEnabled: false },
+      }));
+      fetcher.submit(
+        { intent: "toggleDynamic", productId, enabled: "false" },
+        { method: "POST" },
+      );
+    } else {
+      // Enable path — just open the panel. Save button commits everything.
+      setExpandedId(productId);
+    }
   };
 
   const handleFieldChange = (productId, field, currentValue) => {
@@ -344,11 +479,29 @@ export default function HomePage() {
 
                     <s-stack direction="inline" gap="base" align="center">
                       <s-text>Dynamic Pricing</s-text>
-                      <s-toggle
-                        id={`toggle-${product.id}`}
-                        checked={isOn || undefined}
-                        onClick={() => handleToggle(product.id, isOn)}
-                      />
+                      {isOn ? (
+                        <>
+                          <s-badge tone="success">ON</s-badge>
+                          <s-button
+                            size="slim"
+                            tone="critical"
+                            onClick={() => handleToggle(product.id, true)}
+                          >
+                            Turn off
+                          </s-button>
+                        </>
+                      ) : (
+                        <>
+                          <s-badge tone="subdued">OFF</s-badge>
+                          <s-button
+                            size="slim"
+                            variant="primary"
+                            onClick={() => setExpandedId(product.id)}
+                          >
+                            Configure &amp; turn on
+                          </s-button>
+                        </>
+                      )}
                       <s-button
                         variant="plain"
                         size="slim"
@@ -356,7 +509,7 @@ export default function HomePage() {
                         onClick={() => toggleExpand(product.id)}
                         aria-label={isExpanded ? "Collapse details" : "Expand details"}
                       >
-                        {isExpanded ? "▾" : "▸"}
+                        {isExpanded ? "▾ Hide" : "▸ Details"}
                       </s-button>
                     </s-stack>
 
@@ -367,10 +520,22 @@ export default function HomePage() {
                         borderRadius="base"
                         background="subdued"
                       >
-                        <s-stack direction="block" gap="tight">
-                          <s-text emphasis="bold">
-                            Which fields should sync dynamically?
-                          </s-text>
+                        <s-stack direction="block" gap="base">
+                          <s-stack direction="inline" gap="loose" align="center">
+                            <s-text tone="subdued">Verified competitors:</s-text>
+                            <s-badge>{product.matchCount}</s-badge>
+                            <s-text tone="subdued">Candidates seen:</s-text>
+                            <s-badge tone="info">{product.candidateCount}</s-badge>
+                            {product.lastDiscoveryAt && (
+                              <s-text tone="subdued">
+                                Last run {new Date(product.lastDiscoveryAt).toLocaleString()}
+                              </s-text>
+                            )}
+                          </s-stack>
+
+                          <s-divider />
+
+                          <s-text emphasis="bold">Sync to Shopify</s-text>
                           <s-stack direction="inline" gap="loose">
                             <s-checkbox
                               id={`price-${product.id}`}
@@ -400,9 +565,112 @@ export default function HomePage() {
                               }
                             />
                           </s-stack>
+
+                          <s-divider />
+
+                          <s-text emphasis="bold">Search query (used to find competitors)</s-text>
+                          <s-text-field
+                            label="Search query"
+                            placeholder={product.searchQuery || "e.g. nike air max 90 blue mens"}
+                            value={local.searchQueryOverride || product.searchQuery || ""}
+                            helpText={
+                              product.searchQuery && !local.searchQueryOverride
+                                ? `Generated by AI from the product details. Edit to refine.`
+                                : `Edit to override the generated query, or leave it as-is.`
+                            }
+                            onInput={(e) => {
+                              const v = e.currentTarget.value;
+                              // Only treat user typing as override; if they
+                              // wipe it back to the generated value, store
+                              // empty so the backend keeps the regen behavior.
+                              setOverrideField(
+                                product.id,
+                                "searchQueryOverride",
+                                v === (product.searchQuery || "") ? "" : v,
+                              );
+                            }}
+                          />
+
+                          <s-text emphasis="bold">Number of competitor products to fetch</s-text>
+                          <s-text tone="subdued">
+                            How many product links discovery should pull per run (1–50).
+                          </s-text>
+                          <s-text-field
+                            label="Number of products"
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={String(local.discoveryNumResults ?? "")}
+                            onInput={(e) =>
+                              setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
+                            }
+                          />
+
+                          <s-text emphasis="bold">Price bounds (applied to all variants)</s-text>
+                          <s-stack direction="inline" gap="base">
+                            <s-text-field
+                              label="Floor"
+                              type="number"
+                              placeholder="0.00"
+                              value={local.floorPrice ?? ""}
+                              onInput={(e) =>
+                                setOverrideField(product.id, "floorPrice", e.currentTarget.value)
+                              }
+                            />
+                            <s-text-field
+                              label="Ceiling"
+                              type="number"
+                              placeholder="0.00"
+                              value={local.ceilingPrice ?? ""}
+                              onInput={(e) =>
+                                setOverrideField(product.id, "ceilingPrice", e.currentTarget.value)
+                              }
+                            />
+                          </s-stack>
+
+                          <s-text emphasis="bold">Rescrape frequency</s-text>
+                          <s-text tone="subdued">
+                            Required for dynamic pricing to keep prices fresh. Empty falls back to shop default.
+                          </s-text>
+                          <s-stack direction="inline" gap="base">
+                            <s-text-field
+                              label="Every"
+                              type="number"
+                              placeholder="e.g. 15"
+                              value={local.frequencyInterval ?? ""}
+                              onInput={(e) =>
+                                setOverrideField(product.id, "frequencyInterval", e.currentTarget.value)
+                              }
+                            />
+                            <s-select
+                              label="Unit"
+                              value={local.frequencyUnit || ""}
+                              onChange={(e) =>
+                                setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
+                              }
+                            >
+                              <s-option value="">(shop default)</s-option>
+                              {FREQ_UNITS.map((u) => (
+                                <s-option key={u.value} value={u.value}>{u.label}</s-option>
+                              ))}
+                            </s-select>
+                          </s-stack>
+
+                          <s-stack direction="inline" gap="base" align="center">
+                            <s-button
+                              variant="primary"
+                              onClick={() => submitOverrides(product.id, { enable: !isOn })}
+                            >
+                              {isOn ? "Save changes" : "Save & start dynamic pricing"}
+                            </s-button>
+                            <s-link href={`/app/history/${encodeURIComponent(product.id)}`}>
+                              Price history
+                            </s-link>
+                          </s-stack>
+
                           {!isOn && (
                             <s-text tone="subdued">
-                              Enable Dynamic Pricing to configure sync fields.
+                              When you save, discovery begins within ~30s and competitor scraping starts on the schedule you set.
                             </s-text>
                           )}
                         </s-stack>

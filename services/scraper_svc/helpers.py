@@ -5,15 +5,13 @@ Shared utilities used across scraper, extractor, and semantics tasks.
 """
 
 import os
-import uuid
 from datetime import datetime, timedelta, timezone
 
 import redis as redis_lib
 from sqlalchemy import update as sa_update, func
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from services.common.db import get_db
-from services.common.models import ProductUrl, ScrapingConfig, ScrapingError
+from services.common.models import ProductUrl, ScrapingConfig
 
 _UNIT_TO_SECONDS = {"min": 60, "hr": 3600, "day": 86400}
 
@@ -41,23 +39,12 @@ def log_error(
     gcs_ref:     str = "",
     detail:      str = "",
 ) -> None:
-    try:
-        with get_db() as session:
-            session.execute(
-                pg_insert(ScrapingError).values(
-                    id=str(uuid.uuid4()),
-                    shopDomain=shop_domain,
-                    configId=config_id,
-                    productUrl=product_url,
-                    gcsRef=gcs_ref or None,
-                    errorType=error_type,
-                    errorDetail=detail[:1000] if detail else None,
-                    taskName=task_name,
-                )
-            )
-        print(f"    [DLQ] Logged {error_type} for {product_url[:60]}", flush=True)
-    except Exception as log_err:
-        print(f"    [!] Failed to write DLQ entry: {log_err}", flush=True)
+    print(
+        f"    [ERR] {error_type} in {task_name} shop={shop_domain} "
+        f"config={config_id} url={product_url[:80]} "
+        f"gcs={gcs_ref or '-'} detail={(detail or '')[:300]}",
+        flush=True,
+    )
 
 
 def set_next_scrap_at(config_id: str, product_url: str) -> None:

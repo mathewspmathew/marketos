@@ -1,225 +1,162 @@
 """
 services/pricing_svc/decide.py
 
-Pure decision math. No DB, no I/O, no Celery. Given a fully-loaded variant
-context + active rule + optional ML prediction, compute the final price
-along with the rule's pre-nudge suggestion, ML's suggestion, confidence,
-and the human-readable reason trail.
+v1 product-level pricing decision.
 
-The orchestration that loads inputs and writes PriceDecision lives in
-apply.py — this module exists so the math is testable in isolation and so
-the loop is comprehensible at a glance.
+Formula (deliberately dumb):
+  suggested = median(latest competitor prices across the product's matches)
+            × (1 - shop.markupPct)
+  clamped to (product.floorPrice, product.ceilingPrice) when set.
+
+The same price is written to every variant of the product (the UX is product-
+level for v1). One PriceDecision row per variant is created so the audit
+trail and the price-history dashboard see consistent per-variant timelines.
+
+A decision is NOT generated when:
+  - dynamicPricingEnabled is false
+  - killSwitch is true
+  - the product has fewer than ShopSettings.minCompetitorsRequired observations
+  - the resulting price equals (within 0.5%) the current price on the variant
 """
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
+import logging
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal
 
-from services.pricing_svc.rules import (
-    match_lowest,
-    beat_by_pct,
-    stay_above_cost_pct,
-    match_tier_lowest,
-)
+from sqlalchemy import text
 
+from services.common.db import get_db
 
-_RULE_FUNCS = {
-    "MATCH_LOWEST":         match_lowest.decide,
-    "BEAT_BY_PCT":          beat_by_pct.decide,
-    "STAY_ABOVE_COST_PCT":  stay_above_cost_pct.decide,
-    "MATCH_TIER_LOWEST":    match_tier_lowest.decide,
-}
+logger = logging.getLogger(__name__)
+
+MIN_CHANGE_PCT = Decimal("0.005")  # ignore sub-0.5% wiggles
 
 
-@dataclass
-class DecisionResult:
-    """What compute_decision returns. apply.py turns this into a PriceDecision row."""
-    final_price:    float | None        # what we'd ship (None when blocked)
-    rule_price:     float | None        # rule output, pre-nudge / pre-clamp
-    ml_price:       float | None        # what the ML model would have priced at
-    ml_confidence:  float | None
-    ml_version:     str | None
-    confidence:     float
-    reason:         str
-    blocked_by:     str | None
-    is_noop:        bool = False
-    signals:        dict = field(default_factory=dict)
+def _q(amount: Decimal) -> Decimal:
+    return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def _confidence_factor(ctx: dict, now: datetime) -> float:
-    stats = ctx["stats"]
-    n = stats.get("competitorCount") or 0
-    sigmoid_n = 1.0 / (1.0 + math.exp(-(n - 2)))
-    amc = stats.get("avgMatchConfidence") or 0.0
-
-    freshness = 1.0
-    last = stats.get("lastUpdatedAt")
-    if last is not None:
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
-        age_hours = max(0.0, (now - last).total_seconds() / 3600.0)
-        freshness = max(0.1, 0.5 ** (age_hours / (7 * 24)))
-
-    return max(0.0, min(1.0, sigmoid_n * amc * freshness))
+def _percentile(sorted_vals: list[Decimal], pct: float) -> Decimal | None:
+    if not sorted_vals:
+        return None
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+    k = (len(sorted_vals) - 1) * pct
+    lo = int(k)
+    hi = min(lo + 1, len(sorted_vals) - 1)
+    frac = Decimal(str(k - lo))
+    return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
 
 
-def _merchant_nudge(candidate: float, ctx: dict, confidence: float) -> tuple[float, list[str]]:
-    cfg = ctx["config"]
-    sales = ctx["sales"]
-    notes: list[str] = []
+def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
+    """Run the v1 formula and write PriceDecisions. Returns a small status dict."""
+    with get_db() as session:
+        product_row = session.execute(
+            text("""
+                SELECT id, "dynamicPricingEnabled", "floorPrice", "ceilingPrice"
+                FROM "ShopifyProduct"
+                WHERE id = :pid AND "shopDomain" = :sd
+            """),
+            {"pid": shopify_product_id, "sd": shop_domain},
+        ).first()
+        if not product_row:
+            return {"ok": False, "reason": "product_missing"}
+        if not product_row.dynamicPricingEnabled:
+            return {"ok": False, "reason": "pricing_disabled"}
 
-    weight = 1.0 - confidence
-    if weight <= 0:
-        return candidate, notes
-    amp = cfg["sparseNudgeAmplitude"]
+        settings = session.execute(
+            text("""
+                SELECT "markupPct", "minCompetitorsRequired", "killSwitch"
+                FROM "ShopSettings" WHERE "shopDomain" = :sd
+            """),
+            {"sd": shop_domain},
+        ).first()
+        markup    = Decimal(str(settings.markupPct))             if settings else Decimal("0.02")
+        min_comps = settings.minCompetitorsRequired              if settings else 2
+        if settings and settings.killSwitch:
+            return {"ok": False, "reason": "kill_switch"}
 
-    dos = sales.get("daysOfStock")
-    if dos is not None:
-        if dos < cfg["lowStockDays"]:
-            factor = 1.0 + amp * weight
-            candidate *= factor
-            notes.append(f"low_stock(+{(factor-1)*100:.2f}%)")
-        elif dos > cfg["highStockDays"]:
-            factor = 1.0 - amp * weight
-            candidate *= factor
-            notes.append(f"high_stock({(factor-1)*100:.2f}%)")
+        # Latest observation per competitor variant matched to this product
+        # via ProductLevelMatch → ScrapedProduct → ScrapedVariant.
+        obs_rows = session.execute(
+            text("""
+                SELECT DISTINCT ON (sv.id)
+                       sv.id              AS scraped_variant_id,
+                       cpo.price          AS price,
+                       cpo."isInStock"    AS in_stock,
+                       comp.enabled       AS comp_enabled
+                FROM "ProductLevelMatch" plm
+                JOIN "ScrapedProduct"  sp ON sp.id  = plm."scrapedProductId"
+                JOIN "ScrapedVariant"  sv ON sv."productId" = sp.id
+                LEFT JOIN "Competitor" comp
+                       ON comp."shopDomain" = plm."shopDomain"
+                      AND comp.domain       = sp.domain
+                LEFT JOIN "CompetitorPriceObservation" cpo
+                       ON cpo."competitorVariantId" = sv.id
+                WHERE plm."shopifyProductId" = :pid
+                  AND plm."shopDomain"       = :sd
+                  AND plm."rejectedByMerchant" = FALSE
+                ORDER BY sv.id, cpo."observedAt" DESC NULLS LAST
+            """),
+            {"pid": shopify_product_id, "sd": shop_domain},
+        ).all()
 
-    v7 = sales.get("orders7d", 0) / 7.0
-    v28 = sales.get("orders28d", 0) / 28.0
-    if v28 > 0:
-        ratio = v7 / v28
-        if ratio > cfg["hotVelocityRatio"]:
-            factor = 1.0 + amp * weight
-            candidate *= factor
-            notes.append(f"hot_velocity(+{(factor-1)*100:.2f}%)")
-        elif ratio < cfg["coolVelocityRatio"]:
-            factor = 1.0 - amp * weight
-            candidate *= factor
-            notes.append(f"cool_velocity({(factor-1)*100:.2f}%)")
+        prices = [
+            Decimal(str(r.price)) for r in obs_rows
+            if r.price is not None
+            and r.in_stock is not False
+            and (r.comp_enabled is None or r.comp_enabled is True)
+            and Decimal(str(r.price)) > 0
+        ]
 
-    return candidate, notes
+        if len(prices) < min_comps:
+            return {"ok": False, "reason": "not_enough_competitors", "have": len(prices), "need": min_comps}
 
+        prices.sort()
+        median   = _percentile(prices, 0.5)
+        proposed = _q(median * (Decimal("1") - markup))
 
-def _clamp(candidate: float, rule: dict, ctx: dict, confidence: float) -> tuple[float, list[str]]:
-    notes: list[str] = []
-    current = ctx["currentPrice"]
+        floor   = Decimal(str(product_row.floorPrice))   if product_row.floorPrice   is not None else None
+        ceiling = Decimal(str(product_row.ceilingPrice)) if product_row.ceilingPrice is not None else None
+        if floor   is not None and proposed < floor:
+            proposed = floor
+        if ceiling is not None and proposed > ceiling:
+            proposed = ceiling
 
-    if rule["floorPrice"] is not None and candidate < rule["floorPrice"]:
-        notes.append(f"floor_clamp({rule['floorPrice']})")
-        candidate = rule["floorPrice"]
-    if rule["ceilingPrice"] is not None and candidate > rule["ceilingPrice"]:
-        notes.append(f"ceiling_clamp({rule['ceilingPrice']})")
-        candidate = rule["ceilingPrice"]
+        variants = session.execute(
+            text('SELECT id, "currentPrice" FROM "ShopifyVariant" WHERE "productId" = :pid'),
+            {"pid": shopify_product_id},
+        ).all()
+        if not variants:
+            return {"ok": False, "reason": "no_variants"}
 
-    if rule["maxDailyDeltaPct"] is not None and current is not None and current > 0:
-        effective = rule["maxDailyDeltaPct"] * confidence
-        max_delta = current * (effective / 100.0)
-        lo = current - max_delta
-        hi = current + max_delta
-        if candidate < lo:
-            notes.append(f"delta_clamp_down(eff={effective:.2f}%)")
-            candidate = lo
-        elif candidate > hi:
-            notes.append(f"delta_clamp_up(eff={effective:.2f}%)")
-            candidate = hi
+        written = 0
+        skipped = 0
+        reason  = f"v1 median × (1 - {markup}) over {len(prices)} competitor observation(s)"
+        now     = datetime.now(timezone.utc)
 
-    return candidate, notes
+        for v in variants:
+            cur = Decimal(str(v.currentPrice))
+            if cur > 0 and abs(proposed - cur) / cur < MIN_CHANGE_PCT:
+                skipped += 1
+                continue
+            session.execute(
+                text("""
+                    INSERT INTO "PriceDecision"
+                        (id, "shopDomain", "shopifyVariantId",
+                         "oldPrice", "newPrice", reason, "decidedAt")
+                    VALUES (gen_random_uuid(), :sd, :vid, :old, :new, :reason, :now)
+                """),
+                {"sd": shop_domain, "vid": v.id, "old": cur, "new": proposed, "reason": reason, "now": now},
+            )
+            written += 1
 
-
-def _round_to_charm(price: float, params: dict) -> float:
-    if params.get("charm") == "ninety_nine":
-        return max(0.0, int(price) - 0.01) if price >= 1.0 else round(price, 2)
-    return round(price, 2)
-
-
-def _apply_rule(rule: dict, ctx: dict, session, shop_domain: str) -> tuple[float | None, str]:
-    """Rule dispatch. Takes session/shop_domain because some rules (e.g.
-    MATCH_TIER_LOWEST) need to re-query competitor data. This is the only
-    impurity in decide.py and it's confined to this function."""
-    fn = _RULE_FUNCS.get(rule["ruleType"])
-    if fn is None:
-        return None, f"unknown_rule_type:{rule['ruleType']}"
-    ctx_with_rule = {**ctx, "ruleTierFilter": rule.get("tierFilter") or []}
-    return fn(ctx_with_rule, rule["params"], session, shop_domain)
-
-
-def compute_decision(
-    ctx: dict,
-    rule: dict,
-    ml_pred: dict | None,
-    session,
-    shop_domain: str,
-    now: datetime,
-) -> DecisionResult:
-    """The whole decision pipeline as one pure-ish function.
-
-    `ml_pred` is the model's output (already invoked by caller) or None when
-    no model is trained / inference failed. Whether ML's price is *blended*
-    into the final price is decided here based on rule.mlBlendWeight +
-    variant.useMlSuggestion — but the prediction itself is always recorded
-    on the DecisionResult so the UI can show side-by-side comparison.
-    """
-    confidence = _confidence_factor(ctx, now)
-    signals_base = {
-        "currentPrice":      ctx["currentPrice"],
-        "inventoryQuantity": ctx["inventoryQuantity"],
-        "daysOfStock":       ctx["sales"]["daysOfStock"],
-        "orders7d":          ctx["sales"]["orders7d"],
-        "orders28d":         ctx["sales"]["orders28d"],
-        "hasConfirmedMatch": ctx["hasConfirmedMatch"],
-        "autoPriceEnabled":  ctx["autoPriceEnabled"],
+    return {
+        "ok": True,
+        "written": written,
+        "skipped_unchanged": skipped,
+        "median": str(median),
+        "new_price": str(proposed),
+        "competitors": len(prices),
     }
-
-    ml_price = ml_pred["price"]        if ml_pred else None
-    ml_conf  = ml_pred["confidence"]   if ml_pred else None
-    ml_ver   = ml_pred["modelVersion"] if ml_pred else None
-
-    candidate, rule_reason = _apply_rule(rule, ctx, session, shop_domain)
-    rule_suggested = candidate
-    if candidate is None:
-        return DecisionResult(
-            final_price=None, rule_price=None,
-            ml_price=ml_price, ml_confidence=ml_conf, ml_version=ml_ver,
-            confidence=confidence, reason=rule_reason, blocked_by="no_candidate",
-            signals=signals_base,
-        )
-
-    ml_notes: list[str] = []
-    if (ml_price is not None
-            and ctx["useMlSuggestion"]
-            and rule["mlBlendWeight"] > 0):
-        w = max(0.0, min(1.0, rule["mlBlendWeight"]))
-        candidate = candidate * (1.0 - w) + ml_price * w
-        ml_notes.append(f"ml_blend(w={w:.2f}, ml={ml_price}, conf={ml_conf})")
-
-    candidate, nudge_notes = _merchant_nudge(candidate, ctx, confidence)
-
-    # Implicit cost floor: never price below cost, regardless of rule.floorPrice.
-    if ctx["cost"] is not None and candidate < ctx["cost"]:
-        candidate = ctx["cost"]
-        nudge_notes.append(f"cost_floor({ctx['cost']})")
-
-    candidate, clamp_notes = _clamp(candidate, rule, ctx, confidence)
-    candidate = _round_to_charm(candidate, rule["params"])
-
-    is_noop = (ctx["currentPrice"] is not None
-               and abs(candidate - ctx["currentPrice"]) < 0.005)
-    reason = "no_change" if is_noop else " | ".join(
-        [rule_reason] + ml_notes + nudge_notes + clamp_notes
-    )
-
-    return DecisionResult(
-        final_price=candidate,
-        rule_price=rule_suggested,
-        ml_price=ml_price, ml_confidence=ml_conf, ml_version=ml_ver,
-        confidence=confidence,
-        reason=reason,
-        blocked_by="noop" if is_noop else None,
-        is_noop=is_noop,
-        signals={
-            **signals_base,
-            "nudges": nudge_notes, "clamps": clamp_notes,
-            "ml_notes": ml_notes, "confidence": confidence,
-        },
-    )

@@ -13,7 +13,7 @@ because SQLAlchemy has no native pgvector type; all vector reads/writes use raw 
 import uuid
 
 from sqlalchemy import BIGINT, Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, func, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ENUM as PgEnum, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, ENUM as PgEnum, JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -30,6 +30,18 @@ _scrape_status = PgEnum(
 _url_status = PgEnum(
     "ACTIVE", "DEAD", "PAUSED",
     name="UrlStatus",
+    create_type=False,
+)
+
+_candidate_status = PgEnum(
+    "PENDING", "VERIFIED", "REJECTED", "DEAD",
+    name="CandidateStatus",
+    create_type=False,
+)
+
+_discovery_status = PgEnum(
+    "QUEUED", "RUNNING", "COMPLETED", "FAILED",
+    name="DiscoveryStatus",
     create_type=False,
 )
 
@@ -51,7 +63,6 @@ class ShopifyUser(Base):
     scrapedProducts   = relationship("ScrapedProduct",   back_populates="shop")
     productUrls       = relationship("ProductUrl",        back_populates="shop")
     productEmbeddings = relationship("ProductEmbedding",  back_populates="shop")
-    scrapingErrors    = relationship("ScrapingError",     back_populates="shop")
     productMatches    = relationship("ProductMatch",      back_populates="shop")
 
 
@@ -74,10 +85,21 @@ class ShopifyProduct(Base):
     status      = Column("status",      String, default="ACTIVE")
     categoryTop   = Column("categoryTop",   String)
     productGender = Column("productGender", String)
+    searchQuery               = Column("searchQuery",               String,  nullable=True)
+    searchQueryOverride       = Column("searchQueryOverride",       String,  nullable=True)
+    dynamicPricingEnabled     = Column("dynamicPricingEnabled",     Boolean, nullable=False, default=False)
+    floorPrice                = Column("floorPrice",                Numeric(10, 2))
+    ceilingPrice              = Column("ceilingPrice",              Numeric(10, 2))
+    frequencyInterval         = Column("frequencyInterval",         Integer)
+    frequencyUnit             = Column("frequencyUnit",             String)
+    lastDiscoveryAt           = Column("lastDiscoveryAt",           DateTime(timezone=True), nullable=True)
+    discoveryNumResults       = Column("discoveryNumResults",       Integer, nullable=False, default=10)
     createdAt   = Column("createdAt",   DateTime(timezone=True), server_default=func.now())
     updatedAt   = Column("updatedAt",   DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
-    variants = relationship("ShopifyVariant", back_populates="product", cascade="all, delete-orphan")
+    variants             = relationship("ShopifyVariant",       back_populates="product", cascade="all, delete-orphan")
+    competitorCandidates = relationship("CompetitorCandidate",  back_populates="shopifyProduct", cascade="all, delete-orphan")
+    discoveryJobs        = relationship("DiscoveryJob",         back_populates="shopifyProduct", cascade="all, delete-orphan")
 
 
 class ShopifyVariant(Base):
@@ -138,7 +160,6 @@ class ScrapingConfig(Base):
 
     shop         = relationship("ShopifyUser",  back_populates="scrapingConfigs")
     product_urls = relationship("ProductUrl",   back_populates="config")
-    errors       = relationship("ScrapingError", back_populates="config")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -194,29 +215,6 @@ class ScrapedVariant(Base):
     observations   = relationship("CompetitorPriceObservation", back_populates="competitorVariant", cascade="all, delete-orphan")
 
 
-_competitor_tier = PgEnum(
-    "PREMIUM", "MIDMARKET", "BUDGET",
-    name="CompetitorTier",
-    create_type=False,
-)
-
-
-class Competitor(Base):
-    __tablename__ = "Competitor"
-
-    id          = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    shopDomain  = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
-    domain      = Column("domain", String, nullable=False)
-    displayName = Column("displayName", String)
-    tier        = Column("tier", _competitor_tier, nullable=False, default="MIDMARKET")
-    weight      = Column("weight", Numeric(3, 2), nullable=False, default=0.5)
-    enabled     = Column("enabled", Boolean, nullable=False, default=True)
-    createdAt   = Column("createdAt", DateTime(timezone=True), server_default=func.now())
-    updatedAt   = Column("updatedAt", DateTime(timezone=True), default=func.now(), onupdate=func.now())
-
-    __table_args__ = (UniqueConstraint("shopDomain", "domain", name="Competitor_shopDomain_domain_key"),)
-
-
 class CompetitorPriceObservation(Base):
     """Append-only price observation for a competitor variant.
 
@@ -228,7 +226,6 @@ class CompetitorPriceObservation(Base):
 
     id                  = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     shopDomain          = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
-    competitorId        = Column("competitorId", String, ForeignKey("Competitor.id", ondelete="SET NULL"))
     competitorVariantId = Column("competitorVariantId", String, ForeignKey("ScrapedVariant.id", ondelete="CASCADE"), nullable=False)
     price               = Column("price", Numeric(10, 2), nullable=False)
     currency            = Column("currency", String(3), nullable=False, default="INR")
@@ -245,16 +242,19 @@ class CompetitorPriceObservation(Base):
 class ProductUrl(Base):
     __tablename__ = "ProductUrl"
 
-    id            = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    shopDomain    = Column("shopDomain",    String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
-    configId      = Column("configId",      String, ForeignKey("ScrapingConfig.id"), nullable=False)
-    prodId        = Column("prodId",        String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
-    url           = Column("url",           String, unique=True, nullable=False)
-    status        = Column("status",        _url_status, nullable=False, default="ACTIVE")
-    failCount     = Column("failCount",     Integer, default=0)
-    lastScrapedAt = Column("lastScrapedAt", DateTime(timezone=True))
-    nextScrapAt   = Column("nextScrapAt",   DateTime(timezone=True))
-    createdAt     = Column("createdAt",     DateTime(timezone=True), server_default=func.now())
+    id                = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    shopDomain        = Column("shopDomain",        String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    shopifyProductId  = Column("shopifyProductId",  String, ForeignKey("ShopifyProduct.id", ondelete="CASCADE"), nullable=True)
+    configId          = Column("configId",          String, ForeignKey("ScrapingConfig.id"), nullable=True)
+    prodId            = Column("prodId",            String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
+    url               = Column("url",               String, unique=True, nullable=False)
+    status            = Column("status",            _url_status, nullable=False, default="ACTIVE")
+    failCount         = Column("failCount",         Integer, default=0)
+    frequencyInterval = Column("frequencyInterval", Integer)
+    frequencyUnit     = Column("frequencyUnit",     String, default="daily")
+    lastScrapedAt     = Column("lastScrapedAt",     DateTime(timezone=True))
+    nextRunAt         = Column("nextRunAt",         DateTime(timezone=True))
+    createdAt         = Column("createdAt",         DateTime(timezone=True), server_default=func.now())
 
     shop    = relationship("ShopifyUser",    back_populates="productUrls")
     config  = relationship("ScrapingConfig", back_populates="product_urls")
@@ -278,27 +278,6 @@ class ProductEmbedding(Base):
     shop    = relationship("ShopifyUser",    back_populates="productEmbeddings")
     product = relationship("ScrapedProduct", back_populates="embeddings")
     variant = relationship("ScrapedVariant", back_populates="embeddings")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Error log — permanent record of failed extraction/semantic tasks
-# ─────────────────────────────────────────────────────────────────────────────
-
-class ScrapingError(Base):
-    __tablename__ = "ScrapingError"
-
-    id          = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    shopDomain  = Column("shopDomain",  String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
-    configId    = Column("configId",    String, ForeignKey("ScrapingConfig.id"), nullable=False)
-    productUrl  = Column("productUrl",  String, nullable=False)
-    gcsRef      = Column("gcsRef",      String)
-    errorType   = Column("errorType",   String, nullable=False)
-    errorDetail = Column("errorDetail", String)
-    taskName    = Column("taskName",    String, nullable=False)
-    failedAt    = Column("failedAt",    DateTime(timezone=True), server_default=func.now())
-
-    shop   = relationship("ShopifyUser",    back_populates="scrapingErrors")
-    config = relationship("ScrapingConfig", back_populates="errors")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -329,3 +308,74 @@ class ProductMatch(Base):
     shopifyVariant    = relationship("ShopifyVariant", back_populates="productMatches")
     competitorVariant = relationship("ScrapedVariant", back_populates="productMatches")
     competitorProduct = relationship("ScrapedProduct", back_populates="productMatches")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Competitor discovery (product-rooted flow)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DiscoveryJob(Base):
+    __tablename__ = "DiscoveryJob"
+
+    id               = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    shopDomain       = Column("shopDomain",       String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    shopifyProductId = Column("shopifyProductId", String, ForeignKey("ShopifyProduct.id", ondelete="CASCADE"), nullable=False)
+    status           = Column("status",           _discovery_status, nullable=False, default="QUEUED")
+    query            = Column("query",            Text)
+    numResults       = Column("numResults",       Integer, nullable=False, default=10)
+    candidateCount   = Column("candidateCount",   Integer, nullable=False, default=0)
+    error            = Column("error",            Text)
+    requestedAt      = Column("requestedAt",      DateTime(timezone=True), server_default=func.now())
+    completedAt      = Column("completedAt",      DateTime(timezone=True))
+
+    shopifyProduct = relationship("ShopifyProduct", back_populates="discoveryJobs")
+    candidates     = relationship("CompetitorCandidate", back_populates="discoveryJob")
+
+
+class CompetitorCandidate(Base):
+    __tablename__ = "CompetitorCandidate"
+    __table_args__ = (
+        UniqueConstraint("shopifyProductId", "url", name="CompetitorCandidate_shopifyProductId_url_key"),
+    )
+
+    id               = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    shopDomain       = Column("shopDomain",       String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    shopifyProductId = Column("shopifyProductId", String, ForeignKey("ShopifyProduct.id", ondelete="CASCADE"), nullable=False)
+    discoveryJobId   = Column("discoveryJobId",   String, ForeignKey("DiscoveryJob.id", ondelete="SET NULL"), nullable=True)
+
+    url    = Column("url",    String, nullable=False)
+    domain = Column("domain", String, nullable=False)
+    source = Column("source", String, nullable=False)  # serper_search | serper_shopping | manual
+
+    serpTitle    = Column("serpTitle",    String)
+    serpSnippet  = Column("serpSnippet",  Text)
+    serpPrice    = Column("serpPrice",    Numeric(10, 2))
+    embedScore   = Column("embedScore",   Numeric(5, 4))
+    rerankScore  = Column("rerankScore",  Numeric(4, 3))
+    rerankReason = Column("rerankReason", Text)
+
+    status       = Column("status",       _candidate_status, nullable=False, default="PENDING")
+    rejectReason = Column("rejectReason", String)
+
+    scrapedProductId = Column("scrapedProductId", String, ForeignKey("ScrapedProduct.id", ondelete="SET NULL"), nullable=True)
+
+    discoveredAt = Column("discoveredAt", DateTime(timezone=True), server_default=func.now())
+    scrapedAt    = Column("scrapedAt",    DateTime(timezone=True))
+    verifiedAt   = Column("verifiedAt",   DateTime(timezone=True))
+
+    shopifyProduct = relationship("ShopifyProduct", back_populates="competitorCandidates")
+    discoveryJob   = relationship("DiscoveryJob",   back_populates="candidates")
+
+
+class ShopSettings(Base):
+    __tablename__ = "ShopSettings"
+
+    shopDomain               = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), primary_key=True)
+    markupPct                = Column("markupPct",  Numeric(5, 4), nullable=False, default=0.02)
+    minCompetitorsRequired   = Column("minCompetitorsRequired",   Integer, nullable=False, default=2)
+    maxCompetitorsPerProduct = Column("maxCompetitorsPerProduct", Integer, nullable=False, default=8)
+    frequencyInterval        = Column("frequencyInterval", Integer, nullable=False, default=1)
+    frequencyUnit            = Column("frequencyUnit",     String,  nullable=False, default="daily")
+    marketplaceBlocklist     = Column("marketplaceBlocklist", ARRAY(String), nullable=False, default=list)
+    killSwitch               = Column("killSwitch", Boolean, nullable=False, default=False)
+    updatedAt                = Column("updatedAt", DateTime(timezone=True), default=func.now(), onupdate=func.now())

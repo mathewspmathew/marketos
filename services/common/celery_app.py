@@ -16,13 +16,14 @@ app = Celery(
         'services.scraper_svc.extractor',
         'services.scraper_svc.semantics',
         'services.scraper_svc.celery_beat',
+        'services.scraper_svc.candidate',
         'services.embedding_svc.main',
         'services.matcher_svc.main',
         'services.suggestion_svc.main',
         'services.shopify_svc.main',
         'services.pricing_svc.main',
         'services.pricing_svc.stats',
-        'services.elasticity_svc.main',
+        'services.discovery_svc.main',
     ]
 )
 
@@ -54,10 +55,14 @@ app.conf.update(
         'stats.recompute_for_variant':                  {'queue': 'stats_queue'},
         'stats.recompute_after_observation':            {'queue': 'stats_queue'},
         'pricing.decide_for_variant':                   {'queue': 'pricing_queue'},
+        'pricing.decide_for_product':                   {'queue': 'pricing_queue'},
         'shopify_writer.apply_decision':                {'queue': 'writer_queue'},
         'shopify_writer.sweep_pending':                 {'queue': 'writer_queue'},
-        'elasticity.train_for_shop':                    {'queue': 'elasticity_queue'},
-        'elasticity.train_all_shops':                   {'queue': 'elasticity_queue'},
+        'discovery.search_products':                    {'queue': 'discovery_queue'},
+        'scraper.scrape_candidate':                     {'queue': 'scraping_queue'},
+        'scraper.extract_candidate':                    {'queue': 'extraction_queue'},
+        'scraper.verify_candidate':                     {'queue': 'extraction_queue'},
+        'scraper.rescrape_url':                         {'queue': 'scraping_queue'},
         'services.scraper_svc.celery_beat.check_idle_configs': {'queue': 'scheduler_queue'},
     },
     beat_schedule={
@@ -65,27 +70,10 @@ app.conf.update(
             'task': 'services.scraper_svc.celery_beat.check_idle_configs',
             'schedule': 30.0,
         },
-        # Daily rebuild of the merchant's rolling 7d/28d sales window from
-        # Shopify Admin API. Webhook increments handle live deltas; this
-        # corrects drift caused by orders aging out of the window. Does NOT
-        # touch competitor scraping — that stays on user-configured frequency.
-        'refresh-sales-aggregates-daily': {
-            'task': 'shopify_sync.refresh_all_sales_aggregates',
-            'schedule': crontab(hour=3, minute=0),
-        },
-        # Safety net: every minute, retry any auto-apply decision that
-        # didn't get applied to Shopify yet (worker crash / enqueue miss).
-        'writer-sweep-every-minute': {
-            'task': 'shopify_writer.sweep_pending',
-            'schedule': 60.0,
-        },
-        # Nightly elasticity model retrain. Shadow-mode predictions ride
-        # alongside every PriceDecision; the merchant opts in per variant
-        # via ShopifyVariant.useMlSuggestion to actually shift the decision.
-        'retrain-elasticity-models-nightly': {
-            'task': 'elasticity.train_all_shops',
-            'schedule': crontab(hour=2, minute=30),
-        },
+        # NOTE: refresh_all_sales_aggregates and writer.sweep_pending were
+        # removed when SalesAggregate / PricingRule were dropped in the
+        # discovery_pivot migration. v1 pricing is suggestion-only (no
+        # auto-apply), so the writer sweep has nothing to do.
     }
 )
 

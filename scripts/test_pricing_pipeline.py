@@ -59,7 +59,7 @@ def cleanup() -> None:
             "PricingAlert", "PriceChange", "PriceDecision",
             "VariantCompetitorStats", "PromotionWindow", "PricingRule",
             "PricingConfig", "ProductLevelMatch", "ProductMatch",
-            "Competitor", "CompetitorPriceObservation",
+            "CompetitorPriceObservation",
             "SalesAggregate", "ProductEmbedding",
             "ShopifyEmbedding",
         ]:
@@ -76,7 +76,6 @@ def cleanup() -> None:
         s.execute(text('DELETE FROM "ScrapedProduct" WHERE "shopDomain"=:s'), {"s": SHOP})
         s.execute(text('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": SHOP})
         s.execute(text('DELETE FROM "ProductUrl" WHERE "shopDomain"=:s'), {"s": SHOP})
-        s.execute(text('DELETE FROM "ScrapingError" WHERE "shopDomain"=:s'), {"s": SHOP})
         s.execute(text('DELETE FROM "ScrapingConfig" WHERE "shopDomain"=:s'), {"s": SHOP})
         s.execute(text('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": SHOP})
 
