@@ -84,14 +84,10 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                 SELECT DISTINCT ON (sv.id)
                        sv.id              AS scraped_variant_id,
                        cpo.price          AS price,
-                       cpo."isInStock"    AS in_stock,
-                       comp.enabled       AS comp_enabled
+                       cpo."isInStock"    AS in_stock
                 FROM "ProductLevelMatch" plm
                 JOIN "ScrapedProduct"  sp ON sp.id  = plm."scrapedProductId"
                 JOIN "ScrapedVariant"  sv ON sv."productId" = sp.id
-                LEFT JOIN "Competitor" comp
-                       ON comp."shopDomain" = plm."shopDomain"
-                      AND comp.domain       = sp.domain
                 LEFT JOIN "CompetitorPriceObservation" cpo
                        ON cpo."competitorVariantId" = sv.id
                 WHERE plm."shopifyProductId" = :pid
@@ -106,7 +102,6 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
             Decimal(str(r.price)) for r in obs_rows
             if r.price is not None
             and r.in_stock is not False
-            and (r.comp_enabled is None or r.comp_enabled is True)
             and Decimal(str(r.price)) > 0
         ]
 

@@ -61,7 +61,6 @@ app.conf.update(
         'discovery.search_products':                    {'queue': 'discovery_queue'},
         'scraper.scrape_candidate':                     {'queue': 'scraping_queue'},
         'scraper.extract_candidate':                    {'queue': 'extraction_queue'},
-        'scraper.verify_candidate':                     {'queue': 'extraction_queue'},
         'scraper.rescrape_url':                         {'queue': 'scraping_queue'},
         'services.scraper_svc.celery_beat.check_idle_configs': {'queue': 'scheduler_queue'},
     },

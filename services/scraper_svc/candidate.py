@@ -9,13 +9,11 @@ Tasks:
 
   scraper.extract_candidate(candidate_id, gcs_ref)
     Groq extract → upsert ScrapedProduct + ScrapedVariants → create a
-    product-rooted ProductUrl    row (with shopifyProductId + frequency) →
-    fan out to embedding worker and verify_candidate.
-
-  scraper.verify_candidate(candidate_id)
-    Embed the scraped product's title → cosine vs ShopifyProduct.searchQueryVector.
-    Above VERIFY_THRESHOLD: candidate VERIFIED + create ProductLevelMatch.
-    Below: candidate REJECTED with reason.
+    product-rooted ProductUrl row (with shopifyProductId + frequency) →
+    fan out to semantics + embedding workers. The semantics task fills
+    ScrapedVariant.semanticText; embedder.generate_embeddings then writes
+    ProductEmbedding.vectorText. ScrapedProduct↔ShopifyProduct confidence
+    scoring (ProductLevelMatch) is the matcher_svc's job, not this file's.
 
 This file does NOT touch the legacy listing-based scrape (scraper.scrape_listing).
 That code path stays callable until the scheduler rewrite drops it.
@@ -26,8 +24,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -45,11 +42,6 @@ from services.common.gcs_utils import (
 )
 from services.common import models
 from services.common.frequency import next_run_at as _freq_next_run_at
-from services.common.vertex_embed import (
-    cosine,
-    embed_text,
-    load_search_query_vector,
-)
 from services.scraper_svc.extractor import (
     _record_observations,
     extract_with_groq,
@@ -66,7 +58,6 @@ _firecrawl_client = V1FirecrawlApp(api_key=os.getenv("FIRECRAWL_API_KEY", "not-s
 # ─────────────────────────────────────────────────────────────────────────────
 # Tunables
 # ─────────────────────────────────────────────────────────────────────────────
-VERIFY_THRESHOLD       = 0.78   # cosine on title vs searchQueryVector to keep
 MIN_MARKDOWN_LEN       = 400
 FIRECRAWL_TIMEOUT_MS   = 45000
 
@@ -331,6 +322,7 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
 
             _set_candidate_status(
                 db, candidate_id,
+                status="SCRAPED",
                 scrapedProductId=prod_id, scrapedAt=now,
             )
     except Exception as exc:
@@ -341,105 +333,22 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
             return {"status": "dead"}
         raise self.retry(exc=exc)
 
-    # ── Fan out: variant semantics → embedding → verify ────────────────────
-    # Semantics → embeddings → matcher are the same chain the legacy listing
-    # scrape uses. Verify runs in parallel since it only needs the merchant's
-    # searchQueryVector + the scraped product's title (independent of variants).
+    # ── Fan out: variant semantics → embedding ─────────────────────────────
+    # generate_variant_semantics fills ScrapedVariant.semanticText; then
+    # embedder.generate_embeddings writes ProductEmbedding.vectorText.
+    # Confidence scoring against the merchant's ShopifyProduct is the
+    # matcher_svc's responsibility once the embeddings land.
     app.send_task(
         "scraper.generate_variant_semantics",
         args=[prod_id, None, shop_domain, url],
         queue="semantic_queue",
     )
     app.send_task("embedder.generate_embeddings", args=[prod_id], queue="embedding_queue")
-    app.send_task("scraper.verify_candidate",    args=[candidate_id], queue="extraction_queue")
-    return {"status": "queued_verify", "scraped_product_id": prod_id}
+    return {"status": "queued_embed", "scraped_product_id": prod_id}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Task 3 — verify_candidate
-# ─────────────────────────────────────────────────────────────────────────────
-@app.task(
-    name="scraper.verify_candidate",
-    bind=True, max_retries=2, default_retry_delay=15,
-)
-def verify_candidate(self, candidate_id: str):
-    """Embed scraped title, cosine vs cached searchQueryVector, decide.
-
-    Uses the same encoder + task type the search-query vector was generated
-    with, so the comparison is symmetric. The full multimodal embedding done
-    by embedder.generate_embeddings is used downstream by the matcher for
-    variant-level price stats — not by this gate.
-    """
-    with get_db() as db:
-        cand = db.get(models.CompetitorCandidate, candidate_id)
-        if not cand or not cand.scrapedProductId:
-            return {"status": "missing_scrape"}
-        shopify_product_id = cand.shopifyProductId
-        scraped = db.get(models.ScrapedProduct, cand.scrapedProductId)
-        if not scraped:
-            _set_candidate_status(db, candidate_id, status="REJECTED", rejectReason="scrape_missing")
-            return {"status": "rejected"}
-
-        product_vec = load_search_query_vector(db, shopify_product_id)
-        if not product_vec:
-            # No cached vector → cannot verify deterministically; leave PENDING
-            # for a later re-run rather than rejecting a possibly-good match.
-            return {"status": "pending_no_vec"}
-
-        # Build a short keyword-shape candidate side so the encoders match
-        # what searchQueryVector saw (short title + vendor + category).
-        cand_text = " | ".join(
-            p for p in (
-                (scraped.title or "").strip(),
-                (scraped.vendor or "").strip(),
-                (scraped.productType or "").strip(),
-            ) if p
-        )[:1500]
-        cand_vec = embed_text(cand_text, task_type="RETRIEVAL_DOCUMENT") or []
-        score = cosine(product_vec, cand_vec)
-
-        now = datetime.now(timezone.utc)
-        if score >= VERIFY_THRESHOLD:
-            _set_candidate_status(
-                db, candidate_id,
-                status="VERIFIED", verifiedAt=now,
-                rerankReason=f"verify_cosine={score:.4f}",
-            )
-            # Upsert ProductLevelMatch — the matched-products page reads this.
-            db.execute(
-                pg_insert(models.ProductLevelMatch.__table__)
-                .values(
-                    id=str(uuid.uuid4()),
-                    shopDomain=cand.shopDomain,
-                    shopifyProductId=shopify_product_id,
-                    scrapedProductId=scraped.id,
-                    confidence=Decimal(f"{min(0.999, score):.3f}"),
-                    confidenceTier=("CONFIRMED" if score >= 0.88 else "LIKELY"),
-                    source="DISCOVERY",
-                    createdAt=now,
-                    updatedAt=now,
-                )
-                .on_conflict_do_update(
-                    index_elements=["shopifyProductId", "scrapedProductId"],
-                    set_={
-                        "confidence":     Decimal(f"{min(0.999, score):.3f}"),
-                        "confidenceTier": ("CONFIRMED" if score >= 0.88 else "LIKELY"),
-                        "updatedAt":      now,
-                    },
-                )
-            )
-            return {"status": "verified", "score": score}
-
-        _set_candidate_status(
-            db, candidate_id,
-            status="REJECTED",
-            rejectReason=f"verify_cosine={score:.4f}_below_{VERIFY_THRESHOLD}",
-        )
-        return {"status": "rejected", "score": score}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Task 4 — rescrape_url (called by the scheduler tick)
+# Task 3 — rescrape_url (called by the scheduler tick)
 # ─────────────────────────────────────────────────────────────────────────────
 @app.task(
     name="scraper.rescrape_url",

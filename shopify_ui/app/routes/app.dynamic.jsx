@@ -276,8 +276,7 @@ function EmptyState({ tab, pendingApprovals, pausedCount, activeCount }) {
         ) : pausedCount === 0 ? (
           <s-text tone="subdued">
             No matches are awaiting approval either. Run a competitor scrape
-            from <Link to="/app/competitors">Competitors</Link>, then come
-            back once new candidates appear.
+            from the Controller, then come back once new candidates appear.
           </s-text>
         ) : null}
       </s-stack>

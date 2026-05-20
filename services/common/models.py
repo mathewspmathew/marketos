@@ -34,7 +34,7 @@ _url_status = PgEnum(
 )
 
 _candidate_status = PgEnum(
-    "PENDING", "VERIFIED", "REJECTED", "DEAD",
+    "PENDING", "SCRAPED", "VERIFIED", "REJECTED", "DEAD",
     name="CandidateStatus",
     create_type=False,
 )

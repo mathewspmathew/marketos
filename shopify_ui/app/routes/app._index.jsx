@@ -180,10 +180,15 @@ export const action = async ({ request }) => {
   if (intent === "toggleDynamic") {
     // Disable-only path. Enabling now goes through "saveAndEnable" so the
     // overrides are committed atomically with the toggle flip.
+    // Clearing lastDiscoveryAt on toggle-off re-arms first-time discovery,
+    // so a subsequent off→on cycle re-runs Serper from scratch.
     const enabled = formData.get("enabled") === "true";
     await db.shopifyProduct.update({
       where: { id: productId },
-      data: { dynamicPricingEnabled: enabled },
+      data: {
+        dynamicPricingEnabled: enabled,
+        ...(enabled ? {} : { lastDiscoveryAt: null }),
+      },
     });
   } else if (intent === "updateFields") {
     await db.shopifyProduct.update({

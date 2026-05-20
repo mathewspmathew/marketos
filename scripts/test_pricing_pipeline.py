@@ -131,9 +131,6 @@ def setup_fixture() -> dict:
         s.execute(text("""INSERT INTO "ProductEmbedding"(id,"shopDomain","prodId","variantId","vectorText","vectorizedAt")
                           VALUES (:i,:s,:p,:v,CAST(:vt AS vector),NOW())"""),
                   {"i": ids["comp_a_embedding"], "s": SHOP, "p": ids["comp_a_product"], "v": ids["comp_a_variant"], "vt": vec})
-        s.execute(text("""INSERT INTO "Competitor"(id,"shopDomain",domain,tier,weight,enabled,"createdAt","updatedAt")
-                          VALUES (:i,:s,'flipkart.com',CAST('PREMIUM' AS "CompetitorTier"),1.0,true,NOW(),NOW())"""),
-                  {"i": str(uuid.uuid4()), "s": SHOP})
 
         # Competitor B — Acme brand, on myntra.com, ₹1200, weight 0.3
         s.execute(text("""INSERT INTO "ScrapedProduct"(id,"shopDomain",domain,title,vendor,"productType","createdAt","updatedAt")
@@ -145,9 +142,6 @@ def setup_fixture() -> dict:
         s.execute(text("""INSERT INTO "ProductEmbedding"(id,"shopDomain","prodId","variantId","vectorText","vectorizedAt")
                           VALUES (:i,:s,:p,:v,CAST(:vt AS vector),NOW())"""),
                   {"i": ids["comp_b_embedding"], "s": SHOP, "p": ids["comp_b_product"], "v": ids["comp_b_variant"], "vt": vec})
-        s.execute(text("""INSERT INTO "Competitor"(id,"shopDomain",domain,tier,weight,enabled,"createdAt","updatedAt")
-                          VALUES (:i,:s,'myntra.com',CAST('MIDMARKET' AS "CompetitorTier"),0.3,true,NOW(),NOW())"""),
-                  {"i": str(uuid.uuid4()), "s": SHOP})
 
         # Competitor C — Brand mismatch (Beta brand vs merchant Acme). Should
         # be rejected by matcher's brand pre-filter.
@@ -175,12 +169,9 @@ def setup_fixture() -> dict:
 
 def stage_observations(ids: dict) -> None:
     print("\n── Stage 1: extractor writes CompetitorPriceObservation ─────────────")
-    from services.scraper_svc.extractor import _ensure_competitor, _record_observations
+    from services.scraper_svc.extractor import _record_observations
     with get_db() as s:
-        # Use the same helper extractor.upsert_to_db uses
-        cid = _ensure_competitor(s, SHOP, "flipkart.com")
-        check("ensure_competitor returns id", cid is not None, f"id={cid}")
-        _record_observations(s, SHOP, cid, [
+        _record_observations(s, SHOP, [
             {"competitorVariantId": ids["comp_a_variant"], "price": 900.0, "isInStock": True},
             {"competitorVariantId": ids["comp_b_variant"], "price": 1200.0, "isInStock": True},
             {"competitorVariantId": ids["comp_c_variant"], "price": 700.0, "isInStock": True},
@@ -251,22 +242,8 @@ def stage_stats_filters(ids: dict) -> None:
     print("\n── Stage 3b: stats filter — disabled competitor / OOS ────────────────")
     from services.pricing_svc.stats import _recompute_for_variant
 
-    # Disable Flipkart → only Myntra should count
+    # Mark Flipkart's latest observation as out of stock — only Myntra should count
     with get_db() as s:
-        s.execute(text('UPDATE "Competitor" SET enabled=false WHERE domain=\'flipkart.com\' AND "shopDomain"=:s'),
-                  {"s": SHOP})
-    _recompute_for_variant(SHOP, ids["merchant_variant"])
-    with get_db() as s:
-        row = s.execute(text("""SELECT "competitorCount","weightedMin"
-                                FROM "VariantCompetitorStats" WHERE "shopifyVariantId"=:v"""),
-                        {"v": ids["merchant_variant"]}).first()
-    check("disabled competitor excluded", int(row[0]) == 1, f"got={row[0]}")
-    check("weightedMin = 1200 after disable", float(row[1]) == 1200.0, f"got={row[1]}")
-
-    # Re-enable Flipkart but mark its latest observation as out of stock
-    with get_db() as s:
-        s.execute(text('UPDATE "Competitor" SET enabled=true WHERE domain=\'flipkart.com\' AND "shopDomain"=:s'),
-                  {"s": SHOP})
         s.execute(text('UPDATE "CompetitorPriceObservation" SET "isInStock"=false WHERE "competitorVariantId"=:v'),
                   {"v": ids["comp_a_variant"]})
     _recompute_for_variant(SHOP, ids["merchant_variant"])

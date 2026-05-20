@@ -113,14 +113,12 @@ def check_idle_configs():
 
 
 def _tick_enabled_products_discovery() -> None:
-    """Auto-discover for products newly toggled to dynamicPricingEnabled=TRUE.
+    """First-time discovery for products newly toggled to dynamicPricingEnabled=TRUE.
 
-    Picks products with the flag on, an effective searchQuery (override or
-    LLM-generated), and either no prior discovery or a stale one (>24h).
-    Dispatches discovery.search_products directly using the product's own
-    discoveryNumResults. This is the "Save & start dynamic pricing → first
-    discovery happens automatically" path; the manual Discover page path
-    still uses QUEUED DiscoveryJob rows via _tick_queued_discovery_jobs.
+    Fires once per toggle-on: only picks products that have never been
+    discovered (lastDiscoveryAt IS NULL). To re-discover, the merchant must
+    toggle off → on (the off path clears lastDiscoveryAt), or use the manual
+    Discover page, which goes through DiscoveryJob + _tick_queued_discovery_jobs.
     """
     with get_db() as session:
         rows = session.execute(
@@ -131,11 +129,8 @@ def _tick_enabled_products_discovery() -> None:
                 FROM "ShopifyProduct"
                 WHERE "dynamicPricingEnabled" = TRUE
                   AND COALESCE("searchQueryOverride", "searchQuery") IS NOT NULL
-                  AND (
-                    "lastDiscoveryAt" IS NULL
-                    OR "lastDiscoveryAt" < NOW() - INTERVAL '24 hours'
-                  )
-                ORDER BY "lastDiscoveryAt" NULLS FIRST, "updatedAt" ASC
+                  AND "lastDiscoveryAt" IS NULL
+                ORDER BY "updatedAt" ASC
                 LIMIT 20
             """),
         ).all()

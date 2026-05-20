@@ -48,14 +48,10 @@ def _recompute_for_variant(shop_domain: str, shopify_variant_id: str) -> str | N
                        pm."competitorVariantId" AS cv_id,
                        cpo.price                AS price,
                        cpo."observedAt"         AS observed_at,
-                       cpo."isInStock"          AS in_stock,
-                       comp.enabled             AS comp_enabled
+                       cpo."isInStock"          AS in_stock
                 FROM "ProductMatch" pm
                 JOIN "ScrapedVariant" sv ON sv.id = pm."competitorVariantId"
                 JOIN "ScrapedProduct" sp ON sp.id = sv."productId"
-                LEFT JOIN "Competitor" comp
-                       ON comp."shopDomain" = pm."shopDomain"
-                      AND comp.domain       = sp.domain
                 LEFT JOIN "CompetitorPriceObservation" cpo
                        ON cpo."competitorVariantId" = pm."competitorVariantId"
                 WHERE pm."shopifyVariantId" = :vid
@@ -70,7 +66,6 @@ def _recompute_for_variant(shop_domain: str, shopify_variant_id: str) -> str | N
             float(r.price) for r in rows
             if r.price is not None
             and r.in_stock is not False
-            and (r.comp_enabled is None or r.comp_enabled is True)
             and float(r.price) > 0
         ]
 

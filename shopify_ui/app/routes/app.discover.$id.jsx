@@ -82,10 +82,15 @@ export const action = async ({ request, params }) => {
   }
 
   if (intent === "toggleDynamic") {
+    // Clearing lastDiscoveryAt on toggle-off re-arms first-time discovery,
+    // so a subsequent off→on cycle re-runs Serper from scratch.
     const enabled = form.get("enabled") === "true";
     await db.shopifyProduct.update({
       where: { id: productId },
-      data: { dynamicPricingEnabled: enabled },
+      data: {
+        dynamicPricingEnabled: enabled,
+        ...(enabled ? {} : { lastDiscoveryAt: null }),
+      },
     });
     return { toggled: enabled };
   }
@@ -261,7 +266,7 @@ export default function DiscoverPage() {
                   <s-stack direction="inline" gap="base" align="center">
                     <s-text emphasis="bold">{c.serpTitle || "(no title)"}</s-text>
                     <s-badge>{c.domain}</s-badge>
-                    <s-badge tone={c.status === "VERIFIED" ? "success" : c.status === "REJECTED" || c.status === "DEAD" ? "critical" : "info"}>
+                    <s-badge tone={c.status === "VERIFIED" || c.status === "SCRAPED" ? "success" : c.status === "REJECTED" || c.status === "DEAD" ? "critical" : "info"}>
                       {c.status}
                     </s-badge>
                   </s-stack>
