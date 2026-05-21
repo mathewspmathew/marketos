@@ -107,6 +107,63 @@ def extract_with_groq(markdown: str, url: str) -> ProductSchema | None:
         return None
 
 
+GROQ_LISTING_PROMPT = """You are a professional e-commerce link extractor.
+The markdown below is from a listing / search / category page at: {url}
+
+Extract the individual product cards visible on the page. Return ONLY a JSON
+object with a single "cards" key holding an array. Each card has:
+  url:   str   (absolute http(s) URL of the product detail page)
+  title: str | null   (the card's product title as shown on the listing)
+
+RULES:
+- Include ONLY links that lead to an individual product's detail page.
+- EXCLUDE navigation, filters, pagination, breadcrumbs, ads, "view all" links,
+  category/brand listing links, account/help/cart links.
+- Prefer the canonical/absolute URL when both relative and absolute appear.
+- Do NOT include the listing page URL itself.
+- Return ONLY raw JSON. No markdown. No commentary."""
+
+
+def extract_listing_with_groq(markdown: str, url: str) -> list[dict] | None:
+    """Extract individual product-card URLs from a listing-page markdown.
+
+    Returns a list of {"url": str, "title": str|None} dicts, or None on
+    permanent extraction failure. Raises GroqRateLimitError so the caller
+    can apply retry/backoff.
+    """
+    try:
+        response = _groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "Output JSON only."},
+                {"role": "user",   "content": GROQ_LISTING_PROMPT.format(url=url) + f"\n\nMarkdown:\n{_clean_markdown(markdown)}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+        raw  = response.choices[0].message.content
+        data = json.loads(raw)
+        cards = data.get("cards") if isinstance(data, dict) else data
+        if not isinstance(cards, list):
+            return None
+        out: list[dict] = []
+        for c in cards:
+            if not isinstance(c, dict):
+                continue
+            u = c.get("url")
+            if not isinstance(u, str) or not u.startswith(("http://", "https://")):
+                continue
+            t = c.get("title") if isinstance(c.get("title"), str) else None
+            out.append({"url": u, "title": t})
+        return out
+    except GroqRateLimitError:
+        raise
+    except Exception as e:
+        raw_preview = locals().get("raw", "")[:300]
+        print(f"[!] Groq listing extraction error for {url}: {e}\n    Raw: {raw_preview}")
+        return None
+
+
 def _record_observations(
     session,
     shop_domain: str,

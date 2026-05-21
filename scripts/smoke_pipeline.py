@@ -142,22 +142,7 @@ def pick_product(product_id: str | None) -> models.ShopifyProduct | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. Verify the cached query vector exists (move-to-ShopifyProductEmbedding check)
-# ─────────────────────────────────────────────────────────────────────────────
-def check_query_vector(product_id: str) -> bool:
-    banner("2. ShopifyProductEmbedding.searchQueryVector")
-    from services.common.vertex_embed import load_search_query_vector
-    with get_db() as db:
-        v = load_search_query_vector(db, product_id)
-    if v:
-        ok(f"vector cached ({len(v)}-D); norm≈{sum(x*x for x in v)**0.5:.3f}")
-        return True
-    warn("no cached vector. Discovery will fall through to LLM-only arbitration.")
-    return False
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. Run discovery inline (no Celery)
+# 2. Run discovery inline (no Celery)
 # ─────────────────────────────────────────────────────────────────────────────
 def run_discovery(product_id: str) -> int:
     banner("3. discovery.discover_competitors (inline)")
@@ -327,8 +312,6 @@ def main():
     product = pick_product(product_id_arg)
     if not product:
         sys.exit(1)
-
-    check_query_vector(product.id)
 
     n_candidates = run_discovery(product.id)
     candidate_ids = list_candidates(product.id)

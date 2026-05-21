@@ -50,6 +50,7 @@ export const loader = async ({ request }) => {
     frequencyInterval: p.frequencyInterval ?? "",
     frequencyUnit: p.frequencyUnit ?? "",
     discoveryNumResults: p.discoveryNumResults ?? 10,
+    listingExpansionCap: p.listingExpansionCap ?? 5,
     lastDiscoveryAt: p.lastDiscoveryAt ? p.lastDiscoveryAt.toISOString() : null,
     matchCount: p._count.productLevelMatches,
     candidateCount: p._count.competitorCandidates,
@@ -209,6 +210,7 @@ export const action = async ({ request }) => {
     const rawCeiling  = formData.get("ceilingPrice");
     const rawOverride = (formData.get("searchQueryOverride") || "").toString().trim();
     const rawNumResults = formData.get("discoveryNumResults");
+    const rawListingCap = formData.get("listingExpansionCap");
 
     const data = {
       searchQueryOverride: rawOverride === "" ? null : rawOverride,
@@ -241,6 +243,11 @@ export const action = async ({ request }) => {
     if (rawNumResults !== null && rawNumResults !== "") {
       const n = parseInt(rawNumResults, 10);
       if (Number.isFinite(n) && n > 0) data.discoveryNumResults = Math.min(n, 50);
+    }
+
+    if (rawListingCap !== null && rawListingCap !== "") {
+      const n = parseInt(rawListingCap, 10);
+      if (Number.isFinite(n) && n > 0) data.listingExpansionCap = Math.min(n, 50);
     }
 
     if (intent === "saveAndEnable") {
@@ -280,6 +287,7 @@ export default function HomePage() {
         frequencyInterval: p.frequencyInterval === "" ? "" : String(p.frequencyInterval),
         frequencyUnit: p.frequencyUnit,
         discoveryNumResults: p.discoveryNumResults ?? 10,
+        listingExpansionCap: p.listingExpansionCap ?? 5,
       };
     }
     return map;
@@ -322,6 +330,7 @@ export default function HomePage() {
       frequencyInterval: "",
       frequencyUnit: "",
       discoveryNumResults: 10,
+      listingExpansionCap: 5,
     };
 
   const setOverrideField = (productId, field, value) => {
@@ -351,6 +360,7 @@ export default function HomePage() {
         frequencyInterval:   local.frequencyInterval ?? "",
         frequencyUnit:       local.frequencyUnit ?? "",
         discoveryNumResults: String(local.discoveryNumResults ?? 10),
+        listingExpansionCap: String(local.listingExpansionCap ?? 5),
       },
       { method: "POST" },
     );
@@ -609,6 +619,18 @@ export default function HomePage() {
                             onInput={(e) =>
                               setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
                             }
+                          />
+
+                          <s-text-field
+                            label="Number of products to scrape from listing page"
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={String(local.listingExpansionCap ?? "")}
+                            onInput={(e) =>
+                              setOverrideField(product.id, "listingExpansionCap", e.currentTarget.value)
+                            }
+                            helpText="When a discovered URL is a search/category page, expand this many product cards from it (1–50)."
                           />
 
                           <s-text emphasis="bold">Price bounds (applied to all variants)</s-text>

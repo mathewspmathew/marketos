@@ -16,6 +16,10 @@ export const loader = async ({ request, params }) => {
   });
   if (!product) throw new Response("Product not found", { status: 404 });
 
+  const settings = await db.shopSettings.findUnique({
+    where: { shopDomain },
+  });
+
   const latestJob = await db.discoveryJob.findFirst({
     where: { shopifyProductId: productId },
     orderBy: { requestedAt: "desc" },
@@ -26,6 +30,10 @@ export const loader = async ({ request, params }) => {
     orderBy: { discoveredAt: "desc" },
     take: 100,
   });
+
+  // Listing-cap fallback chain: product override → shop default → hard 5.
+  const listingExpansionCapDefault =
+    product.listingExpansionCap ?? settings?.listingExpansionCap ?? 5;
 
   return {
     product: {
@@ -39,6 +47,7 @@ export const loader = async ({ request, params }) => {
       searchQueryOverride: product.searchQueryOverride,
       dynamicPricingEnabled: product.dynamicPricingEnabled,
       discoveryNumResults: product.discoveryNumResults ?? 10,
+      listingExpansionCap: listingExpansionCapDefault,
     },
     latestJob,
     candidates: candidates.map((c) => ({
@@ -98,6 +107,12 @@ export const action = async ({ request, params }) => {
   if (intent === "search") {
     const query      = (form.get("query") || "").toString().trim();
     const numResults = Math.max(1, Math.min(parseInt(form.get("numResults") || "10", 10) || 10, 50));
+    // listingCap is optional; null lets the resolver fall back to ShopifyProduct/ShopSettings.
+    const rawCap = form.get("listingExpansionCap");
+    const listingExpansionCap =
+      rawCap == null || rawCap === ""
+        ? null
+        : Math.max(1, Math.min(parseInt(rawCap, 10) || 5, 50));
     if (!query) return { error: "empty_query" };
 
     const job = await db.discoveryJob.create({
@@ -107,6 +122,7 @@ export const action = async ({ request, params }) => {
         status: "QUEUED",
         query,
         numResults,
+        listingExpansionCap,
       },
     });
     return { queued: true, jobId: job.id };
@@ -131,6 +147,7 @@ export default function DiscoverPage() {
   const [query, setQuery] = useState(initialQuery);
   const [hint, setHint]   = useState("");
   const [num, setNum]     = useState(product.discoveryNumResults ?? 10);
+  const [listingCap, setListingCap] = useState(product.listingExpansionCap ?? 5);
 
   useEffect(() => {
     if (refineFetcher.state === "idle" && refineFetcher.data?.refined) {
@@ -147,8 +164,9 @@ export default function DiscoverPage() {
   const doSearch = () => {
     if (!query.trim()) return;
     const n = Math.max(1, Math.min(parseInt(num, 10) || 10, 50));
+    const cap = Math.max(1, Math.min(parseInt(listingCap, 10) || 5, 50));
     searchFetcher.submit(
-      { intent: "search", query, numResults: String(n) },
+      { intent: "search", query, numResults: String(n), listingExpansionCap: String(cap) },
       { method: "POST" },
     );
   };
@@ -220,6 +238,14 @@ export default function DiscoverPage() {
               type="number"
               value={String(num)}
               onInput={(e) => setNum(e.currentTarget.value)}
+              min="1"
+              max="50"
+            />
+            <s-text-field
+              label="Max products if listing page"
+              type="number"
+              value={String(listingCap)}
+              onInput={(e) => setListingCap(e.currentTarget.value)}
               min="1"
               max="50"
             />

@@ -20,8 +20,12 @@ const DEFAULTS = {
   maxCompetitorsPerProduct: 8,
   frequencyInterval: 1,
   frequencyUnit: "day",
+  listingExpansionCap: 5,
   marketplaceBlocklist: [],
   killSwitch: false,
+  serperGl: "in",
+  serperHl: "en",
+  serperLocation: "Kochi, Kerala",
 };
 
 export const loader = async ({ request }) => {
@@ -46,8 +50,12 @@ export const loader = async ({ request }) => {
       maxCompetitorsPerProduct: s.maxCompetitorsPerProduct,
       frequencyInterval:        s.frequencyInterval,
       frequencyUnit:            s.frequencyUnit,
+      listingExpansionCap:      s.listingExpansionCap ?? DEFAULTS.listingExpansionCap,
       marketplaceBlocklist:     s.marketplaceBlocklist ?? [],
       killSwitch:               s.killSwitch,
+      serperGl:                 s.serperGl       ?? DEFAULTS.serperGl,
+      serperHl:                 s.serperHl       ?? DEFAULTS.serperHl,
+      serperLocation:           s.serperLocation ?? DEFAULTS.serperLocation,
     },
   };
 };
@@ -86,8 +94,12 @@ export const action = async ({ request }) => {
     maxCompetitorsPerProduct: parsePositiveInt(formData.get("maxCompetitorsPerProduct"), DEFAULTS.maxCompetitorsPerProduct),
     frequencyInterval:        parsePositiveInt(formData.get("frequencyInterval"),        DEFAULTS.frequencyInterval),
     frequencyUnit:            unit,
+    listingExpansionCap:      parsePositiveInt(formData.get("listingExpansionCap"),      DEFAULTS.listingExpansionCap),
     marketplaceBlocklist:     { set: blocklist },
     killSwitch:               formData.get("killSwitch") === "true",
+    serperGl:       ((formData.get("serperGl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperGl,
+    serperHl:       ((formData.get("serperHl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperHl,
+    serperLocation: ((formData.get("serperLocation") || "").toString().trim())               || DEFAULTS.serperLocation,
   };
 
   await db.shopSettings.upsert({
@@ -110,8 +122,12 @@ export default function SettingsPage() {
     maxCompetitorsPerProduct: String(settings.maxCompetitorsPerProduct),
     frequencyInterval: String(settings.frequencyInterval),
     frequencyUnit: settings.frequencyUnit,
+    listingExpansionCap: String(settings.listingExpansionCap),
     marketplaceBlocklist: (settings.marketplaceBlocklist ?? []).join("\n"),
     killSwitch: settings.killSwitch,
+    serperGl:       settings.serperGl,
+    serperHl:       settings.serperHl,
+    serperLocation: settings.serperLocation,
   });
 
   const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
@@ -124,8 +140,12 @@ export default function SettingsPage() {
         maxCompetitorsPerProduct: form.maxCompetitorsPerProduct,
         frequencyInterval:        form.frequencyInterval,
         frequencyUnit:            form.frequencyUnit,
+        listingExpansionCap:      form.listingExpansionCap,
         marketplaceBlocklist:     form.marketplaceBlocklist,
         killSwitch:               String(form.killSwitch),
+        serperGl:                 form.serperGl,
+        serperHl:                 form.serperHl,
+        serperLocation:           form.serperLocation,
       },
       { method: "POST" },
     );
@@ -159,6 +179,13 @@ export default function SettingsPage() {
             value={form.maxCompetitorsPerProduct}
             onInput={(e) => setField("maxCompetitorsPerProduct", e.currentTarget.value)}
           />
+          <s-text-field
+            label="Default max products from a listing page"
+            type="number"
+            value={form.listingExpansionCap}
+            onInput={(e) => setField("listingExpansionCap", e.currentTarget.value)}
+            helpText="When a discovered URL is a search/category page, expand this many product cards out of it. Per-product and per-discovery overrides win over this."
+          />
           <s-textarea
             label="Marketplace blocklist (one per line)"
             rows={5}
@@ -166,6 +193,34 @@ export default function SettingsPage() {
             onInput={(e) => setField("marketplaceBlocklist", e.currentTarget.value)}
             helpText="Domains to exclude from competitor discovery (e.g. amazon.in, ebay.com)."
           />
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Search targeting (Serper)">
+        <s-text tone="subdued">
+          Localizes competitor discovery results. Location takes precedence over country.
+        </s-text>
+        <s-stack direction="block" gap="base">
+          <s-text-field
+            label="Location (free text, most precise)"
+            value={form.serperLocation}
+            onInput={(e) => setField("serperLocation", e.currentTarget.value)}
+            helpText='E.g. "Kochi, Kerala" or "Mumbai, Maharashtra, India".'
+          />
+          <s-stack direction="inline" gap="base">
+            <s-text-field
+              label="Country code (gl)"
+              value={form.serperGl}
+              onInput={(e) => setField("serperGl", e.currentTarget.value)}
+              helpText="2-letter country, e.g. in, us, gb, ae."
+            />
+            <s-text-field
+              label="Language code (hl)"
+              value={form.serperHl}
+              onInput={(e) => setField("serperHl", e.currentTarget.value)}
+              helpText="Language, e.g. en, hi, ar, de."
+            />
+          </s-stack>
         </s-stack>
       </s-section>
 

@@ -12,6 +12,9 @@ firecrawl - uploads the page to bucket - grok takes the text information. - this
   2. Within ≤30s, celery_beat logs [Beat] enqueued discovery for product ….
   3. discovery_worker picks the task off discovery_queue, writes N rows to CompetitorCandidate
 
+rare case: if we get search link in the listing page of many products: (happens when we have bad search query)
+
+
 2. scraper-worker
 firecrawl api take the link and scrapes. upload to GCS bucket.
 fires scraper.extract_candidate(candidate_id, gcs_ref) on extraction_queue.
@@ -32,5 +35,5 @@ ScrapedVariant - with semanticText
 ScrapedProduct - product
 ProductUrl - for rescraping
 
+ShopifyEmbedding - save embedding of all the shopify variants
 
-now we got 

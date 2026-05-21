@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -46,6 +46,39 @@ DEFAULT_MARKETPLACES = (
     "amazon.com", "amazon.in", "ebay.com", "aliexpress.com", "walmart.com",
     "flipkart.com", "etsy.com",
 )
+
+
+# Query params used purely for tracking/attribution — stripping them lets the
+# (shopifyProductId, url) unique constraint dedup the same product link served
+# by Serper with rotating srsltid/utm tokens.
+_TRACKING_QUERY_KEYS = {
+    "srsltid", "fbclid", "gclid", "msclkid", "yclid", "ref", "ref_src",
+    "_gl", "mc_cid", "mc_eid", "igshid",
+}
+_TRACKING_QUERY_PREFIXES = ("utm_",)
+
+
+def _normalize_url(url: str) -> str:
+    """Strip tracking query params and fragment; lower-case the host."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        kept = [
+            (k, v) for (k, v) in parse_qsl(parsed.query, keep_blank_values=True)
+            if k not in _TRACKING_QUERY_KEYS
+            and not any(k.startswith(p) for p in _TRACKING_QUERY_PREFIXES)
+        ]
+        return urlunparse((
+            parsed.scheme,
+            parsed.netloc.lower(),
+            parsed.path,
+            parsed.params,
+            urlencode(kept, doseq=True),
+            "",
+        ))
+    except Exception:
+        return url
 
 
 def _domain_of(url: str) -> str:
@@ -75,7 +108,10 @@ def _filter_candidates(
     shop_host = shop_domain.lower()
 
     for h in hits:
-        if not h.url or h.url in seen_urls:
+        if not h.url:
+            continue
+        h.url = _normalize_url(h.url)
+        if h.url in seen_urls:
             continue
         dom = h.domain or _domain_of(h.url)
         if not dom:
@@ -122,6 +158,9 @@ def search_products(
 
         settings  = db.get(models.ShopSettings, product.shopDomain)
         blocklist = list(settings.marketplaceBlocklist) if settings else []
+        serper_gl       = (settings.serperGl       if settings else None) or "in"
+        serper_hl       = (settings.serperHl       if settings else None) or "en"
+        serper_location = (settings.serperLocation if settings else None) or "Kochi, Kerala"
 
         job = db.get(models.DiscoveryJob, job_id) if job_id else None
         if job is None:
@@ -140,7 +179,13 @@ def search_products(
             job.numResults = num_results
 
         try:
-            raw_hits = serper.search_web(query, num=num_results)
+            raw_hits = serper.search_web(
+                query,
+                num=num_results,
+                gl=serper_gl,
+                hl=serper_hl,
+                location=serper_location,
+            )
             filtered = _filter_candidates(
                 raw_hits,
                 shop_domain=product.shopDomain,

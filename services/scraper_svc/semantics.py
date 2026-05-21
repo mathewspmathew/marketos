@@ -22,11 +22,6 @@ from sqlalchemy import text as sa_text, update as sa_update
 from services.common.celery_app import app
 from services.common.db import get_db
 from services.common.models import ScrapedProduct, ScrapedVariant, ShopifyProduct, ShopifyVariant
-from services.common.vertex_embed import (
-    embed_text,
-    invalidate_search_query_vector,
-    save_search_query_vector,
-)
 from services.scraper_svc.helpers import log_error
 
 load_dotenv()
@@ -429,11 +424,7 @@ def generate_shopify_variant_semantics(self, product_id: str):
                 )
 
             # ── searchQuery generation (runs independently of variants) ────
-            # Generate when:
-            #   - no override pinned, AND
-            #   - product.searchQuery is currently empty
-            # If an override IS pinned, we don't touch searchQuery but we DO
-            # refresh the vector cache against the effective (override) query.
+            # Generate when no override pinned AND product.searchQuery is empty.
             if not product.searchQueryOverride and not product.searchQuery:
                 new_query = _groq_search_query(
                     title=product.title,
@@ -450,17 +441,7 @@ def generate_shopify_variant_semantics(self, product_id: str):
                             updatedAt=now,
                         )
                     )
-                    # Vector lives in ShopifyProductEmbedding now — drop the
-                    # row so the embed call below refills it cleanly.
-                    invalidate_search_query_vector(session, product_id)
                     product.searchQuery = new_query
-
-            # Cache the Vertex embedding of the effective query (override wins).
-            effective_query = (product.searchQueryOverride or product.searchQuery or "").strip()
-            if effective_query:
-                vec = embed_text(effective_query, task_type="RETRIEVAL_DOCUMENT")
-                if vec:
-                    save_search_query_vector(session, product_id, vec)
 
             print(
                 f"    [✓] semantics updated for '{product.title[:40]}' — "

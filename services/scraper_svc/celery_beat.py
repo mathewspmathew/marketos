@@ -121,17 +121,26 @@ def _tick_enabled_products_discovery() -> None:
     Discover page, which goes through DiscoveryJob + _tick_queued_discovery_jobs.
     """
     with get_db() as session:
+        # Atomic claim: stamp lastDiscoveryAt as we select, so an overlapping
+        # beat tick can't re-enqueue the same product before the discovery
+        # worker has had a chance to finish. Mirrors the nextRunAt-clearing
+        # pattern in _tick_product_urls.
         rows = session.execute(
             text("""
-                SELECT id,
-                       COALESCE("searchQueryOverride", "searchQuery") AS query,
-                       "discoveryNumResults"                          AS num_results
-                FROM "ShopifyProduct"
-                WHERE "dynamicPricingEnabled" = TRUE
-                  AND COALESCE("searchQueryOverride", "searchQuery") IS NOT NULL
-                  AND "lastDiscoveryAt" IS NULL
-                ORDER BY "updatedAt" ASC
-                LIMIT 20
+                UPDATE "ShopifyProduct"
+                SET "lastDiscoveryAt" = NOW()
+                WHERE id IN (
+                    SELECT id FROM "ShopifyProduct"
+                    WHERE "dynamicPricingEnabled" = TRUE
+                      AND COALESCE("searchQueryOverride", "searchQuery") IS NOT NULL
+                      AND "lastDiscoveryAt" IS NULL
+                    ORDER BY "updatedAt" ASC
+                    LIMIT 20
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id,
+                          COALESCE("searchQueryOverride", "searchQuery") AS query,
+                          "discoveryNumResults"                          AS num_results
             """),
         ).all()
 
@@ -159,14 +168,22 @@ def _tick_queued_discovery_jobs() -> None:
     refined query + result count; this tick fans them out to the worker.
     """
     with get_db() as session:
+        # Atomic claim: flip QUEUED → RUNNING in the same statement so an
+        # overlapping beat tick can't re-dispatch the same job. The discovery
+        # worker still flips RUNNING → COMPLETED / FAILED when it finishes.
         rows = session.execute(
             text("""
-                SELECT id, "shopifyProductId", query, "numResults"
-                FROM "DiscoveryJob"
-                WHERE status = 'QUEUED'
-                  AND query IS NOT NULL
-                ORDER BY "requestedAt" ASC
-                LIMIT 20
+                UPDATE "DiscoveryJob"
+                SET status = 'RUNNING'
+                WHERE id IN (
+                    SELECT id FROM "DiscoveryJob"
+                    WHERE status = 'QUEUED'
+                      AND query IS NOT NULL
+                    ORDER BY "requestedAt" ASC
+                    LIMIT 20
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id, "shopifyProductId", query, "numResults"
             """),
         ).all()
 
@@ -194,15 +211,9 @@ def _shopify_semantic_backfill() -> None:
         rows = session.execute(
             text("""
                 SELECT sp.id FROM "ShopifyProduct" sp
-                LEFT JOIN "ShopifyProductEmbedding" spe ON spe."productId" = sp.id
                 WHERE
                     -- product itself needs a searchQuery (user hasn't overridden it)
                     (sp."searchQuery" IS NULL AND sp."searchQueryOverride" IS NULL)
-                    -- or has a searchQuery but no cached vector yet (Vertex retry path)
-                    OR (
-                        (sp."searchQuery" IS NOT NULL OR sp."searchQueryOverride" IS NOT NULL)
-                        AND (spe."productId" IS NULL OR spe."searchQueryVector" IS NULL)
-                    )
                     -- or any variant of this product still missing semanticText
                     OR sp.id IN (
                         SELECT DISTINCT "productId" FROM "ShopifyVariant"

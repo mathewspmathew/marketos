@@ -103,6 +103,9 @@ model ShopifyProduct {
   lastDiscoveryAt       DateTime?
   // How many competitor product links to fetch per discovery run.
   discoveryNumResults   Int       @default(10)
+  // If a discovered URL is a listing/search page, expand into this many
+  // individual product cards. Null → fall back to ShopSettings, then hard-default 5.
+  listingExpansionCap   Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -113,24 +116,6 @@ model ShopifyProduct {
   productUrls          ProductUrl[]
   competitorCandidates CompetitorCandidate[]
   discoveryJobs        DiscoveryJob[]
-  productEmbedding     ShopifyProductEmbedding?
-}
-
-// Per-product embeddings, mirroring how ShopifyEmbedding holds per-variant
-// vectors. Currently stores searchQueryVector (cached embed of the search
-// phrase used by discovery). Kept off ShopifyProduct so the entity table
-// stays free of pgvector columns the SQLAlchemy ORM can't see.
-model ShopifyProductEmbedding {
-  productId  String         @id
-  product    ShopifyProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
-  shopDomain String
-
-  searchQueryVector Unsupported("vector(768)")?
-
-  embeddedAt DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([shopDomain])
 }
 
 model ShopifyVariant {
@@ -346,6 +331,8 @@ model DiscoveryJob {
   status           DiscoveryStatus @default(QUEUED)
   query            String?
   numResults       Int             @default(10)
+  // Per-job cap for listing-page expansion (overrides ShopifyProduct + ShopSettings).
+  listingExpansionCap Int?
   candidateCount   Int             @default(0)
   error            String?
   requestedAt      DateTime        @default(now())
@@ -575,8 +562,17 @@ model ShopSettings {
   // Default rescrape cadence; per-product overrides live on ShopifyProduct.
   frequencyInterval        Int         @default(1)
   frequencyUnit            String      @default("daily")
+  // Default cap on listing-page expansion; ShopifyProduct / DiscoveryJob override.
+  listingExpansionCap      Int?
+
   marketplaceBlocklist     String[]    @default([])
   killSwitch               Boolean     @default(false)
+
+  // Serper geo/language targeting for competitor discovery.
+  serperGl                 String      @default("in")
+  serperHl                 String      @default("en")
+  serperLocation           String      @default("Kochi, Kerala")
+
   updatedAt                DateTime    @updatedAt
 }
 

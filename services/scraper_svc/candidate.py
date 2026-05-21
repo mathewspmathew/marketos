@@ -44,10 +44,12 @@ from services.common import models
 from services.common.frequency import next_run_at as _freq_next_run_at
 from services.scraper_svc.extractor import (
     _record_observations,
+    extract_listing_with_groq,
     extract_with_groq,
     update_prices_in_db,
 )
 from services.scraper_svc.helpers import log_error
+from services.scraper_svc.url_classifier import is_listing_url, registrable_domain
 
 load_dotenv()
 
@@ -60,6 +62,15 @@ _firecrawl_client = V1FirecrawlApp(api_key=os.getenv("FIRECRAWL_API_KEY", "not-s
 # ─────────────────────────────────────────────────────────────────────────────
 MIN_MARKDOWN_LEN       = 400
 FIRECRAWL_TIMEOUT_MS   = 45000
+
+# Hard fallback cap when DiscoveryJob / ShopifyProduct / ShopSettings are all null.
+DEFAULT_LISTING_EXPANSION_CAP = 5
+# Per-card stagger when fanning out scrape_candidate from a listing expansion.
+# Smooths Firecrawl + Vertex bursts; same-domain anyway.
+LISTING_CARD_STAGGER_SECONDS  = 2
+# Marker on CompetitorCandidate.source for rows born from listing expansion.
+# Used as a recursion guard (parent.source == this  →  refuse to re-expand).
+LISTING_EXPANSION_SOURCE = "listing_expansion"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +150,18 @@ def scrape_candidate(self, candidate_id: str):
                 )
             return {"status": "dead"}
         raise self.retry(exc=RuntimeError("GCS upload failed"))
+
+    # Listing/search-page URLs fan out into per-card scrapes instead of being
+    # treated as a single product. The classifier is deterministic — when it
+    # mis-fires, expand_listing simply marks the parent with zero cards and
+    # the merchant only loses one Groq call.
+    if is_listing_url(url):
+        app.send_task(
+            "scraper.expand_listing",
+            args=[candidate_id, gcs_ref],
+            queue="extraction_queue",
+        )
+        return {"status": "queued_listing_expand", "gcs_ref": gcs_ref}
 
     app.send_task(
         "scraper.extract_candidate",
@@ -348,7 +371,153 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Task 3 — rescrape_url (called by the scheduler tick)
+# Task 3 — expand_listing
+# ─────────────────────────────────────────────────────────────────────────────
+def _resolve_listing_cap(db, cand: models.CompetitorCandidate) -> int:
+    """DiscoveryJob → ShopifyProduct → ShopSettings → DEFAULT_LISTING_EXPANSION_CAP."""
+    if cand.discoveryJobId:
+        job = db.get(models.DiscoveryJob, cand.discoveryJobId)
+        if job and job.listingExpansionCap is not None:
+            return int(job.listingExpansionCap)
+    product = db.get(models.ShopifyProduct, cand.shopifyProductId)
+    if product and product.listingExpansionCap is not None:
+        return int(product.listingExpansionCap)
+    settings = db.get(models.ShopSettings, cand.shopDomain)
+    if settings and settings.listingExpansionCap is not None:
+        return int(settings.listingExpansionCap)
+    return DEFAULT_LISTING_EXPANSION_CAP
+
+
+@app.task(
+    name="scraper.expand_listing",
+    bind=True, max_retries=3, default_retry_delay=30, rate_limit="6/m",
+)
+def expand_listing(self, candidate_id: str, gcs_ref: str):
+    """Fan a listing/search-page candidate into per-card child candidates.
+
+    Pipeline:
+      GCS markdown → Groq URL extract → same-domain filter → dedup
+      → cap slice → insert child CompetitorCandidate rows
+      → enqueue scrape_candidate per child (staggered)
+      → mark parent SCRAPED with rejectReason='listing_expanded:N_cards'.
+
+    Recursion guard: candidates whose source is already LISTING_EXPANSION are
+    refused so we stay one level deep.
+    """
+    with get_db() as db:
+        cand = db.get(models.CompetitorCandidate, candidate_id)
+        if not cand:
+            return {"status": "missing"}
+        if cand.source == LISTING_EXPANSION_SOURCE:
+            _set_candidate_status(db, candidate_id, status="REJECTED", rejectReason="listing_in_listing")
+            return {"status": "rejected_recursive"}
+        parent_url               = cand.url
+        parent_domain            = cand.domain
+        parent_reg_domain        = registrable_domain(parent_url)
+        parent_shop_domain       = cand.shopDomain
+        parent_shopify_product   = cand.shopifyProductId
+        parent_discovery_job     = cand.discoveryJobId
+        cap                      = _resolve_listing_cap(db, cand)
+
+    markdown = download_markdown_from_gcs(gcs_ref)
+    if not markdown:
+        if self.request.retries >= self.max_retries:
+            with get_db() as db:
+                _set_candidate_status(db, candidate_id, status="DEAD", rejectReason="gcs_empty")
+            return {"status": "dead"}
+        raise self.retry(exc=ValueError("empty markdown"))
+
+    try:
+        cards = extract_listing_with_groq(markdown, parent_url)
+    except GroqRateLimitError:
+        if self.request.retries >= self.max_retries:
+            with get_db() as db:
+                _set_candidate_status(db, candidate_id, status="DEAD", rejectReason="groq_rate_limited")
+            return {"status": "dead"}
+        raise self.retry(countdown=65)
+
+    if not cards:
+        with get_db() as db:
+            _set_candidate_status(
+                db, candidate_id,
+                status="SCRAPED", rejectReason="listing_expanded:0_cards", scrapedAt=datetime.now(timezone.utc),
+            )
+        return {"status": "no_cards"}
+
+    # Filter to same registrable domain (folds www/m subdomains) and drop the
+    # parent listing URL itself. Dedup by URL.
+    seen: set[str] = set()
+    kept: list[dict] = []
+    for c in cards:
+        url = (c.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        if url.rstrip("/") == parent_url.rstrip("/"):
+            continue
+        if registrable_domain(url) != parent_reg_domain:
+            continue
+        seen.add(url)
+        kept.append(c)
+
+    kept = kept[:cap]
+
+    # Insert child candidates and enqueue staggered scrapes. Each child uses
+    # source=LISTING_EXPANSION so the recursion guard above blocks any future
+    # re-expansion. on_conflict_do_nothing on the (shopifyProductId, url)
+    # unique constraint protects against duplicate inserts if the same
+    # listing surfaces overlapping cards across runs.
+    queued = 0
+    now = datetime.now(timezone.utc)
+    with get_db() as db:
+        for i, c in enumerate(kept):
+            child_id = str(uuid.uuid4())
+            child_url = c["url"]
+            child_domain = urlparse(child_url).netloc
+            result = db.execute(
+                pg_insert(models.CompetitorCandidate)
+                .values(
+                    id=child_id,
+                    shopDomain=parent_shop_domain,
+                    shopifyProductId=parent_shopify_product,
+                    discoveryJobId=parent_discovery_job,
+                    url=child_url,
+                    domain=child_domain,
+                    source=LISTING_EXPANSION_SOURCE,
+                    serpTitle=c.get("title"),
+                    status="PENDING",
+                    discoveredAt=now,
+                )
+                .on_conflict_do_nothing(index_elements=["shopifyProductId", "url"])
+                .returning(models.CompetitorCandidate.id)
+            ).first()
+            if not result:
+                # URL already a candidate for this merchant product — skip.
+                continue
+            app.send_task(
+                "scraper.scrape_candidate",
+                args=[child_id],
+                queue="scraping_queue",
+                countdown=i * LISTING_CARD_STAGGER_SECONDS,
+            )
+            queued += 1
+
+        _set_candidate_status(
+            db, candidate_id,
+            status="SCRAPED",
+            rejectReason=f"listing_expanded:{queued}_cards",
+            scrapedAt=now,
+        )
+
+    print(
+        f"[expand_listing] parent={candidate_id[:8]} url={parent_url[:60]} "
+        f"cards_seen={len(cards)} same_domain_kept={len(kept)} cap={cap} queued={queued}",
+        flush=True,
+    )
+    return {"status": "expanded", "queued": queued}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 4 — rescrape_url (called by the scheduler tick)
 # ─────────────────────────────────────────────────────────────────────────────
 @app.task(
     name="scraper.rescrape_url",
