@@ -179,18 +179,62 @@ export const action = async ({ request }) => {
   const productId = formData.get("productId");
 
   if (intent === "toggleDynamic") {
-    // Disable-only path. Enabling now goes through "saveAndEnable" so the
-    // overrides are committed atomically with the toggle flip.
-    // Clearing lastDiscoveryAt on toggle-off re-arms first-time discovery,
-    // so a subsequent off→on cycle re-runs Serper from scratch.
+    // Pause/resume model. We no longer clear lastDiscoveryAt on toggle-off,
+    // so turning the product back on resumes from existing competitor URLs
+    // instead of running Serper from scratch. The beat filter is the actual
+    // gate: it only dispatches rescrape when dynamicPricingEnabled=TRUE.
     const enabled = formData.get("enabled") === "true";
     await db.shopifyProduct.update({
       where: { id: productId },
-      data: {
-        dynamicPricingEnabled: enabled,
-        ...(enabled ? {} : { lastDiscoveryAt: null }),
-      },
+      data: { dynamicPricingEnabled: enabled },
     });
+    if (enabled) {
+      // Resume: re-arm any URLs we already discovered so they enter the
+      // rescrape loop on the next beat tick. Only touches active rows whose
+      // current schedule has gone stale (nextRunAt NULL or in the past) so
+      // we don't trample a healthy upcoming schedule.
+      await db.productUrl.updateMany({
+        where: {
+          shopifyProductId: productId,
+          status: "ACTIVE",
+          OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+        },
+        data: { nextRunAt: new Date() },
+      });
+    }
+  } else if (intent === "toggleRescrape") {
+    // Per-product rescrape toggle. OFF parks frequencyUnit at 'never';
+    // ON restores a sensible default cadence if the product was 'never'
+    // (so the merchant can flip it on without first opening the editor).
+    const enabled = formData.get("enabled") === "true";
+    const current = await db.shopifyProduct.findUnique({
+      where: { id: productId },
+      select: { frequencyUnit: true, frequencyInterval: true },
+    });
+    if (enabled) {
+      const defaultsNeeded =
+        !current?.frequencyUnit || current.frequencyUnit === "never";
+      await db.shopifyProduct.update({
+        where: { id: productId },
+        data: defaultsNeeded
+          ? { frequencyUnit: "hour", frequencyInterval: 6 }
+          : {},
+      });
+      // Re-arm stale schedules so beat picks the URLs up on the next tick.
+      await db.productUrl.updateMany({
+        where: {
+          shopifyProductId: productId,
+          status: "ACTIVE",
+          OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+        },
+        data: { nextRunAt: new Date() },
+      });
+    } else {
+      await db.shopifyProduct.update({
+        where: { id: productId },
+        data: { frequencyUnit: "never", frequencyInterval: null },
+      });
+    }
   } else if (intent === "updateFields") {
     await db.shopifyProduct.update({
       where: { id: productId },
@@ -254,10 +298,37 @@ export const action = async ({ request }) => {
       data.dynamicPricingEnabled = true;
     }
 
+    // Detect a "rescrape just got turned on" transition so we can re-arm
+    // ProductUrl.nextRunAt afterwards. Triggers when frequencyUnit moves
+    // from null/'never' to a real cadence.
+    const prior = await db.shopifyProduct.findUnique({
+      where: { id: productId },
+      select: { frequencyUnit: true },
+    });
+    const priorUnit = prior?.frequencyUnit ?? null;
+    const newUnit   = data.frequencyUnit ?? priorUnit;
+    const rescrapeJustEnabled =
+      (priorUnit === null || priorUnit === "never") &&
+      newUnit && newUnit !== "never";
+
     await db.shopifyProduct.update({
       where: { id: productId },
       data,
     });
+
+    if (rescrapeJustEnabled || intent === "saveAndEnable") {
+      // Re-arm existing URLs so they enter the rescrape loop without
+      // waiting for a fresh discovery pass. Same conservative filter as
+      // toggleDynamic — only touches stale/missing schedules.
+      await db.productUrl.updateMany({
+        where: {
+          shopifyProductId: productId,
+          status: "ACTIVE",
+          OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+        },
+        data: { nextRunAt: new Date() },
+      });
+    }
   }
 
   return null;
@@ -383,6 +454,25 @@ export default function HomePage() {
       // Enable path — just open the panel. Save button commits everything.
       setExpandedId(productId);
     }
+  };
+
+  const handleRescrapeToggle = (productId, currentlyOn) => {
+    const nextUnit = currentlyOn ? "never" : "hour";
+    setLocalState((prev) => {
+      const local = prev[productId] ?? getLocal(productId);
+      return {
+        ...prev,
+        [productId]: {
+          ...local,
+          frequencyUnit: nextUnit,
+          frequencyInterval: currentlyOn ? null : (local.frequencyInterval ?? 6),
+        },
+      };
+    });
+    fetcher.submit(
+      { intent: "toggleRescrape", productId, enabled: currentlyOn ? "false" : "true" },
+      { method: "POST" },
+    );
   };
 
   const handleFieldChange = (productId, field, currentValue) => {
@@ -517,6 +607,41 @@ export default function HomePage() {
                           </s-button>
                         </>
                       )}
+                      {(() => {
+                        const rescrapeOn =
+                          isOn && !!local.frequencyUnit && local.frequencyUnit !== "never";
+                        return (
+                          <>
+                            <s-text>Rescrape</s-text>
+                            {rescrapeOn ? (
+                              <>
+                                <s-badge tone="success">
+                                  {`Every ${local.frequencyInterval || ""} ${local.frequencyUnit}`}
+                                </s-badge>
+                                <s-button
+                                  size="slim"
+                                  tone="critical"
+                                  onClick={() => handleRescrapeToggle(product.id, true)}
+                                  disabled={!isOn || undefined}
+                                >
+                                  Turn off
+                                </s-button>
+                              </>
+                            ) : (
+                              <>
+                                <s-badge tone="subdued">OFF</s-badge>
+                                <s-button
+                                  size="slim"
+                                  onClick={() => handleRescrapeToggle(product.id, false)}
+                                  disabled={!isOn || undefined}
+                                >
+                                  Turn on
+                                </s-button>
+                              </>
+                            )}
+                          </>
+                        );
+                      })()}
                       <s-button
                         variant="plain"
                         size="slim"

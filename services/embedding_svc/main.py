@@ -212,17 +212,14 @@ def generate_embeddings(self, product_id: str):
         print(f"    [!] Embedding failed for {product_id}: {exc} — retrying")
         raise self.retry(exc=exc)
 
-    # Fresh competitor embeddings → re-match only what's actually dirty.
-    # The competitor PEs we just wrote carry matchedAt=NULL, so the dirty
-    # selector in match_for_shop picks up the affected merchant variants.
-    with get_db() as session:
-        prod = session.query(ScrapedProduct).filter(ScrapedProduct.id == product_id).first()
-        if prod:
-            app.send_task(
-                "matcher.match_for_shop",
-                args=[prod.shopDomain, False],
-                queue="match_queue",
-            )
+    # Fresh competitor embeddings → scoped match against the merchant
+    # product(s) that triggered this scrape (resolved via CompetitorCandidate
+    # inside the matcher task).
+    app.send_task(
+        "matcher.match_for_scraped_product",
+        args=[product_id],
+        queue="match_queue",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -304,17 +301,6 @@ def generate_shopify_embeddings(self, variant_id: str):
         print(f"    [!] Shopify embedding failed for {variant_id}: {exc} — retrying")
         raise self.retry(exc=exc)
 
-    # Fresh merchant embedding → match this variant against all competitor domains.
-    with get_db() as session:
-        variant = (
-            session.query(ShopifyVariant)
-            .options(selectinload(ShopifyVariant.product))
-            .filter(ShopifyVariant.id == variant_id)
-            .first()
-        )
-        if variant and variant.product:
-            app.send_task(
-                "matcher.match_for_variant",
-                args=[variant.product.shopDomain, variant_id],
-                queue="match_queue",
-            )
+    # Merchant embedding writes no longer trigger the matcher. Matching is
+    # scrape-driven now: when a competitor scrape lands for this merchant
+    # product, matcher.match_for_scraped_product reads this fresh embedding.

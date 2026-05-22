@@ -540,12 +540,41 @@ def rescrape_url(self, product_url_id: str):
         prod_id     = pu.prodId
         shop_domain = pu.shopDomain
         shopify_product_id = pu.shopifyProductId
-        # Pre-fetch the cadence inputs so we can advance nextRunAt later.
+        # Pre-fetch the cadence inputs as primitives. Holding ORM instances
+        # past the `with get_db()` block triggers DetachedInstanceError when
+        # later code accesses lazy attributes.
         shopify_product = (
             db.get(models.ShopifyProduct, shopify_product_id)
             if shopify_product_id else None
         )
         settings = db.get(models.ShopSettings, shop_domain)
+        freq_unit = (
+            (shopify_product.frequencyUnit if shopify_product else None)
+            or (settings.frequencyUnit if settings else None)
+        )
+        freq_interval = (
+            (shopify_product.frequencyInterval if shopify_product else None)
+            or (settings.frequencyInterval if settings else None)
+        )
+        has_schedule = shopify_product is not None
+
+    def _compute_next_at():
+        return _freq_next_run_at(freq_interval, freq_unit) if has_schedule else None
+
+    def _reschedule_after_failure(status: str, increment_fail: bool = True):
+        # Beat clears nextRunAt before dispatch; we must restamp it on every
+        # exit path or the URL becomes a permanent dead row in the schedule.
+        next_at = _compute_next_at()
+        with get_db() as db:
+            values: dict = {"nextRunAt": next_at}
+            if increment_fail:
+                values["failCount"] = models.ProductUrl.failCount + 1
+            db.execute(
+                sa_update(models.ProductUrl)
+                .where(models.ProductUrl.id == product_url_id)
+                .values(**values)
+            )
+        return {"status": status, "next_run_at": next_at.isoformat() if next_at else None}
 
     # ── Firecrawl ──────────────────────────────────────────────────────────
     try:
@@ -555,41 +584,29 @@ def rescrape_url(self, product_url_id: str):
     except Exception as exc:
         logger.warning("rescrape Firecrawl failed for %s: %s", url, exc)
         if self.request.retries >= self.max_retries:
-            with get_db() as db:
-                db.execute(
-                    sa_update(models.ProductUrl)
-                    .where(models.ProductUrl.id == product_url_id)
-                    .values(failCount=models.ProductUrl.failCount + 1)
-                )
-            return {"status": "fail"}
+            return _reschedule_after_failure("fail")
         raise self.retry(exc=exc)
 
     if len(markdown.strip()) < MIN_MARKDOWN_LEN:
-        with get_db() as db:
-            db.execute(
-                sa_update(models.ProductUrl)
-                .where(models.ProductUrl.id == product_url_id)
-                .values(failCount=models.ProductUrl.failCount + 1)
-            )
-        return {"status": "fail_short_md"}
+        return _reschedule_after_failure("fail_short_md")
 
     # Reuse the rescrape extraction path: Groq → variant price update.
     try:
         product = extract_with_groq(markdown, url)
     except Exception as exc:
         if self.request.retries >= self.max_retries:
-            return {"status": "fail_extract"}
+            return _reschedule_after_failure("fail_extract")
         raise self.retry(exc=exc)
 
     if not product or not product.title:
-        return {"status": "no_product"}
+        return _reschedule_after_failure("no_product")
 
     ok = update_prices_in_db(prod_id, url, product)
     if not ok:
-        return {"status": "no_update"}
+        return _reschedule_after_failure("no_update")
 
     # Advance the schedule and clear failCount on success.
-    next_at = _next_run_at(shopify_product, settings) if shopify_product else None
+    next_at = _compute_next_at()
     with get_db() as db:
         db.execute(
             sa_update(models.ProductUrl)

@@ -381,6 +381,7 @@ class ShopSettings(Base):
     listingExpansionCap      = Column("listingExpansionCap", Integer, nullable=True)
     marketplaceBlocklist     = Column("marketplaceBlocklist", ARRAY(String), nullable=False, default=list)
     killSwitch               = Column("killSwitch", Boolean, nullable=False, default=False)
+    autoRescrapeEnabled      = Column("autoRescrapeEnabled", Boolean, nullable=False, default=True)
     serperGl                 = Column("serperGl",       String, nullable=False, default="in")
     serperHl                 = Column("serperHl",       String, nullable=False, default="en")
     serperLocation           = Column("serperLocation", String, nullable=False, default="Kochi, Kerala")

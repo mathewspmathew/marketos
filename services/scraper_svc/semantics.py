@@ -16,20 +16,22 @@ from datetime import datetime, timezone
 
 from celery.exceptions import Retry as CeleryRetry
 from dotenv import load_dotenv
-from groq import Groq, RateLimitError as GroqRateLimitError
+from groq import RateLimitError as GroqRateLimitError
 from sqlalchemy import text as sa_text, update as sa_update
 
 from services.common.celery_app import app
 from services.common.db import get_db
+from services.common.groq_client import make_groq_client
 from services.common.models import ScrapedProduct, ScrapedVariant, ShopifyProduct, ShopifyVariant
 from services.scraper_svc.helpers import log_error
 
 load_dotenv()
 
 # Two separate Groq clients so competitor (scraper) and Shopify-side semantic
-# generation each get their own TPM budget on the Groq free tier.
-_groq_client         = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
-_groq_client_shopify = Groq(api_key=os.getenv("GROQ_API_KEY_SHOPIFY", os.getenv("GROQ_API_KEY", "not-set")))
+# generation each get their own TPM budget on the Groq free tier. Both fall
+# back to GROQ_API_KEY_BACKUP if their primary key auth fails.
+_groq_client         = make_groq_client()
+_groq_client_shopify = make_groq_client(primary_env="GROQ_API_KEY_SHOPIFY")
 
 GROQ_SEMANTIC_PROMPT = """You are a product cataloguing assistant. For each variant below
 produce a STRUCTURED FINGERPRINT used to compare this product against the same product

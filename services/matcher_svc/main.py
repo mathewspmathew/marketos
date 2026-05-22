@@ -1,20 +1,24 @@
 """
 services/matcher_svc/main.py
 
-Tasks (match_queue):
-  matcher.match_for_shop(shop_domain, full=False)
-    Find pending merchant variants for this shop and fan out per-variant
-    match tasks. With full=True, re-matches every variant that has an
-    embedding (used after a fresh competitor scrape, and by the nightly beat).
+Single task (match_queue):
+  matcher.match_for_scraped_product(scraped_product_id)
+    Triggered when a ScrapedProduct's embeddings finish writing. Resolves the
+    merchant product(s) that caused the scrape via CompetitorCandidate, then
+    computes scoped pairwise cosine between each merchant variant's
+    ShopifyEmbedding and the scraped variants' ProductEmbeddings. Writes/
+    updates ProductMatch + one ProductLevelMatch per (merchantProduct,
+    scrapedProduct) pair. Fans out stats + suggestion tasks for downstream.
 
-  matcher.match_for_variant(shop_domain, shopify_variant_id)
-    For one merchant variant: per-domain HNSW similarity search across all
-    competitor domains the shop tracks, hybrid threshold per domain, upsert
-    surviving rows into ProductMatch and delete stale ones.
-
-The matcher is read-mostly on ProductEmbedding/ShopifyEmbedding (HNSW idx) and
-write-only against ProductMatch. pgvector types stay in raw SQL — SQLAlchemy
-has no native vector type.
+Design:
+  - Scope is the scraped product, not the shop. No HNSW, no per-domain
+    threshold — the candidate set is tiny (N merchant variants × M scraped
+    variants for one product pair).
+  - Hard filters (categoryTop, gender, price ratio, brand-if-both-present,
+    rejectedByMerchant guard) match the previous matcher.
+  - One scraped product can have multiple CompetitorCandidate rows pointing
+    at it (two merchant products independently discovered the same URL). We
+    match against every non-rejected candidate's merchant product.
 """
 import os
 import uuid
@@ -29,22 +33,16 @@ from services.matcher_svc.scoring import (
     ABSOLUTE_HYBRID_FLOOR,
     CONFIRMED_THRESHOLD,
     LIKELY_THRESHOLD,
-    PRICE_RATIO_LIMIT,
     brand_match,
     compute_confidence,
     confidence_tier,
 )
-from services.matcher_svc.threshold import compute_domain_threshold
 
 load_dotenv()
 
-_HNSW_EF_SEARCH = 100
-_PER_DOMAIN_LIMIT = 50
-_SHOP_LOCK_TTL_SECONDS = 30 * 60  # 30 minutes
 _SUGGESTION_DEBOUNCE_SECONDS = 60  # one suggestion run per product per minute
 
-# Hybrid scoring: re-rank text HNSW top-K by α·text_sim + (1-α)·img_sim when both
-# vectors are available. Falls back to text-only if either side lacks vectorImg.
+# Hybrid scoring: α·text_sim + (1-α)·img_sim when both vectors are available.
 _HYBRID_TEXT_WEIGHT = 0.6
 
 _redis_client: redis.Redis | None = None
@@ -59,483 +57,374 @@ def _redis() -> redis.Redis:
         )
     return _redis_client
 
-# nx mean Not eXists, ex means Expire time in seconds. So this command sets a key with a value and an expiration time, but only if the key does not already exist.
-def _acquire_shop_lock(shop_domain: str) -> bool:
-    return bool(_redis().set(f"match:lock:{shop_domain}", "1", nx=True, ex=_SHOP_LOCK_TTL_SECONDS))
-
-
-def _release_shop_lock(shop_domain: str) -> None:
-    _redis().delete(f"match:lock:{shop_domain}")
-
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Per-variant matcher
+# Scoped pairwise matcher
 # ─────────────────────────────────────────────────────────────────────────────
 
-# takes ONE merchant variant - which competitor variants are similar enough to be considered matches? Writes ProductMatch rows.
-def _match_variant(shop_domain: str, variant_id: str) -> int:
-    """Returns the count of ProductMatch rows written/updated."""
+def _match_one_pair(
+    session,
+    shop_domain: str,
+    merchant_product_id: str,
+    scraped_product_id: str,
+) -> tuple[int, set[str]]:
+    """Compute matches for one (merchantProduct, scrapedProduct) pair.
+
+    Returns (rows_written, set_of_merchant_variant_ids_touched).
+    """
     written = 0
-    product_pair_scores: dict[tuple[str, str], list[float]] = {}
+    touched_variants: set[str] = set()
 
-    with get_db() as session:
-        # Load this variant's text + image vectors (string repr, casts back to vector in SQL).
-        vec_row = session.execute(
-            text(
-                'SELECT "vectorText"::text AS vt, "vectorImg"::text AS vi '
-                'FROM "ShopifyEmbedding" '
-                'WHERE "variantId" = :vid AND "vectorText" IS NOT NULL'
-            ),
-            {"vid": variant_id},
-        ).first()
-        if not vec_row or not vec_row.vt:
-            print(f"[matcher] no text vector for ShopifyVariant {variant_id[:8]} — skipping", flush=True)
-            return 0
-        query_text_vec = vec_row.vt
-        query_img_vec = vec_row.vi  # may be None — falls back to text-only re-ranking
-
-        # Merchant-side structured attributes used for SQL hard-filters and
-        # confidence scoring. NULLs are tolerated — every filter degrades
-        # permissively when either side lacks the field.
-        attr_row = session.execute(
-            text(
-                'SELECT sp."id" AS prod_id, sp.vendor, sp."productType", '
-                '       sp."categoryTop", sp."productGender", '
-                '       sv."currentPrice" '
-                'FROM "ShopifyVariant" sv '
-                'JOIN "ShopifyProduct" sp ON sp.id = sv."productId" '
-                'WHERE sv.id = :vid'
-            ),
-            {"vid": variant_id},
-        ).first()
-        merchant_prod_id   = attr_row.prod_id if attr_row else None
-        merchant_vendor    = attr_row.vendor if attr_row else None
-        merchant_type      = attr_row.productType if attr_row else None
-        merchant_category  = attr_row.categoryTop if attr_row else None
-        merchant_gender    = attr_row.productGender if attr_row else None
-        merchant_price     = float(attr_row.currentPrice) if attr_row and attr_row.currentPrice else None
-        
-        # Distinct competitor domains tracked by this shop.
-        domains = [
-            r[0] for r in session.execute(
-                text('SELECT DISTINCT domain FROM "ScrapedProduct" WHERE "shopDomain" = :sd'),
-                {"sd": shop_domain},
-            ).all()
-        ]
-        if not domains:
-            print(f"[matcher] no competitor domains for {shop_domain} — skipping {variant_id[:8]}", flush=True)
-            return 0
-
-        # ef_search must be raised inside the transaction; SQLAlchemy session
-        # holds an open tx, so SET LOCAL is correct here.
-        session.execute(text(f"SET LOCAL hnsw.ef_search = {_HNSW_EF_SEARCH}"))
-
-        for domain in domains:
-            # Text HNSW retrieves top-K candidates. The brand pre-filter applies
-            # only when BOTH sides have a vendor — otherwise we'd reject every
-            # competitor row from sources that don't extract vendor reliably.
-            # Competitor variant attributes (vendor/type/price) ride along so
-            # we can compute confidence without a second round-trip.
-            rows = session.execute(
-                text(
-                    'SELECT pe."variantId" AS comp_variant_id, '
-                    '       pe."prodId"    AS comp_prod_id, '
-                    '       sp.vendor      AS comp_vendor, '
-                    '       sp."productType" AS comp_type, '
-                    '       sp."categoryTop" AS comp_category, '
-                    '       sp."productGender" AS comp_gender, '
-                    '       sv."currentPrice" AS comp_price, '
-                    '       pe."vectorText" <=> CAST(:qvt AS vector) AS dist_text, '
-                    '       CASE WHEN pe."vectorImg" IS NOT NULL AND CAST(:qvi AS text) IS NOT NULL '
-                    '            THEN pe."vectorImg" <=> CAST(:qvi AS vector) '
-                    '            ELSE NULL END AS dist_img '
-                    'FROM "ProductEmbedding" pe '
-                    'JOIN "ScrapedProduct" sp ON sp.id = pe."prodId" '
-                    'JOIN "ScrapedVariant" sv ON sv.id = pe."variantId" '
-                    'WHERE pe."shopDomain" = :sd '
-                    '  AND sp.domain = :dom '
-                    '  AND pe."variantId" IS NOT NULL '
-                    # Brand pre-filter — only fires when BOTH sides have a vendor.
-                    '  AND ( CAST(:mvendor AS text) IS NULL OR sp.vendor IS NULL '
-                    '        OR LOWER(sp.vendor) = LOWER(CAST(:mvendor AS text)) ) '
-                    # Top-level category hard filter — clothing vs electronics
-                    # are never compared. Null on either side stays permissive.
-                    '  AND ( CAST(:mcategory AS text) IS NULL OR sp."categoryTop" IS NULL '
-                    '        OR sp."categoryTop" = CAST(:mcategory AS text) ) '
-                    # Gender hard filter — men\'s product never matched to a
-                    # women\'s product even if the rest of the signal aligns.
-                    '  AND ( CAST(:mgender AS text) IS NULL OR sp."productGender" IS NULL '
-                    '        OR sp."productGender" = CAST(:mgender AS text) ) '
-                    # Price-ratio sanity — reject candidates whose latest price
-                    # is >5x or <1/5x of the merchant variant. Permissive when
-                    # either price is null (extractor may have failed).
-                    '  AND ( CAST(:mprice AS numeric) IS NULL OR sv."currentPrice" IS NULL '
-                    '        OR sv."currentPrice" BETWEEN CAST(:mprice AS numeric) / :ratio '
-                    '                                  AND CAST(:mprice AS numeric) * :ratio ) '
-                    # Suppress pairs the merchant has already rejected in review.
-                    '  AND NOT EXISTS ( '
-                    '        SELECT 1 FROM "ProductLevelMatch" plm '
-                    '        WHERE plm."shopifyProductId" = :mprod '
-                    '          AND plm."scrapedProductId" = pe."prodId" '
-                    '          AND plm."rejectedByMerchant" = TRUE ) '
-                    'ORDER BY pe."vectorText" <=> CAST(:qvt AS vector) '
-                    f'LIMIT {_PER_DOMAIN_LIMIT}'
-                ),
-                {"qvt": query_text_vec, "qvi": query_img_vec,
-                 "sd": shop_domain, "dom": domain,
-                 "mvendor":   merchant_vendor,
-                 "mcategory": merchant_category,
-                 "mgender":   merchant_gender,
-                 "mprice":    merchant_price,
-                 "mprod":     merchant_prod_id,
-                 "ratio":     PRICE_RATIO_LIMIT},
-            ).all()
-            if not rows:
-                continue
-
-            # Re-rank: when both sides have an image vector, score is
-            # α·text_sim + (1-α)·img_sim; otherwise text-only.
-            candidates = []
-            for r in rows:
-                text_sim = 1.0 - float(r.dist_text)
-                if r.dist_img is not None:
-                    img_sim = 1.0 - float(r.dist_img)
-                    score = _HYBRID_TEXT_WEIGHT * text_sim + (1.0 - _HYBRID_TEXT_WEIGHT) * img_sim
-                    mtype = "hybrid"
-                else:
-                    img_sim = None
-                    score = text_sim
-                    mtype = "semantic"
-                candidates.append({
-                    "comp_variant_id": r.comp_variant_id,
-                    "comp_prod_id":    r.comp_prod_id,
-                    "comp_vendor":     r.comp_vendor,
-                    "comp_type":       r.comp_type,
-                    "comp_price":      float(r.comp_price) if r.comp_price else None,
-                    "dist_text":       float(r.dist_text),
-                    "score":           score,
-                    "mtype":           mtype,
-                    "text_sim":        text_sim,
-                    "img_sim":         img_sim,
-                })
-
-            # Absolute hybrid floor: ignore anything below this regardless of
-            # what the domain-adaptive threshold would have allowed. Prevents
-            # a domain with all-bad candidates from letting the best-bad through.
-            candidates = [c for c in candidates if c["score"] >= ABSOLUTE_HYBRID_FLOOR]
-            if not candidates:
-                continue
-
-            scores = [c["score"] for c in candidates]
-            threshold = compute_domain_threshold(scores)
-            kept = [c for c in candidates if c["score"] >= threshold]
-            if not kept:
-                continue
-
-            # Top-1 per competitor product: a single competitor product with
-            # N sibling variants would otherwise produce N near-identical
-            # matches. We keep only the highest-scoring variant per product —
-            # the one we are most confident corresponds to this merchant variant.
-            best_by_product: dict[str, dict] = {}
-            for c in kept:
-                pid = c["comp_prod_id"]
-                if pid not in best_by_product or c["score"] > best_by_product[pid]["score"]:
-                    best_by_product[pid] = c
-            kept = list(best_by_product.values())
-
-            for c in kept:
-                confidence = compute_confidence(
-                    hybrid_sim=c["score"],
-                    merchant_vendor=merchant_vendor,
-                    competitor_vendor=c["comp_vendor"],
-                    merchant_type=merchant_type,
-                    competitor_type=c["comp_type"],
-                    merchant_price=merchant_price,
-                    competitor_price=c["comp_price"],
-                )
-                # Confidence may collapse to 0 from the hard price-ratio reject
-                # in scoring.py. Skip the insert in that case.
-                if confidence <= 0:
-                    continue
-                has_brand = brand_match(merchant_vendor, c["comp_vendor"])
-                tier = confidence_tier(confidence, has_brand_match=has_brand)
-                session.execute(
-                    text(
-                        'INSERT INTO "ProductMatch" '
-                        '(id, "shopDomain", "shopifyVariantId", "competitorVariantId", '
-                        ' "competitorProdId", "matchScore", "textScore", "imageScore", '
-                        ' "matchType", "vectorDistance", "thresholdUsed", '
-                        ' "confidence", "confidenceTier", '
-                        ' "matchedAt", "updatedAt") '
-                        'VALUES (:id, :sd, :svid, :cvid, :cpid, :score, :tscore, :iscore, '
-                        '        :mtype, :dist, :thr, :conf, CAST(:tier AS "MatchConfidenceTier"), NOW(), NOW()) '
-                        'ON CONFLICT ("shopifyVariantId", "competitorVariantId") DO UPDATE SET '
-                        '  "competitorProdId" = EXCLUDED."competitorProdId", '
-                        '  "matchScore"       = EXCLUDED."matchScore", '
-                        '  "textScore"        = EXCLUDED."textScore", '
-                        '  "imageScore"       = EXCLUDED."imageScore", '
-                        '  "matchType"        = EXCLUDED."matchType", '
-                        '  "vectorDistance"   = EXCLUDED."vectorDistance", '
-                        '  "thresholdUsed"    = EXCLUDED."thresholdUsed", '
-                        '  "confidence"       = EXCLUDED."confidence", '
-                        '  "confidenceTier"   = EXCLUDED."confidenceTier", '
-                        '  "updatedAt"        = NOW()'
-                    ),
-                    {
-                        "id":     str(uuid.uuid4()),
-                        "sd":     shop_domain,
-                        "svid":   variant_id,
-                        "cvid":   c["comp_variant_id"],
-                        "cpid":   c["comp_prod_id"],
-                        "score":  round(c["score"] * 100.0, 2),
-                        "tscore": round(c["text_sim"] * 100.0, 2),
-                        "iscore": round(c["img_sim"] * 100.0, 2) if c["img_sim"] is not None else None,
-                        "mtype":  c["mtype"],
-                        "dist":   round(c["dist_text"], 6),
-                        "thr":    round(threshold, 4),
-                        "conf":   round(confidence, 3),
-                        "tier":   tier,
-                    },
-                )
-                written += 1
-                if merchant_prod_id:
-                    product_pair_scores.setdefault(
-                        (merchant_prod_id, c["comp_prod_id"]), []
-                    ).append((confidence, has_brand))
-
-        # Orphan cleanup only: rows whose competitor variant was deleted upstream
-        # (FK SetNull) and weren't refreshed by this run. We deliberately keep
-        # stale-but-valid rows so a single run that fails to write (empty
-        # candidates, threshold rejection, transient HNSW miss) doesn't wipe
-        # previously confirmed matches. Freshness is conveyed via updatedAt.
-        session.execute(
-            text(
-                'DELETE FROM "ProductMatch" '
-                'WHERE "shopifyVariantId" = :svid '
-                '  AND "competitorVariantId" IS NULL'
-            ),
-            {"svid": variant_id},
-        )
-
-        # Roll up variant matches to product-level matches. One ProductLevelMatch
-        # per (merchantProduct, competitorProduct) pair, confidence = max of the
-        # variant confidences in that pair. Max (vs mean) better reflects "the
-        # best variant pairing is N% sure" rather than diluting with weaker
-        # sibling variants.
-        if product_pair_scores and merchant_prod_id:
-            for (m_prod_id, c_prod_id), pairs in product_pair_scores.items():
-                # Each entry is (confidence, has_brand). Pair confidence is
-                # the max across variants; brand match is held if ANY variant
-                # in the pair had it (a single brand-confirmed variant is
-                # enough evidence that the product pair shares a brand).
-                pair_conf = max(p[0] for p in pairs)
-                pair_brand = any(p[1] for p in pairs)
-                pair_tier = confidence_tier(pair_conf, has_brand_match=pair_brand)
-                row = session.execute(
-                    text(
-                        'INSERT INTO "ProductLevelMatch" '
-                        '(id, "shopDomain", "shopifyProductId", "scrapedProductId", '
-                        ' "confidence", "confidenceTier", source, "confirmedByMerchant", '
-                        ' "createdAt", "updatedAt") '
-                        'VALUES (:id, :sd, :mpid, :cpid, :conf, CAST(:tier AS "MatchConfidenceTier"), '
-                        '        :src, false, NOW(), NOW()) '
-                        'ON CONFLICT ("shopifyProductId", "scrapedProductId") DO UPDATE SET '
-                        '  confidence       = GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence), '
-                        # Recomputed tier respects brand-match: only let the
-                        # row reach CONFIRMED when this run carried brand
-                        # evidence. If the prior tier was already CONFIRMED
-                        # (merchant or earlier brand-evidence run), keep it.
-                        '  "confidenceTier" = CASE '
-                        '     WHEN "ProductLevelMatch"."confidenceTier" = '
-                        '          CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
-                        '       THEN CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
-                        '     WHEN :brand_match = TRUE '
-                        '       AND GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence) >= :confirmed '
-                        '       THEN CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
-                        '     WHEN GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence) >= :likely '
-                        '       THEN CAST(\'LIKELY\' AS "MatchConfidenceTier") '
-                        '     ELSE CAST(\'WEAK\' AS "MatchConfidenceTier") END, '
-                        '  "updatedAt"      = NOW() '
-                        'RETURNING id'
-                    ),
-                    {
-                        "id":   str(uuid.uuid4()),
-                        "sd":   shop_domain,
-                        "mpid": m_prod_id,
-                        "cpid": c_prod_id,
-                        "conf": round(pair_conf, 3),
-                        "tier": pair_tier,
-                        "brand_match": pair_brand,
-                        "src":  "RERANKER",
-                        "confirmed": CONFIRMED_THRESHOLD,
-                        "likely":    LIKELY_THRESHOLD,
-                    },
-                ).first()
-                if row:
-                    plm_id = row[0]
-                    # Link every variant ProductMatch row in this pair to the
-                    # product-level match so downstream consumers (pricing,
-                    # confirmation UI) can navigate either direction.
-                    session.execute(
-                        text(
-                            'UPDATE "ProductMatch" '
-                            'SET "productMatchId" = :plm '
-                            'WHERE "shopifyVariantId" = :svid '
-                            '  AND "competitorProdId" = :cpid'
-                        ),
-                        {"plm": plm_id, "svid": variant_id, "cpid": c_prod_id},
-                    )
-
-        # Mark this merchant embedding clean — the dirty-flag selector uses
-        # matchedAt vs. updatedAt to decide which variants need re-matching.
-        session.execute(
-            text(
-                'UPDATE "ShopifyEmbedding" SET "matchedAt" = NOW() '
-                'WHERE "variantId" = :vid'
-            ),
-            {"vid": variant_id},
-        )
-
-    print(f"[matcher] variant {variant_id[:8]} → {written} match row(s) ({len(domains)} domain(s))", flush=True)
-    return written
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Per-shop dispatcher
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _select_pending_variants(session, shop_domain: str, full: bool) -> list[str]:
-    if full:
-        rows = session.execute(
-            text(
-                'SELECT se."variantId" '
-                'FROM "ShopifyEmbedding" se '
-                'WHERE se."shopDomain" = :sd AND se."vectorText" IS NOT NULL'
-            ),
-            {"sd": shop_domain},
-        ).all()
-        return [r[0] for r in rows]
-
-    # Competitor-side dirtiness: any ProductEmbedding in this shop whose
-    # current vector hasn't been consumed by the matcher yet. If even one
-    # exists, every merchant variant in the shop needs a re-match because
-    # the new competitor row could be a candidate for any of them.
-    competitor_dirty = session.execute(
+    # If the merchant has already rejected this pair in review, skip entirely.
+    already_rejected = session.execute(
         text(
-            'SELECT 1 FROM "ProductEmbedding" pe '
-            'WHERE pe."shopDomain" = :sd '
-            '  AND pe."vectorText" IS NOT NULL '
-            '  AND (pe."matchedAt" IS NULL OR pe."matchedAt" < pe."vectorizedAt") '
-            'LIMIT 1'
+            'SELECT 1 FROM "ProductLevelMatch" '
+            'WHERE "shopifyProductId" = :mpid '
+            '  AND "scrapedProductId" = :cpid '
+            '  AND "rejectedByMerchant" = TRUE'
         ),
-        {"sd": shop_domain},
-    ).first() is not None
+        {"mpid": merchant_product_id, "cpid": scraped_product_id},
+    ).first()
+    if already_rejected:
+        return 0, set()
 
-    if competitor_dirty:
-        rows = session.execute(
-            text(
-                'SELECT se."variantId" '
-                'FROM "ShopifyEmbedding" se '
-                'WHERE se."shopDomain" = :sd AND se."vectorText" IS NOT NULL'
-            ),
-            {"sd": shop_domain},
-        ).all()
-        return [r[0] for r in rows]
-
-    # Merchant-side dirtiness: embedding fresher than last match.
+    # Cartesian (merchant variant) × (scraped variant) cosine via one SQL.
+    # Filters live inside SQL so we never pull useless pairs out of Postgres.
+    # Currency mismatch is tracked but never filters — pricing layer skips
+    # mismatched rows; the match itself is still valuable for catalog mapping.
     rows = session.execute(
         text(
-            'SELECT se."variantId" '
-            'FROM "ShopifyEmbedding" se '
-            'WHERE se."shopDomain" = :sd '
+            'SELECT sv.id            AS merchant_variant_id, '
+            '       pe."variantId"   AS competitor_variant_id, '
+            '       pe."prodId"      AS competitor_prod_id, '
+            '       sp_m.vendor      AS m_vendor, '
+            '       sp_m."productType" AS m_type, '
+            '       sp_m."categoryTop" AS m_category, '
+            '       sp_m."productGender" AS m_gender, '
+            '       sv."currentPrice" AS m_price, '
+            '       sp_c.vendor      AS c_vendor, '
+            '       sp_c."productType" AS c_type, '
+            '       sp_c."categoryTop" AS c_category, '
+            '       sp_c."productGender" AS c_gender, '
+            '       scv."currentPrice" AS c_price, '
+            '       ss.currency      AS shop_currency, '
+            '       scv.currency     AS comp_currency, '
+            '       se."vectorText" <=> pe."vectorText" AS dist_text, '
+            '       CASE WHEN se."vectorImg" IS NOT NULL AND pe."vectorImg" IS NOT NULL '
+            '            THEN se."vectorImg" <=> pe."vectorImg" '
+            '            ELSE NULL END AS dist_img '
+            'FROM "ShopifyVariant" sv '
+            'JOIN "ShopifyProduct" sp_m ON sp_m.id = sv."productId" '
+            'JOIN "ShopifyEmbedding" se ON se."variantId" = sv.id '
+            'LEFT JOIN "ShopSettings" ss ON ss."shopDomain" = sp_m."shopDomain" '
+            'CROSS JOIN "ProductEmbedding" pe '
+            'JOIN "ScrapedProduct"  sp_c ON sp_c.id = pe."prodId" '
+            'JOIN "ScrapedVariant"  scv ON scv.id = pe."variantId" '
+            'WHERE sv."productId" = :mpid '
+            '  AND pe."prodId"    = :cpid '
+            '  AND pe."variantId" IS NOT NULL '
             '  AND se."vectorText" IS NOT NULL '
-            '  AND (se."matchedAt" IS NULL OR se."matchedAt" < se."updatedAt")'
+            '  AND pe."vectorText" IS NOT NULL '
+            # Brand pre-filter — only fires when BOTH sides have a vendor.
+            '  AND ( sp_m.vendor IS NULL OR sp_c.vendor IS NULL '
+            '        OR LOWER(sp_m.vendor) = LOWER(sp_c.vendor) ) '
+            # Top-level category hard gate. Null on either side stays permissive.
+            '  AND ( sp_m."categoryTop" IS NULL OR sp_c."categoryTop" IS NULL '
+            '        OR sp_m."categoryTop" = sp_c."categoryTop" ) '
+            # Gender hard gate.
+            '  AND ( sp_m."productGender" IS NULL OR sp_c."productGender" IS NULL '
+            '        OR sp_m."productGender" = sp_c."productGender" ) '
         ),
-        {"sd": shop_domain},
+        {"mpid": merchant_product_id, "cpid": scraped_product_id},
     ).all()
-    return [r[0] for r in rows]
 
+    if not rows:
+        return 0, set()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Celery tasks
-# ─────────────────────────────────────────────────────────────────────────────
+    # Group by merchant variant → keep highest-scoring scraped variant per
+    # merchant variant. (We're already inside one merchant product × one
+    # scraped product, so this is the equivalent of the old "top-1 per
+    # competitor product" rule applied per merchant variant.)
+    best_by_mvariant: dict[str, dict] = {}
+    pair_confidences: list[tuple[float, bool]] = []
 
-@app.task(name="matcher.match_for_variant", bind=True, max_retries=3, default_retry_delay=60)
-def match_for_variant(self, shop_domain: str, shopify_variant_id: str):
-    try:
-        written = _match_variant(shop_domain, shopify_variant_id)
-    except Exception as exc:
-        if self.request.retries >= self.max_retries:
-            print(f"[matcher] variant {shopify_variant_id} permanently failed: {exc}", flush=True)
-            return 0
-        print(f"[matcher] variant {shopify_variant_id} failed: {exc} — retrying", flush=True)
-        raise self.retry(exc=exc)
+    for r in rows:
+        text_sim = 1.0 - float(r.dist_text)
+        if r.dist_img is not None:
+            img_sim = 1.0 - float(r.dist_img)
+            score = _HYBRID_TEXT_WEIGHT * text_sim + (1.0 - _HYBRID_TEXT_WEIGHT) * img_sim
+            mtype = "hybrid"
+        else:
+            img_sim = None
+            score = text_sim
+            mtype = "semantic"
 
-    # Fresh matches landed → recompute pricing stats for this variant; the
-    # match set (and thus the weighted aggregates) changed.
-    if written > 0:
-        app.send_task(
-            "stats.recompute_for_variant",
-            args=[shop_domain, shopify_variant_id],
-            queue="stats_queue",
+        if score < ABSOLUTE_HYBRID_FLOOR:
+            continue
+
+        # currencyMismatch is only true when both sides have a known currency
+        # and they differ. Null on either side stays permissive (False).
+        currency_mismatch = bool(
+            r.shop_currency and r.comp_currency and r.shop_currency != r.comp_currency
+        )
+        cand = {
+            "merchant_variant_id":  r.merchant_variant_id,
+            "competitor_variant_id": r.competitor_variant_id,
+            "competitor_prod_id":   r.competitor_prod_id,
+            "m_vendor":  r.m_vendor,
+            "m_type":    r.m_type,
+            "m_price":   float(r.m_price) if r.m_price is not None else None,
+            "c_vendor":  r.c_vendor,
+            "c_type":    r.c_type,
+            "c_price":   float(r.c_price) if r.c_price is not None else None,
+            "currency_mismatch": currency_mismatch,
+            "dist_text": float(r.dist_text),
+            "score":     score,
+            "mtype":     mtype,
+            "text_sim":  text_sim,
+            "img_sim":   img_sim,
+        }
+        prev = best_by_mvariant.get(cand["merchant_variant_id"])
+        if prev is None or cand["score"] > prev["score"]:
+            best_by_mvariant[cand["merchant_variant_id"]] = cand
+
+    if not best_by_mvariant:
+        return 0, set()
+
+    for cand in best_by_mvariant.values():
+        confidence = compute_confidence(
+            hybrid_sim=cand["score"],
+            merchant_vendor=cand["m_vendor"],
+            competitor_vendor=cand["c_vendor"],
+            merchant_type=cand["m_type"],
+            competitor_type=cand["c_type"],
+            merchant_price=cand["m_price"],
+            competitor_price=cand["c_price"],
+        )
+        if confidence <= 0:
+            continue
+        has_brand = brand_match(cand["m_vendor"], cand["c_vendor"])
+        tier = confidence_tier(confidence, has_brand_match=has_brand)
+        session.execute(
+            text(
+                'INSERT INTO "ProductMatch" '
+                '(id, "shopDomain", "shopifyVariantId", "competitorVariantId", '
+                ' "competitorProdId", "matchScore", "textScore", "imageScore", '
+                ' "matchType", "vectorDistance", "thresholdUsed", '
+                ' "confidence", "confidenceTier", "currencyMismatch", '
+                ' "matchedAt", "updatedAt") '
+                'VALUES (:id, :sd, :svid, :cvid, :cpid, :score, :tscore, :iscore, '
+                '        :mtype, :dist, :thr, :conf, CAST(:tier AS "MatchConfidenceTier"), :cmis, NOW(), NOW()) '
+                'ON CONFLICT ("shopifyVariantId", "competitorVariantId") DO UPDATE SET '
+                '  "competitorProdId" = EXCLUDED."competitorProdId", '
+                '  "matchScore"       = EXCLUDED."matchScore", '
+                '  "textScore"        = EXCLUDED."textScore", '
+                '  "imageScore"       = EXCLUDED."imageScore", '
+                '  "matchType"        = EXCLUDED."matchType", '
+                '  "vectorDistance"   = EXCLUDED."vectorDistance", '
+                '  "thresholdUsed"    = EXCLUDED."thresholdUsed", '
+                '  "confidence"       = EXCLUDED."confidence", '
+                '  "confidenceTier"   = EXCLUDED."confidenceTier", '
+                '  "currencyMismatch" = EXCLUDED."currencyMismatch", '
+                '  "updatedAt"        = NOW()'
+            ),
+            {
+                "id":     str(uuid.uuid4()),
+                "sd":     shop_domain,
+                "svid":   cand["merchant_variant_id"],
+                "cvid":   cand["competitor_variant_id"],
+                "cpid":   cand["competitor_prod_id"],
+                "score":  round(cand["score"] * 100.0, 2),
+                "tscore": round(cand["text_sim"] * 100.0, 2),
+                "iscore": round(cand["img_sim"] * 100.0, 2) if cand["img_sim"] is not None else None,
+                "mtype":  cand["mtype"],
+                "dist":   round(cand["dist_text"], 6),
+                # thresholdUsed is now constant (ABSOLUTE_HYBRID_FLOOR) — the
+                # adaptive per-domain threshold is gone with the scoped flow.
+                "thr":    round(ABSOLUTE_HYBRID_FLOOR, 4),
+                "conf":   round(confidence, 3),
+                "tier":   tier,
+                "cmis":   cand["currency_mismatch"],
+            },
+        )
+        written += 1
+        touched_variants.add(cand["merchant_variant_id"])
+        pair_confidences.append((confidence, has_brand))
+
+    if not pair_confidences:
+        return 0, set()
+
+    # One ProductLevelMatch per (merchantProduct, scrapedProduct).
+    # Confidence = max across variant pairs; brand evidence carried if ANY
+    # variant pair carried it.
+    pair_conf = max(c for c, _ in pair_confidences)
+    pair_brand = any(b for _, b in pair_confidences)
+    pair_tier = confidence_tier(pair_conf, has_brand_match=pair_brand)
+    plm_row = session.execute(
+        text(
+            'INSERT INTO "ProductLevelMatch" '
+            '(id, "shopDomain", "shopifyProductId", "scrapedProductId", '
+            ' "confidence", "confidenceTier", source, "confirmedByMerchant", '
+            ' "createdAt", "updatedAt") '
+            'VALUES (:id, :sd, :mpid, :cpid, :conf, CAST(:tier AS "MatchConfidenceTier"), '
+            '        :src, false, NOW(), NOW()) '
+            'ON CONFLICT ("shopifyProductId", "scrapedProductId") DO UPDATE SET '
+            '  confidence       = GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence), '
+            '  "confidenceTier" = CASE '
+            '     WHEN "ProductLevelMatch"."confidenceTier" = '
+            '          CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
+            '       THEN CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
+            '     WHEN :brand_match = TRUE '
+            '       AND GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence) >= :confirmed '
+            '       THEN CAST(\'CONFIRMED\' AS "MatchConfidenceTier") '
+            '     WHEN GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence) >= :likely '
+            '       THEN CAST(\'LIKELY\' AS "MatchConfidenceTier") '
+            '     ELSE CAST(\'WEAK\' AS "MatchConfidenceTier") END, '
+            '  "updatedAt"      = NOW() '
+            'RETURNING id'
+        ),
+        {
+            "id":   str(uuid.uuid4()),
+            "sd":   shop_domain,
+            "mpid": merchant_product_id,
+            "cpid": scraped_product_id,
+            "conf": round(pair_conf, 3),
+            "tier": pair_tier,
+            "brand_match": pair_brand,
+            "src":  "DISCOVERY",
+            "confirmed": CONFIRMED_THRESHOLD,
+            "likely":    LIKELY_THRESHOLD,
+        },
+    ).first()
+    if plm_row:
+        plm_id = plm_row[0]
+        # Link every variant ProductMatch row in this pair to the product-level
+        # match so downstream (pricing, confirmation UI) can navigate either way.
+        session.execute(
+            text(
+                'UPDATE "ProductMatch" '
+                'SET "productMatchId" = :plm '
+                'WHERE "shopifyVariantId" = ANY(:svids) '
+                '  AND "competitorProdId" = :cpid'
+            ),
+            {
+                "plm":   plm_id,
+                "svids": list(touched_variants),
+                "cpid":  scraped_product_id,
+            },
         )
 
-    # Also kick off a product-level suggestion run (existing content path).
-    # Debounced per product so sibling variants matching back-to-back don't
-    # fan out N parallel suggestion tasks for the same product.
-    if written > 0:
-        with get_db() as session:
-            prod_row = session.execute(
-                text('SELECT "productId" FROM "ShopifyVariant" WHERE id = :vid'),
-                {"vid": shopify_variant_id},
-            ).first()
-        if prod_row and prod_row[0]:
-            product_id = prod_row[0]
-            lock_key = f"suggestion:debounce:{product_id}"
-            if _redis().set(lock_key, "1", nx=True, ex=_SUGGESTION_DEBOUNCE_SECONDS):
-                app.send_task(
-                    "suggestion.suggest_for_product",
-                    args=[shop_domain, product_id],
-                    queue="suggestion_queue",
-                )
-                print(f"[matcher] queued suggestion for product {product_id[:8]}", flush=True)
-
-    return written
+    return written, touched_variants
 
 
-@app.task(name="matcher.match_for_shop", bind=True)
-def match_for_shop(self, shop_domain: str, full: bool = False):
-    if not _acquire_shop_lock(shop_domain):
-        print(f"[matcher] shop {shop_domain} already locked — skipping", flush=True)
-        return 0
+# ─────────────────────────────────────────────────────────────────────────────
+# Celery task
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.task(name="matcher.match_for_scraped_product", bind=True, max_retries=3, default_retry_delay=60)
+def match_for_scraped_product(self, scraped_product_id: str):
+    """Match this scraped product against every merchant product that
+    triggered its discovery (via CompetitorCandidate)."""
+    total_written = 0
+    touched_variants: set[str] = set()
+    touched_products: set[str] = set()
+    shop_domain: str | None = None
 
     try:
         with get_db() as session:
-            variant_ids = _select_pending_variants(session, shop_domain, full)
-        if not variant_ids:
-            print(f"[matcher] shop {shop_domain}: no pending variants (full={full})", flush=True)
-            return 0
+            shop_row = session.execute(
+                text('SELECT "shopDomain" FROM "ScrapedProduct" WHERE id = :pid'),
+                {"pid": scraped_product_id},
+            ).first()
+            if not shop_row:
+                print(f"[matcher] scraped product {scraped_product_id} not found — skipping", flush=True)
+                return 0
+            shop_domain = shop_row[0]
 
-        print(f"[matcher] shop {shop_domain}: queuing {len(variant_ids)} variant(s) (full={full})", flush=True)
-        for vid in variant_ids:
-            app.send_task(
-                "matcher.match_for_variant",
-                args=[shop_domain, vid],
-                queue="match_queue",
-            )
+            # All merchant products that asked for this scrape (non-rejected
+            # candidates). REJECTED candidates were thrown out at discovery
+            # review and shouldn't produce matches.
+            candidate_rows = session.execute(
+                text(
+                    'SELECT DISTINCT "shopifyProductId" '
+                    'FROM "CompetitorCandidate" '
+                    'WHERE "scrapedProductId" = :pid '
+                    '  AND "status" != CAST(\'REJECTED\' AS "CandidateStatus")'
+                ),
+                {"pid": scraped_product_id},
+            ).all()
+            merchant_product_ids = [r[0] for r in candidate_rows if r[0]]
 
-        # Optimistically mark competitor embeddings clean now that variants
-        # consuming them are queued. A PE write that lands after this stamp
-        # bumps vectorizedAt above matchedAt and re-arms the dirty flag.
-        with get_db() as session:
+            if not merchant_product_ids:
+                print(
+                    f"[matcher] scraped product {scraped_product_id[:8]} has no "
+                    "non-rejected merchant candidates — skipping",
+                    flush=True,
+                )
+                return 0
+
+            for mpid in merchant_product_ids:
+                written, touched = _match_one_pair(
+                    session,
+                    shop_domain=shop_domain,
+                    merchant_product_id=mpid,
+                    scraped_product_id=scraped_product_id,
+                )
+                total_written += written
+                touched_variants.update(touched)
+                if written > 0:
+                    touched_products.add(mpid)
+
+            # Mark this scrape's competitor embeddings as consumed by the matcher.
             session.execute(
                 text(
                     'UPDATE "ProductEmbedding" SET "matchedAt" = NOW() '
-                    'WHERE "shopDomain" = :sd AND "vectorText" IS NOT NULL'
+                    'WHERE "prodId" = :pid AND "vectorText" IS NOT NULL'
                 ),
-                {"sd": shop_domain},
+                {"pid": scraped_product_id},
             )
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            print(
+                f"[matcher] scraped product {scraped_product_id} permanently failed: {exc}",
+                flush=True,
+            )
+            return 0
+        print(
+            f"[matcher] scraped product {scraped_product_id} failed: {exc} — retrying",
+            flush=True,
+        )
+        raise self.retry(exc=exc)
 
-        return len(variant_ids)
-    finally:
-        _release_shop_lock(shop_domain)
+    print(
+        f"[matcher] scraped product {scraped_product_id[:8]} → "
+        f"{total_written} ProductMatch row(s) across "
+        f"{len(touched_products)} merchant product(s)",
+        flush=True,
+    )
+
+    if total_written == 0:
+        return 0
+
+    # Stats recomputation per merchant variant whose match set changed.
+    assert shop_domain is not None
+    for svid in touched_variants:
+        app.send_task(
+            "stats.recompute_for_variant",
+            args=[shop_domain, svid],
+            queue="stats_queue",
+        )
+
+    # Suggestion fan-out per merchant product, Redis-debounced so sibling
+    # variants matching in the same window only fire one suggestion task.
+    for mpid in touched_products:
+        lock_key = f"suggestion:debounce:{mpid}"
+        if _redis().set(lock_key, "1", nx=True, ex=_SUGGESTION_DEBOUNCE_SECONDS):
+            app.send_task(
+                "suggestion.suggest_for_product",
+                args=[shop_domain, mpid],
+                queue="suggestion_queue",
+            )
+            print(f"[matcher] queued suggestion for product {mpid[:8]}", flush=True)
+
+    return total_written

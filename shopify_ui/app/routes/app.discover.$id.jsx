@@ -91,16 +91,24 @@ export const action = async ({ request, params }) => {
   }
 
   if (intent === "toggleDynamic") {
-    // Clearing lastDiscoveryAt on toggle-off re-arms first-time discovery,
-    // so a subsequent off→on cycle re-runs Serper from scratch.
+    // Pause/resume: do NOT clear lastDiscoveryAt on toggle-off. The beat
+    // filter is the actual gate. On toggle-on, re-arm stale URLs so the
+    // rescrape loop resumes immediately.
     const enabled = form.get("enabled") === "true";
     await db.shopifyProduct.update({
       where: { id: productId },
-      data: {
-        dynamicPricingEnabled: enabled,
-        ...(enabled ? {} : { lastDiscoveryAt: null }),
-      },
+      data: { dynamicPricingEnabled: enabled },
     });
+    if (enabled) {
+      await db.productUrl.updateMany({
+        where: {
+          shopifyProductId: productId,
+          status: "ACTIVE",
+          OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+        },
+        data: { nextRunAt: new Date() },
+      });
+    }
     return { toggled: enabled };
   }
 

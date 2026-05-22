@@ -22,7 +22,6 @@ LIKELY_THRESHOLD    = 0.65
 
 BRAND_BONUS  = 0.10
 TYPE_BONUS   = 0.05
-PRICE_RATIO_LIMIT = 5.0       # >5x ratio between prices → hard reject
 
 # Used by the matcher to drop candidates whose hybrid (text+image) similarity
 # is below this floor, regardless of the domain-adaptive threshold. Without
@@ -55,21 +54,21 @@ def compute_confidence(
 ) -> float:
     """Map hybrid similarity + structured attributes to a [0,1] confidence.
 
-    Hard rejects (return 0.0):
-      - Price ratio between merchant and competitor exceeds PRICE_RATIO_LIMIT.
-
     Bonuses:
-      - Brand equality      → +BRAND_BONUS
+      - Brand equality        → +BRAND_BONUS
       - Product-type equality → +TYPE_BONUS
 
     `hybrid_sim` is the existing α·text_sim + (1-α)·img_sim score in [0,1].
-    """
-    if (merchant_price and competitor_price
-            and merchant_price > 0 and competitor_price > 0):
-        ratio = max(merchant_price, competitor_price) / min(merchant_price, competitor_price)
-        if ratio > PRICE_RATIO_LIMIT:
-            return 0.0
 
+    Note: the legacy 5x price-ratio hard reject was removed once the matcher
+    became currency-aware. Cross-currency price comparison was the only thing
+    that ratio gate was protecting against, and that's now handled by the
+    currencyMismatch flag on ProductMatch.
+    """
+    # merchant_price / competitor_price kept in the signature for future
+    # price-aware confidence work (e.g. a soft bonus when prices are within
+    # a sane range of each other in the same currency).
+    _ = merchant_price, competitor_price
     score = float(hybrid_sim)
 
     if brand_match(merchant_vendor, competitor_vendor):

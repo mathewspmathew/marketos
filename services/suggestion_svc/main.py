@@ -31,7 +31,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from dotenv import load_dotenv
-from groq import Groq, RateLimitError as GroqRateLimitError
+from groq import RateLimitError as GroqRateLimitError
+
+from services.common.groq_client import make_groq_client
 from sqlalchemy import text
 
 from services.common.celery_app import app
@@ -45,7 +47,7 @@ load_dotenv()
 MATCH_THRESHOLD = Decimal("65.00")     # ProductMatch.matchScore cutoff
 LLM_MAX_COMPETITORS = 30               # cap competitor inputs into Groq prompt
 
-_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
+_groq_client = make_groq_client()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

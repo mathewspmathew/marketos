@@ -23,6 +23,7 @@ const DEFAULTS = {
   listingExpansionCap: 5,
   marketplaceBlocklist: [],
   killSwitch: false,
+  autoRescrapeEnabled: true,
   serperGl: "in",
   serperHl: "en",
   serperLocation: "Kochi, Kerala",
@@ -53,6 +54,7 @@ export const loader = async ({ request }) => {
       listingExpansionCap:      s.listingExpansionCap ?? DEFAULTS.listingExpansionCap,
       marketplaceBlocklist:     s.marketplaceBlocklist ?? [],
       killSwitch:               s.killSwitch,
+      autoRescrapeEnabled:      s.autoRescrapeEnabled ?? true,
       serperGl:                 s.serperGl       ?? DEFAULTS.serperGl,
       serperHl:                 s.serperHl       ?? DEFAULTS.serperHl,
       serperLocation:           s.serperLocation ?? DEFAULTS.serperLocation,
@@ -97,16 +99,43 @@ export const action = async ({ request }) => {
     listingExpansionCap:      parsePositiveInt(formData.get("listingExpansionCap"),      DEFAULTS.listingExpansionCap),
     marketplaceBlocklist:     { set: blocklist },
     killSwitch:               formData.get("killSwitch") === "true",
+    autoRescrapeEnabled:      formData.get("autoRescrapeEnabled") === "true",
     serperGl:       ((formData.get("serperGl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperGl,
     serperHl:       ((formData.get("serperHl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperHl,
     serperLocation: ((formData.get("serperLocation") || "").toString().trim())               || DEFAULTS.serperLocation,
   };
+
+  // Detect OFF → ON transition on the global auto-rescrape switch so we can
+  // re-arm stale schedules afterwards.
+  const prior = await db.shopSettings.findUnique({
+    where: { shopDomain },
+    select: { autoRescrapeEnabled: true },
+  });
+  const priorAutoRescrape = prior?.autoRescrapeEnabled ?? true;
+  const autoRescrapeTurnedOn = !priorAutoRescrape && data.autoRescrapeEnabled === true;
 
   await db.shopSettings.upsert({
     where: { shopDomain },
     update: data,
     create: { shopDomain, ...data, marketplaceBlocklist: blocklist },
   });
+
+  if (autoRescrapeTurnedOn) {
+    // Resume the rescrape loop for every product that's still opted in with
+    // a real frequency. Beat will pick them up on the next tick.
+    await db.productUrl.updateMany({
+      where: {
+        shopDomain,
+        status: "ACTIVE",
+        OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+        shopifyProduct: {
+          dynamicPricingEnabled: true,
+          frequencyUnit: { not: "never" },
+        },
+      },
+      data: { nextRunAt: new Date() },
+    });
+  }
 
   return { ok: true };
 };
@@ -125,6 +154,7 @@ export default function SettingsPage() {
     listingExpansionCap: String(settings.listingExpansionCap),
     marketplaceBlocklist: (settings.marketplaceBlocklist ?? []).join("\n"),
     killSwitch: settings.killSwitch,
+    autoRescrapeEnabled: settings.autoRescrapeEnabled,
     serperGl:       settings.serperGl,
     serperHl:       settings.serperHl,
     serperLocation: settings.serperLocation,
@@ -143,6 +173,7 @@ export default function SettingsPage() {
         listingExpansionCap:      form.listingExpansionCap,
         marketplaceBlocklist:     form.marketplaceBlocklist,
         killSwitch:               String(form.killSwitch),
+        autoRescrapeEnabled:      String(form.autoRescrapeEnabled),
         serperGl:                 form.serperGl,
         serperHl:                 form.serperHl,
         serperLocation:           form.serperLocation,
@@ -248,13 +279,26 @@ export default function SettingsPage() {
       </s-section>
 
       <s-section heading="Safety">
-        <s-stack direction="inline" gap="base" align="center">
-          <s-toggle
-            checked={form.killSwitch || undefined}
-            onClick={() => setField("killSwitch", !form.killSwitch)}
-          />
-          <s-text emphasis="bold">Kill switch</s-text>
-          <s-text tone="subdued">When on, no new PriceDecisions are written.</s-text>
+        <s-stack direction="block" gap="base">
+          <s-stack direction="inline" gap="base" align="center">
+            <s-toggle
+              checked={form.autoRescrapeEnabled || undefined}
+              onClick={() => setField("autoRescrapeEnabled", !form.autoRescrapeEnabled)}
+            />
+            <s-text emphasis="bold">Auto rescrape</s-text>
+            <s-text tone="subdued">
+              Master switch for refreshing competitor prices. When off, no
+              ProductUrl is rescraped — per-product frequency is preserved.
+            </s-text>
+          </s-stack>
+          <s-stack direction="inline" gap="base" align="center">
+            <s-toggle
+              checked={form.killSwitch || undefined}
+              onClick={() => setField("killSwitch", !form.killSwitch)}
+            />
+            <s-text emphasis="bold">Kill switch</s-text>
+            <s-text tone="subdued">When on, no new PriceDecisions are written.</s-text>
+          </s-stack>
         </s-stack>
       </s-section>
 

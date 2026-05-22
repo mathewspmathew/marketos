@@ -37,3 +37,6 @@ ProductUrl - for rescraping
 
 ShopifyEmbedding - save embedding of all the shopify variants
 
+ProductMatch - shopifyVariantId, competitorVariantId ---- Variant ↔ Variant ---- M × N (many merchant variants × many  competitor variants)  --- (one row per product pair)
+
+ProductLevelMatch - shopifyProductId, scrapedProductId --- Product ↔ Product ---- 1 (one row per product pair) 

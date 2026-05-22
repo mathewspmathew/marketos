@@ -15,7 +15,9 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from groq import Groq, RateLimitError as GroqRateLimitError
+from groq import RateLimitError as GroqRateLimitError
+
+from services.common.groq_client import make_groq_client
 from sqlalchemy import select, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -33,7 +35,7 @@ from services.scraper_svc.helpers import log_error, mark_task_done, set_next_scr
 
 load_dotenv()
 
-_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
+_groq_client = make_groq_client()
 
 GROQ_EXTRACT_PROMPT = """You are a professional e-commerce data extractor.
 Extract structured product data from the markdown of this product page: {url}
