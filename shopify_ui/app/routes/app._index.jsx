@@ -47,6 +47,10 @@ export const loader = async ({ request }) => {
     searchQueryOverride: p.searchQueryOverride ?? "",
     floorPrice: p.floorPrice?.toString() ?? "",
     ceilingPrice: p.ceilingPrice?.toString() ?? "",
+    pricingTier: p.pricingTier ?? "COMPETITIVE",
+    basePrice: p.basePrice?.toString() ?? null,
+    minPriceOverride: p.minPriceOverride?.toString() ?? "",
+    maxPriceOverride: p.maxPriceOverride?.toString() ?? "",
     frequencyInterval: p.frequencyInterval ?? "",
     frequencyUnit: p.frequencyUnit ?? "",
     discoveryNumResults: p.discoveryNumResults ?? 10,
@@ -56,7 +60,24 @@ export const loader = async ({ request }) => {
     candidateCount: p._count.competitorCandidates,
   }));
 
-  return { products: flattened };
+  // Token freshness banner. Shopify online tokens expire frequently;
+  // offline tokens shouldn't, but we surface either kind of impending
+  // expiry so the merchant knows to reopen the app before pricing stalls.
+  const newestSession = await db.session.findFirst({
+    where: { shop: shopDomain },
+    orderBy: [{ expires: "desc" }],
+    select: { expires: true, isOnline: true },
+  });
+  const tokenExpiry = newestSession?.expires?.toISOString() ?? null;
+  const hasOfflineToken = !!(await db.session.findFirst({
+    where: { shop: shopDomain, isOnline: false, expires: null },
+    select: { id: true },
+  }));
+
+  return {
+    products: flattened,
+    auth: { tokenExpiry, hasOfflineToken },
+  };
 };
 
 // Canonical frequency-unit dropdown — keep in sync with
@@ -184,6 +205,37 @@ export const action = async ({ request }) => {
     // instead of running Serper from scratch. The beat filter is the actual
     // gate: it only dispatches rescrape when dynamicPricingEnabled=TRUE.
     const enabled = formData.get("enabled") === "true";
+
+    // Snapshot basePrice on FIRST enable (both at product- and variant-level)
+    // so the lifetime cap has a stable anchor. Preserved across toggle off→on.
+    if (enabled) {
+      const product = await db.shopifyProduct.findUnique({
+        where: { id: productId },
+        select: { basePrice: true, variants: { select: { id: true, currentPrice: true, basePrice: true } } },
+      });
+      if (product && product.basePrice == null) {
+        const minVariantPrice = product.variants
+          .map((v) => Number(v.currentPrice))
+          .filter((n) => Number.isFinite(n) && n > 0)
+          .reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
+        if (Number.isFinite(minVariantPrice)) {
+          await db.shopifyProduct.update({
+            where: { id: productId },
+            data: { basePrice: minVariantPrice },
+          });
+        }
+      }
+      // Per-variant snapshot — only fills nulls.
+      for (const v of product?.variants ?? []) {
+        if (v.basePrice == null && Number(v.currentPrice) > 0) {
+          await db.shopifyVariant.update({
+            where: { id: v.id },
+            data: { basePrice: v.currentPrice },
+          });
+        }
+      }
+    }
+
     await db.shopifyProduct.update({
       where: { id: productId },
       data: { dynamicPricingEnabled: enabled },
@@ -284,6 +336,17 @@ export const action = async ({ request }) => {
     if (floor   !== undefined) data.floorPrice   = floor;
     if (ceiling !== undefined) data.ceilingPrice = ceiling;
 
+    // Auto-pricing per-product overrides. Tier is an enum; min/max override
+    // win over the basePrice × lifetimeCapPct fallback when present.
+    const rawTier = (formData.get("pricingTier") || "").toString();
+    if (["BUDGET", "COMPETITIVE", "PREMIUM"].includes(rawTier)) {
+      data.pricingTier = rawTier;
+    }
+    const minOverride = parseDecimal(formData.get("minPriceOverride"));
+    const maxOverride = parseDecimal(formData.get("maxPriceOverride"));
+    if (minOverride !== undefined) data.minPriceOverride = minOverride;
+    if (maxOverride !== undefined) data.maxPriceOverride = maxOverride;
+
     if (rawNumResults !== null && rawNumResults !== "") {
       const n = parseInt(rawNumResults, 10);
       if (Number.isFinite(n) && n > 0) data.discoveryNumResults = Math.min(n, 50);
@@ -336,7 +399,7 @@ export const action = async ({ request }) => {
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const { products } = useLoaderData();
+  const { products, auth } = useLoaderData();
   const fetcher = useFetcher();
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -355,6 +418,10 @@ export default function HomePage() {
         searchQueryOverride: p.searchQueryOverride,
         floorPrice: p.floorPrice,
         ceilingPrice: p.ceilingPrice,
+        pricingTier: p.pricingTier ?? "COMPETITIVE",
+        basePrice: p.basePrice,
+        minPriceOverride: p.minPriceOverride,
+        maxPriceOverride: p.maxPriceOverride,
         frequencyInterval: p.frequencyInterval === "" ? "" : String(p.frequencyInterval),
         frequencyUnit: p.frequencyUnit,
         discoveryNumResults: p.discoveryNumResults ?? 10,
@@ -398,6 +465,10 @@ export default function HomePage() {
       searchQueryOverride: "",
       floorPrice: "",
       ceilingPrice: "",
+      pricingTier: "COMPETITIVE",
+      basePrice: null,
+      minPriceOverride: "",
+      maxPriceOverride: "",
       frequencyInterval: "",
       frequencyUnit: "",
       discoveryNumResults: 10,
@@ -428,6 +499,9 @@ export default function HomePage() {
         searchQueryOverride: local.searchQueryOverride ?? "",
         floorPrice:          local.floorPrice ?? "",
         ceilingPrice:        local.ceilingPrice ?? "",
+        pricingTier:         local.pricingTier ?? "COMPETITIVE",
+        minPriceOverride:    local.minPriceOverride ?? "",
+        maxPriceOverride:    local.maxPriceOverride ?? "",
         frequencyInterval:   local.frequencyInterval ?? "",
         frequencyUnit:       local.frequencyUnit ?? "",
         discoveryNumResults: String(local.discoveryNumResults ?? 10),
@@ -493,11 +567,39 @@ export default function HomePage() {
 
   const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
+  // Token banner: critical if expired or expiring in <24h. The deeper issue
+  // (no offline token) is shown as a secondary warning since pricing apply
+  // breaks the moment the online token rotates.
+  const expiresAt = auth?.tokenExpiry ? new Date(auth.tokenExpiry) : null;
+  const expiresInMs = expiresAt ? expiresAt.getTime() - Date.now() : null;
+  const tokenExpired   = expiresInMs != null && expiresInMs <= 0;
+  const tokenExpiringSoon = expiresInMs != null && expiresInMs > 0 && expiresInMs < 24 * 3600 * 1000;
+  const missingOffline = auth && !auth.hasOfflineToken;
+
   return (
     <s-page
       heading="Dynamic Pricing"
       subheading={`${filteredProducts.length} of ${products.length} product${products.length === 1 ? "" : "s"}`}
     >
+      {tokenExpired && (
+        <s-banner tone="critical">
+          <s-text emphasis="bold">Shopify auth expired.</s-text>{" "}
+          <s-text>Auto-pricing can't push to Shopify until you reopen the app from Shopify Admin.</s-text>
+        </s-banner>
+      )}
+      {!tokenExpired && tokenExpiringSoon && (
+        <s-banner tone="warning">
+          <s-text emphasis="bold">Shopify auth expires soon</s-text>
+          <s-text tone="subdued"> ({expiresAt.toLocaleString()}). Reopen the app to refresh.</s-text>
+        </s-banner>
+      )}
+      {missingOffline && (
+        <s-banner tone="warning">
+          <s-text emphasis="bold">No offline access token.</s-text>{" "}
+          <s-text>Background pricing relies on a long-lived token; without it, every short-lived session expiry stalls auto-apply. Reinstall the app with offline scope to fix.</s-text>
+        </s-banner>
+      )}
+
       <s-section heading="Filters">
         <s-stack direction="inline" gap="base" wrap>
           <s-text-field
@@ -758,7 +860,55 @@ export default function HomePage() {
                             helpText="When a discovered URL is a search/category page, expand this many product cards from it (1–50)."
                           />
 
-                          <s-text emphasis="bold">Price bounds (applied to all variants)</s-text>
+                          <s-text emphasis="bold">Pricing tier</s-text>
+                          <s-text tone="subdued">
+                            Budget undercuts competitors more aggressively;
+                            Premium prices slightly above the weighted median.
+                          </s-text>
+                          <s-stack direction="inline" gap="base" align="center">
+                            {["BUDGET", "COMPETITIVE", "PREMIUM"].map((t) => (
+                              <label key={t} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                <input
+                                  type="radio"
+                                  name={`tier-${product.id}`}
+                                  value={t}
+                                  checked={(local.pricingTier ?? "COMPETITIVE") === t}
+                                  onChange={() => setOverrideField(product.id, "pricingTier", t)}
+                                />
+                                {t.charAt(0) + t.slice(1).toLowerCase()}
+                              </label>
+                            ))}
+                          </s-stack>
+
+                          <s-text emphasis="bold">Hard price bounds (override the lifetime cap)</s-text>
+                          {local.basePrice && (
+                            <s-text tone="subdued">
+                              Base price snapshot: ₹{Number(local.basePrice).toFixed(2)}.
+                              Lifetime cap defaults to ±25% from this anchor.
+                            </s-text>
+                          )}
+                          <s-stack direction="inline" gap="base">
+                            <s-text-field
+                              label="Minimum price"
+                              type="number"
+                              placeholder="0.00"
+                              value={local.minPriceOverride ?? ""}
+                              onInput={(e) =>
+                                setOverrideField(product.id, "minPriceOverride", e.currentTarget.value)
+                              }
+                            />
+                            <s-text-field
+                              label="Maximum price"
+                              type="number"
+                              placeholder="0.00"
+                              value={local.maxPriceOverride ?? ""}
+                              onInput={(e) =>
+                                setOverrideField(product.id, "maxPriceOverride", e.currentTarget.value)
+                              }
+                            />
+                          </s-stack>
+
+                          <s-text emphasis="bold">Legacy floor / ceiling (deprecated)</s-text>
                           <s-stack direction="inline" gap="base">
                             <s-text-field
                               label="Floor"
@@ -815,8 +965,8 @@ export default function HomePage() {
                             >
                               {isOn ? "Save changes" : "Save & start dynamic pricing"}
                             </s-button>
-                            <s-link href={`/app/history/${encodeURIComponent(product.id)}`}>
-                              Price history
+                            <s-link href={`/app/stats/${encodeURIComponent(product.id)}`}>
+                              Stats &amp; price history
                             </s-link>
                           </s-stack>
 

@@ -24,6 +24,14 @@ const DEFAULTS = {
   marketplaceBlocklist: [],
   killSwitch: false,
   autoRescrapeEnabled: true,
+  includeOosInPricing: false,
+  // Auto-pricing knobs (per-product overrides live on ShopifyProduct).
+  minCompetitorsToPrice: 4,
+  topKCompetitors: 4,
+  maxAutoApplyChangePct: 0.05,
+  lifetimeCapPct: 0.25,
+  budgetUndercut: 0.05,
+  premiumUplift: 0.05,
   serperGl: "in",
   serperHl: "en",
   serperLocation: "Kochi, Kerala",
@@ -55,6 +63,13 @@ export const loader = async ({ request }) => {
       marketplaceBlocklist:     s.marketplaceBlocklist ?? [],
       killSwitch:               s.killSwitch,
       autoRescrapeEnabled:      s.autoRescrapeEnabled ?? true,
+      includeOosInPricing:      s.includeOosInPricing ?? false,
+      minCompetitorsToPrice:    s.minCompetitorsToPrice ?? DEFAULTS.minCompetitorsToPrice,
+      topKCompetitors:          s.topKCompetitors       ?? DEFAULTS.topKCompetitors,
+      maxAutoApplyChangePct:    Number(s.maxAutoApplyChangePct ?? DEFAULTS.maxAutoApplyChangePct),
+      lifetimeCapPct:           Number(s.lifetimeCapPct        ?? DEFAULTS.lifetimeCapPct),
+      budgetUndercut:           Number(s.budgetUndercut        ?? DEFAULTS.budgetUndercut),
+      premiumUplift:            Number(s.premiumUplift         ?? DEFAULTS.premiumUplift),
       serperGl:                 s.serperGl       ?? DEFAULTS.serperGl,
       serperHl:                 s.serperHl       ?? DEFAULTS.serperHl,
       serperLocation:           s.serperLocation ?? DEFAULTS.serperLocation,
@@ -100,6 +115,13 @@ export const action = async ({ request }) => {
     marketplaceBlocklist:     { set: blocklist },
     killSwitch:               formData.get("killSwitch") === "true",
     autoRescrapeEnabled:      formData.get("autoRescrapeEnabled") === "true",
+    includeOosInPricing:      formData.get("includeOosInPricing") === "true",
+    minCompetitorsToPrice:    parsePositiveInt(formData.get("minCompetitorsToPrice"), DEFAULTS.minCompetitorsToPrice),
+    topKCompetitors:          parsePositiveInt(formData.get("topKCompetitors"),       DEFAULTS.topKCompetitors),
+    maxAutoApplyChangePct:    parsePctish(formData.get("maxAutoApplyChangePct")) ?? DEFAULTS.maxAutoApplyChangePct,
+    lifetimeCapPct:           parsePctish(formData.get("lifetimeCapPct"))        ?? DEFAULTS.lifetimeCapPct,
+    budgetUndercut:           parsePctish(formData.get("budgetUndercut"))        ?? DEFAULTS.budgetUndercut,
+    premiumUplift:            parsePctish(formData.get("premiumUplift"))         ?? DEFAULTS.premiumUplift,
     serperGl:       ((formData.get("serperGl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperGl,
     serperHl:       ((formData.get("serperHl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperHl,
     serperLocation: ((formData.get("serperLocation") || "").toString().trim())               || DEFAULTS.serperLocation,
@@ -155,6 +177,13 @@ export default function SettingsPage() {
     marketplaceBlocklist: (settings.marketplaceBlocklist ?? []).join("\n"),
     killSwitch: settings.killSwitch,
     autoRescrapeEnabled: settings.autoRescrapeEnabled,
+    includeOosInPricing: settings.includeOosInPricing,
+    minCompetitorsToPrice: String(settings.minCompetitorsToPrice),
+    topKCompetitors:       String(settings.topKCompetitors),
+    maxAutoApplyChangePct: String(settings.maxAutoApplyChangePct),
+    lifetimeCapPct:        String(settings.lifetimeCapPct),
+    budgetUndercut:        String(settings.budgetUndercut),
+    premiumUplift:         String(settings.premiumUplift),
     serperGl:       settings.serperGl,
     serperHl:       settings.serperHl,
     serperLocation: settings.serperLocation,
@@ -174,6 +203,13 @@ export default function SettingsPage() {
         marketplaceBlocklist:     form.marketplaceBlocklist,
         killSwitch:               String(form.killSwitch),
         autoRescrapeEnabled:      String(form.autoRescrapeEnabled),
+        includeOosInPricing:      String(form.includeOosInPricing),
+        minCompetitorsToPrice:    form.minCompetitorsToPrice,
+        topKCompetitors:          form.topKCompetitors,
+        maxAutoApplyChangePct:    form.maxAutoApplyChangePct,
+        lifetimeCapPct:           form.lifetimeCapPct,
+        budgetUndercut:           form.budgetUndercut,
+        premiumUplift:            form.premiumUplift,
         serperGl:                 form.serperGl,
         serperHl:                 form.serperHl,
         serperLocation:           form.serperLocation,
@@ -255,6 +291,60 @@ export default function SettingsPage() {
         </s-stack>
       </s-section>
 
+      <s-section heading="Auto-pricing">
+        <s-text tone="subdued">
+          Controls how the system moves a product's price in response to fresh
+          competitor observations. Each product can override the per-round
+          and lifetime caps independently.
+        </s-text>
+        <s-stack direction="block" gap="base">
+          <s-stack direction="inline" gap="base">
+            <s-text-field
+              label="Minimum competitors to price"
+              type="number"
+              value={form.minCompetitorsToPrice}
+              onInput={(e) => setField("minCompetitorsToPrice", e.currentTarget.value)}
+              helpText="No price change runs until this many MATCHED competitor products have fresh observations."
+            />
+            <s-text-field
+              label="Top-K competitors to weight"
+              type="number"
+              value={form.topKCompetitors}
+              onInput={(e) => setField("topKCompetitors", e.currentTarget.value)}
+              helpText="Only the K most-similar competitors influence the reference price (weighted by similarity)."
+            />
+          </s-stack>
+          <s-stack direction="inline" gap="base">
+            <s-text-field
+              label="Max change per round (e.g. 0.05 or 5%)"
+              value={form.maxAutoApplyChangePct}
+              onInput={(e) => setField("maxAutoApplyChangePct", e.currentTarget.value)}
+              helpText="Hard cap on |new − current| / current in one auto-apply cycle."
+            />
+            <s-text-field
+              label="Lifetime cap from base price (e.g. 0.25 or 25%)"
+              value={form.lifetimeCapPct}
+              onInput={(e) => setField("lifetimeCapPct", e.currentTarget.value)}
+              helpText="Price can never drift more than this from the base price snapshot, unless explicit min/max are set."
+            />
+          </s-stack>
+          <s-stack direction="inline" gap="base">
+            <s-text-field
+              label="Budget tier undercut"
+              value={form.budgetUndercut}
+              onInput={(e) => setField("budgetUndercut", e.currentTarget.value)}
+              helpText="Budget-tier products target ref × (1 − this)."
+            />
+            <s-text-field
+              label="Premium tier uplift"
+              value={form.premiumUplift}
+              onInput={(e) => setField("premiumUplift", e.currentTarget.value)}
+              helpText="Premium-tier products target ref × (1 + this)."
+            />
+          </s-stack>
+        </s-stack>
+      </s-section>
+
       <s-section heading="Default rescrape frequency">
         <s-text tone="subdued">
           Used when a product doesn't have its own frequency set on the home page.
@@ -289,6 +379,17 @@ export default function SettingsPage() {
             <s-text tone="subdued">
               Master switch for refreshing competitor prices. When off, no
               ProductUrl is rescraped — per-product frequency is preserved.
+            </s-text>
+          </s-stack>
+          <s-stack direction="inline" gap="base" align="center">
+            <s-toggle
+              checked={form.includeOosInPricing || undefined}
+              onClick={() => setField("includeOosInPricing", !form.includeOosInPricing)}
+            />
+            <s-text emphasis="bold">Include out-of-stock competitors</s-text>
+            <s-text tone="subdued">
+              When off, observations marked OOS are dropped from the pricing
+              reference. Turn on if your scraper's stock signal is unreliable.
             </s-text>
           </s-stack>
           <s-stack direction="inline" gap="base" align="center">

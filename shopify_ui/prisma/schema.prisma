@@ -9,7 +9,7 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [vector]
+  extensions = [vector, timescaledb]
 }
 
 model Session {
@@ -52,7 +52,6 @@ model ShopifyUser {
   competitorObservations CompetitorPriceObservation[]
   productLevelMatches    ProductLevelMatch[]
   priceDecisions         PriceDecision[]
-  shopAuth               ShopAuth?
   shopSettings           ShopSettings?
   competitorCandidates   CompetitorCandidate[]
   discoveryJobs          DiscoveryJob[]
@@ -101,6 +100,19 @@ model ShopifyProduct {
   syncTitle             Boolean   @default(false)
   syncedAt              DateTime?
   lastDiscoveryAt       DateTime?
+
+  // Auto-pricing knobs. Tier biases the formula; basePrice anchors the
+  // lifetime cap. minPriceOverride / maxPriceOverride are hard merchant
+  // floors/ceilings — when set, they win over the basePrice × lifetimeCapPct
+  // fallback. lastDecisionAt debounces decide_for_product to at most one
+  // run per rescrape cycle.
+  pricingTier                   PricingTier @default(COMPETITIVE)
+  basePrice                     Decimal?    @db.Decimal(10, 2)
+  minPriceOverride              Decimal?    @db.Decimal(10, 2)
+  maxPriceOverride              Decimal?    @db.Decimal(10, 2)
+  maxAutoApplyChangePctOverride Float?
+  lifetimeCapPctOverride        Float?
+  lastDecisionAt                DateTime?
   // How many competitor product links to fetch per discovery run.
   discoveryNumResults   Int       @default(10)
   // If a discovered URL is a listing/search page, expand into this many
@@ -130,6 +142,9 @@ model ShopifyVariant {
   imageUrl String?
 
   currentPrice      Decimal  @db.Decimal(10, 2)
+  // Per-variant anchor for the lifetime cap. Snapshot at first dynamic-pricing
+  // enable; preserved across toggle off→on so the cap stays meaningful.
+  basePrice         Decimal? @db.Decimal(10, 2)
   compareAtPrice    Decimal? @db.Decimal(10, 2)
   cost              Decimal? @db.Decimal(10, 2)
   isInStock         Boolean  @default(true)
@@ -472,6 +487,16 @@ enum MatchConfidenceTier {
   WEAK
 }
 
+// Per-product positioning. Biases the auto-pricing formula:
+//   BUDGET      → undercut competitor weighted reference
+//   COMPETITIVE → small markup-below-reference (the default)
+//   PREMIUM     → small uplift above reference
+enum PricingTier {
+  BUDGET
+  COMPETITIVE
+  PREMIUM
+}
+
 // Hypertable on observedAt (created via raw SQL after migration).
 // Composite PK includes observedAt because TimescaleDB hypertables require the
 // partitioning column to be part of every unique constraint.
@@ -548,6 +573,21 @@ model PriceDecision {
   newPrice Decimal @db.Decimal(10, 2)
   reason   String
 
+  // Audit / stats-page fields. Skipped decisions also write a row (with
+  // autoApplied=false and a skipReason) so the merchant can see *why* no
+  // change happened on this cycle.
+  changePct       Float?
+  refPrice        Decimal?    @db.Decimal(10, 2)
+  formulaTarget   Decimal?    @db.Decimal(10, 2)
+  competitorsUsed Int          @default(0)
+  oosObservations Int          @default(0)
+  currencyDrops   Int          @default(0)
+  topMatchesJson  Json?
+  tierAtDecision  PricingTier?
+  skipReason      String?
+  autoApplied     Boolean      @default(false)
+  applyError      String?
+
   shopifyResponse Json?
 
   decidedAt DateTime  @default(now())
@@ -565,6 +605,13 @@ model ShopSettings {
   markupPct                Decimal     @default(0.02) @db.Decimal(5, 4)
   minCompetitorsRequired   Int         @default(2)
   maxCompetitorsPerProduct Int         @default(8)
+  // Auto-pricing knobs (defaults documented in services/pricing_svc/decide.py).
+  minCompetitorsToPrice    Int         @default(4)
+  topKCompetitors          Int         @default(4)
+  maxAutoApplyChangePct    Float       @default(0.05)
+  lifetimeCapPct           Float       @default(0.25)
+  budgetUndercut           Float       @default(0.05)
+  premiumUplift            Float       @default(0.05)
   // Default rescrape cadence; per-product overrides live on ShopifyProduct.
   frequencyInterval        Int         @default(1)
   frequencyUnit            String      @default("daily")
@@ -578,6 +625,12 @@ model ShopSettings {
   // dispatch for every ProductUrl belonging to this shop, regardless of
   // per-product frequency.
   autoRescrapeEnabled      Boolean     @default(true)
+  // When false (default), competitor observations marked isInStock=false are
+  // dropped from the pricing reference. Flip to true if the scraper's stock
+  // signal is unreliable for your competitor set — observations will then
+  // count regardless. The OOS count is still recorded on each PriceDecision
+  // for the stats page.
+  includeOosInPricing      Boolean     @default(false)
 
   // Serper geo/language targeting for competitor discovery.
   serperGl                 String      @default("in")
@@ -592,13 +645,3 @@ model ShopSettings {
   updatedAt                DateTime    @updatedAt
 }
 
-// Long-lived offline access token per shop. Distinct from the Session model,
-// which stores online (user-bound) tokens used by Shopify's auth middleware.
-model ShopAuth {
-  shopDomain         String      @id
-  shop               ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
-  offlineAccessToken String
-  scopes             String
-  installedAt        DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
-}

@@ -298,7 +298,7 @@ export default function SuggestionsPage() {
   return (
     <s-page
       heading="Product Suggestions"
-      subheading="LLM-generated title & description from competitor data. Pricing now lives in the Pricing Catalog."
+      subheading="LLM-generated title & description from competitor data. Pricing is fully automatic — see each product's Stats page for change history."
     >
       <s-stack direction="block" gap="loose">
         <s-section>

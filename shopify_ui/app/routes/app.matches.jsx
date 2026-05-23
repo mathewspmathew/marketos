@@ -9,7 +9,13 @@ export const loader = async ({ request }) => {
   const shopDomain  = session.shop;
 
   const matches = await db.productLevelMatch.findMany({
-    where: { shopDomain, rejectedByMerchant: false },
+    // WEAK matches stay in the DB (matcher uses them as scaffolding) but
+    // never surface here — they're too noisy to ask a merchant about.
+    where: {
+      shopDomain,
+      rejectedByMerchant: false,
+      confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
+    },
     include: {
       shopifyProduct: {
         include: { variants: { take: 1 } },

@@ -23,6 +23,7 @@ app = Celery(
         'services.shopify_svc.main',
         'services.pricing_svc.main',
         'services.pricing_svc.stats',
+        'services.pricing_svc.apply',
         'services.discovery_svc.main',
     ]
 )
@@ -53,8 +54,8 @@ app.conf.update(
         'shopify_sync.refresh_all_sales_aggregates':    {'queue': 'shopify_sync_queue'},
         'stats.recompute_for_variant':                  {'queue': 'stats_queue'},
         'stats.recompute_after_observation':            {'queue': 'stats_queue'},
-        'pricing.decide_for_variant':                   {'queue': 'pricing_queue'},
         'pricing.decide_for_product':                   {'queue': 'pricing_queue'},
+        'pricing.apply_price':                          {'queue': 'pricing_queue'},
         'shopify_writer.apply_decision':                {'queue': 'writer_queue'},
         'shopify_writer.sweep_pending':                 {'queue': 'writer_queue'},
         'discovery.search_products':                    {'queue': 'discovery_queue'},
