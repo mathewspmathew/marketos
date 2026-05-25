@@ -645,3 +645,59 @@ model ShopSettings {
   updatedAt                DateTime    @updatedAt
 }
 
+// ─────────────────────────────────────────
+// Chatbot (merchant-facing assistant)
+// ─────────────────────────────────────────
+enum ChatRole {
+  user
+  assistant
+  tool
+}
+
+enum PreviewKind {
+  price_change
+  dynamic_pricing_toggle
+}
+
+model ChatSession {
+  id         String        @id @default(cuid())
+  shopDomain String
+  userId     String?
+  title      String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  messages   ChatMessage[]
+  previews   ChatPreview[]
+
+  @@index([shopDomain, updatedAt])
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      ChatRole
+  content   Json
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model ChatPreview {
+  id          String      @id @default(cuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  shopDomain  String
+  kind        PreviewKind
+  scopeFilter Json
+  change      Json
+  variantIds  String[]
+  summary     Json
+  expiresAt   DateTime
+  appliedAt   DateTime?
+  appliedBy   String?
+  result      Json?
+  createdAt   DateTime    @default(now())
+
+  @@index([shopDomain, expiresAt])
+}
