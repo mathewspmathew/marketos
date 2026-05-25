@@ -55,6 +55,7 @@ model ShopifyUser {
   shopSettings           ShopSettings?
   competitorCandidates   CompetitorCandidate[]
   discoveryJobs          DiscoveryJob[]
+  chatSessions           ChatSession[]
 }
 
 // ─────────────────────────────────────────
@@ -662,6 +663,7 @@ enum PreviewKind {
 model ChatSession {
   id         String        @id @default(cuid())
   shopDomain String
+  shop       ShopifyUser   @relation(fields: [shopDomain], references: [shopDomain])
   userId     String?
   title      String?
   createdAt  DateTime      @default(now())
