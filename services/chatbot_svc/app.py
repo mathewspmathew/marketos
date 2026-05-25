@@ -1,0 +1,205 @@
+"""
+services/chatbot_svc/app.py
+
+FastAPI application for the chatbot service.
+
+Endpoints:
+  POST /chat          — SSE stream: creates/reuses a ChatSession, persists
+                        the user message, runs the Pydantic-AI agent, emits
+                        SSE events (open, text, ask, preview, done, error),
+                        and persists assistant/tool messages.
+  POST /apply-callback — receives apply results from the React Router side
+                        (currently RR routes do not post a callback, but the
+                        endpoint is reserved for symmetry). Inserts a tool
+                        message.
+
+NOTE (message_history): agent.run() supports a `message_history` kwarg that
+accepts Sequence[pydantic_ai.messages.ModelMessage].  Constructing typed
+ModelRequest / ModelResponse objects from raw DB rows is non-trivial.  For
+now the agent runs single-turn (no message history passed).  A follow-up
+task should load prior ChatMessage rows, convert them to ModelMessage
+objects, and pass them as `message_history=` so the agent has context.
+"""
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
+
+from services.chatbot_svc.agent import agent
+from services.chatbot_svc.deps import build_deps
+from services.chatbot_svc.tools.ask import AskUserRequested
+from services.common.db import get_db
+from services.common.models import ChatMessage, ChatPreview, ChatSession
+
+app = FastAPI(title="MarketOS Chatbot Service")
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request / response schemas
+# ---------------------------------------------------------------------------
+
+
+class ChatRequest(BaseModel):
+    shop_domain: str
+    user_id: str | None = None
+    session_id: str | None = None
+    message: str
+
+
+class ApplyCallback(BaseModel):
+    preview_id: str
+    result: dict
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _ensure_session(
+    shop: str,
+    user_id: str | None,
+    session_id: str | None,
+) -> str:
+    """Return an existing session_id or create a new ChatSession row."""
+    if session_id:
+        return session_id
+
+    sid = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+    with get_db() as s:
+        s.add(
+            ChatSession(
+                id=sid,
+                shopDomain=shop,
+                userId=user_id,
+                createdAt=now,
+                updatedAt=now,
+            )
+        )
+    return sid
+
+
+def _record(session_id: str, role: str, content: dict) -> None:
+    """Persist a ChatMessage row.  ChatRole is a plain PgEnum string."""
+    with get_db() as s:
+        s.add(
+            ChatMessage(
+                id=uuid.uuid4().hex,
+                sessionId=session_id,
+                role=role,
+                content=content,
+                createdAt=datetime.now(timezone.utc),
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """Stream agent output as Server-Sent Events."""
+    sid = _ensure_session(req.shop_domain, req.user_id, req.session_id)
+    _record(sid, "user", {"text": req.message})
+    deps = build_deps(req.shop_domain, req.user_id, sid)
+
+    async def event_stream():
+        # Signal that the session is established and streaming begins.
+        yield {"event": "open", "data": json.dumps({"session_id": sid})}
+
+        try:
+            try:
+                # NOTE: message_history omitted (single-turn for now).
+                # TODO: load prior ChatMessage rows, convert to
+                #       pydantic_ai.messages.ModelMessage objects, and pass
+                #       as `message_history=` for multi-turn context.
+                result = await agent.run(req.message, deps=deps)
+            except AskUserRequested as ask:
+                # The agent raised a clarification request via the ask tool.
+                payload = {"question": ask.question, "options": ask.options}
+                _record(sid, "assistant", {"ask": payload})
+                yield {"event": "ask", "data": json.dumps(payload)}
+                yield {"event": "done", "data": "{}"}
+                return
+
+            # Pydantic-AI 1.x: AgentRunResult exposes `.output` (not `.data`).
+            output = result.output if hasattr(result, "output") else getattr(result, "data", "")
+            text = output if isinstance(output, str) else json.dumps(output)
+
+            _record(sid, "assistant", {"text": text})
+            yield {"event": "text", "data": json.dumps({"text": text})}
+
+            # Emit a preview event if the agent created a pending ChatPreview.
+            with get_db() as s:
+                last_preview = (
+                    s.query(ChatPreview)
+                    .filter(
+                        ChatPreview.sessionId == sid,
+                        ChatPreview.appliedAt.is_(None),
+                    )
+                    .order_by(ChatPreview.createdAt.desc())
+                    .first()
+                )
+                if last_preview:
+                    yield {
+                        "event": "preview",
+                        "data": json.dumps(
+                            {
+                                "preview_id": last_preview.id,
+                                "kind": last_preview.kind,
+                                "summary": last_preview.summary,
+                                "expires_at": last_preview.expiresAt.isoformat(),
+                            }
+                        ),
+                    }
+
+            yield {"event": "done", "data": "{}"}
+
+        except Exception as exc:
+            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+
+        finally:
+            # Always close the httpx client regardless of outcome.
+            await deps.http.aclose()
+
+    return EventSourceResponse(event_stream())
+
+
+@app.post("/apply-callback")
+async def apply_callback(
+    cb: ApplyCallback,
+    x_internal_token: str = Header(default=""),
+):
+    """
+    Receive the result of an apply action from the React Router side.
+
+    Currently RR routes do not post a callback — this endpoint is reserved
+    for future symmetry.  It records a tool message so the conversation
+    history reflects what was applied.
+    """
+    if x_internal_token != os.environ.get("INTERNAL_API_TOKEN", ""):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    with get_db() as s:
+        preview = s.get(ChatPreview, cb.preview_id)
+        if preview:
+            _record(
+                preview.sessionId,
+                "tool",
+                {
+                    "tool_name": "apply",
+                    "preview_id": cb.preview_id,
+                    "tool_result": cb.result,
+                },
+            )
+
+    return {"ok": True}
