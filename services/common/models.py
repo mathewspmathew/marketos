@@ -416,11 +416,11 @@ class ChatSession(Base):
     )
 
     id         = Column(String, primary_key=True)
-    shopDomain = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    shopDomain = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain", ondelete="RESTRICT", onupdate="CASCADE"), nullable=False)
     userId     = Column("userId",     String, nullable=True)
     title      = Column("title",      String, nullable=True)
     createdAt  = Column("createdAt",  DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updatedAt  = Column("updatedAt",  DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+    updatedAt  = Column("updatedAt",  DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
     previews = relationship("ChatPreview", back_populates="session", cascade="all, delete-orphan")
