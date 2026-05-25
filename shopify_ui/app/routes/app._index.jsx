@@ -60,23 +60,18 @@ export const loader = async ({ request }) => {
     candidateCount: p._count.competitorCandidates,
   }));
 
-  // Token freshness banner. Shopify online tokens expire frequently;
-  // offline tokens shouldn't, but we surface either kind of impending
-  // expiry so the merchant knows to reopen the app before pricing stalls.
-  const newestSession = await db.session.findFirst({
-    where: { shop: shopDomain },
-    orderBy: [{ expires: "desc" }],
-    select: { expires: true, isOnline: true },
-  });
-  const tokenExpiry = newestSession?.expires?.toISOString() ?? null;
-  const hasOfflineToken = !!(await db.session.findFirst({
-    where: { shop: shopDomain, isOnline: false, expires: null },
+  // With expiring offline tokens enabled, individual expiry is normal —
+  // the library auto-refreshes via Token Exchange on the next call. The
+  // only state worth banner-ing is "no offline session row at all", which
+  // means install never completed (or was wiped).
+  const hasOfflineSession = !!(await db.session.findFirst({
+    where: { shop: shopDomain, isOnline: false },
     select: { id: true },
   }));
 
   return {
     products: flattened,
-    auth: { tokenExpiry, hasOfflineToken },
+    auth: { hasOfflineSession },
   };
 };
 
@@ -567,36 +562,20 @@ export default function HomePage() {
 
   const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
-  // Token banner: critical if expired or expiring in <24h. The deeper issue
-  // (no offline token) is shown as a secondary warning since pricing apply
-  // breaks the moment the online token rotates.
-  const expiresAt = auth?.tokenExpiry ? new Date(auth.tokenExpiry) : null;
-  const expiresInMs = expiresAt ? expiresAt.getTime() - Date.now() : null;
-  const tokenExpired   = expiresInMs != null && expiresInMs <= 0;
-  const tokenExpiringSoon = expiresInMs != null && expiresInMs > 0 && expiresInMs < 24 * 3600 * 1000;
-  const missingOffline = auth && !auth.hasOfflineToken;
+  // Auto-pricing only fails permanently when there's no offline session at
+  // all (install never completed). Per-token expiry is handled by the
+  // library on the next call, so we don't surface it.
+  const missingOffline = auth && !auth.hasOfflineSession;
 
   return (
     <s-page
       heading="Dynamic Pricing"
       subheading={`${filteredProducts.length} of ${products.length} product${products.length === 1 ? "" : "s"}`}
     >
-      {tokenExpired && (
-        <s-banner tone="critical">
-          <s-text emphasis="bold">Shopify auth expired.</s-text>{" "}
-          <s-text>Auto-pricing can't push to Shopify until you reopen the app from Shopify Admin.</s-text>
-        </s-banner>
-      )}
-      {!tokenExpired && tokenExpiringSoon && (
-        <s-banner tone="warning">
-          <s-text emphasis="bold">Shopify auth expires soon</s-text>
-          <s-text tone="subdued"> ({expiresAt.toLocaleString()}). Reopen the app to refresh.</s-text>
-        </s-banner>
-      )}
       {missingOffline && (
-        <s-banner tone="warning">
-          <s-text emphasis="bold">No offline access token.</s-text>{" "}
-          <s-text>Background pricing relies on a long-lived token; without it, every short-lived session expiry stalls auto-apply. Reinstall the app with offline scope to fix.</s-text>
+        <s-banner tone="critical">
+          <s-text emphasis="bold">App install incomplete.</s-text>{" "}
+          <s-text>No offline session for this shop — auto-pricing cannot push to Shopify. Reinstall the app from Shopify Admin to fix.</s-text>
         </s-banner>
       )}
 

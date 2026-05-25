@@ -1,31 +1,32 @@
 """
 services/pricing_svc/apply.py
 
-Apply a batch of PriceDecisions (one per variant of a single product) to
-Shopify in a single productVariantsBulkUpdate call. Triggered from
-decide.decide_price_for_product when at least one variant decision was
-written with autoApplied=true.
+Apply a batch of PriceDecisions to Shopify via the React Router app's
+internal write proxy (/internal/apply-price).
 
-Idempotent: skips decisions that already have appliedAt set, or whose
-variant is already at newPrice.
+Why through the proxy and not directly?
+    Shopify is migrating public apps to expiring offline access tokens.
+    The library handles Token Exchange refresh on every authenticated call —
+    but only when those calls go through the @shopify/shopify-app-react-router
+    library (the React Router server). Background Python workers don't have
+    access to that refresh machinery. So we treat the React Router app as
+    the single source of Shopify auth: workers POST {productId, variants}
+    over HTTP with a shared secret; the library does the rest.
 
-No human approval — by design. The decide step has already enforced every
-gate (eligibility, caps, kill switch). This task only knows how to push.
+Idempotent: skips decisions that already have appliedAt set.
+Per-product advisory lock prevents concurrent apply for the same product.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 
+import requests
 from sqlalchemy import text
 
 from services.common.celery_app import app
 from services.common.db import get_db
-from services.common.shopify_client import (
-    VARIANT_BULK_UPDATE_MUTATION,
-    get_offline_token,
-    shopify_graphql,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,27 @@ def _stamp_error(session, decision_ids: list[str], err: str) -> None:
     )
 
 
+def _post_to_proxy(shop_domain: str, product_id: str, variants_input: list[dict]) -> dict:
+    base_url = os.environ.get("REACT_ROUTER_INTERNAL_URL")
+    token    = os.environ.get("INTERNAL_API_TOKEN")
+    if not base_url or not token:
+        raise RuntimeError("REACT_ROUTER_INTERNAL_URL / INTERNAL_API_TOKEN not configured")
+    resp = requests.post(
+        f"{base_url.rstrip('/')}/internal/apply-price",
+        json={"shopDomain": shop_domain, "productId": product_id, "variants": variants_input},
+        headers={"X-Internal-Token": token, "Content-Type": "application/json"},
+        timeout=30,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"proxy {resp.status_code}: {resp.text[:300]}")
+    return resp.json()
+
+
 def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) -> dict:
     with get_db() as session:
         # Per-product advisory lock — held for the transaction. If a parallel
         # apply for this product is already in flight, skip cleanly instead
-        # of racing on the "pending decisions" lookup below and risking
-        # a double-push to Shopify.
+        # of racing on the pending lookup below.
         got_lock = session.execute(
             text("SELECT pg_try_advisory_xact_lock(hashtext(:k))"),
             {"k": f"apply:{shopify_product_id}"},
@@ -52,9 +68,6 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
         if not got_lock:
             return {"ok": True, "noop": "apply_in_flight"}
 
-        # Find sibling decisions written in the same batch as the trigger.
-        # All variants of this product whose latest decision is autoApplied
-        # and not yet pushed are considered part of the batch.
         sibling_rows = session.execute(
             text("""
                 SELECT DISTINCT ON (pd."shopifyVariantId")
@@ -73,34 +86,30 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
         if not pending:
             return {"ok": True, "noop": "all_already_applied"}
 
-        token = get_offline_token(shop_domain)
-        if not token:
-            _stamp_error(session, [d for d, _, _ in pending], "missing_offline_token")
-            return {"ok": False, "reason": "no_offline_token"}
-
         variants_input = [
             {"id": vid, "price": f"{float(price):.2f}"}
             for (_, vid, price) in pending
         ]
 
         try:
-            data = shopify_graphql(
-                shop_domain, token, VARIANT_BULK_UPDATE_MUTATION,
-                {"productId": shopify_product_id, "variants": variants_input},
-            )
+            proxy_result = _post_to_proxy(shop_domain, shopify_product_id, variants_input)
         except Exception as exc:
             msg = str(exc)
-            _stamp_error(session, [d for d, _, _ in pending], f"graphql_failed: {msg}")
-            # 401 means the token is gone — retrying just burns cycles until
-            # the merchant reopens the app. Bail cleanly so the worker stops
-            # hammering Shopify; the token-expiry banner on app._index is the
-            # signal to fix this.
-            if "401" in msg or "Unauthorized" in msg:
+            _stamp_error(session, [d for d, _, _ in pending], f"proxy_failed: {msg}")
+            # 401 from the proxy → no Session row exists; pointless to retry
+            # until the merchant reopens the app.
+            if "401" in msg or "no_session_for_shop" in msg:
                 return {"ok": False, "reason": "unauthorized"}
             raise
 
-        result = data.get("productVariantsBulkUpdate", {}) or {}
-        user_errors = result.get("userErrors") or []
+        if not proxy_result.get("ok"):
+            err = proxy_result.get("error") or proxy_result.get("reason") or "unknown"
+            _stamp_error(session, [d for d, _, _ in pending], f"proxy_returned_not_ok: {err}"[:500])
+            return {"ok": False, "reason": err}
+
+        # The proxy returns { ok: true, data: { productVariantsBulkUpdate: {...} } }
+        bulk = (proxy_result.get("data") or {}).get("productVariantsBulkUpdate") or {}
+        user_errors = bulk.get("userErrors") or []
         if user_errors:
             _stamp_error(
                 session,
@@ -109,8 +118,6 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
             )
             return {"ok": False, "reason": "user_errors", "userErrors": user_errors}
 
-        # Stamp appliedAt + persist response on every sibling decision; sync
-        # ShopifyVariant.currentPrice locally so the next decide cycle reads truth.
         decision_ids = [d for d, _, _ in pending]
         session.execute(
             text("""
@@ -119,7 +126,7 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
                        "shopifyResponse" = CAST(:r AS jsonb)
                  WHERE id = ANY(:ids)
             """),
-            {"ids": decision_ids, "r": json.dumps(result, default=str)},
+            {"ids": decision_ids, "r": json.dumps(bulk, default=str)},
         )
         for _did, vid, price in pending:
             session.execute(

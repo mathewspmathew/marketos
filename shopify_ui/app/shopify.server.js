@@ -17,6 +17,11 @@ const shopify = shopifyApp({
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
   future: {
+    // Expiring tokens are required for App Store distribution. Background
+    // workers no longer talk to Shopify directly — they POST to the
+    // /internal/apply-price route on this app, which uses
+    // shopify.unauthenticated.admin() to get an Admin client that handles
+    // Token Exchange refresh transparently.
     expiringOfflineAccessTokens: true,
   },
   ...(process.env.SHOP_CUSTOM_DOMAIN

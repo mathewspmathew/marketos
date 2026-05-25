@@ -34,6 +34,7 @@ export const loader = async ({ request }) => {
   const recent = productIds.length === 0 ? [] : await db.$queryRawUnsafe(`
     SELECT DISTINCT ON (v."productId")
            v."productId" AS pid, pd."changePct", pd."autoApplied",
+           pd."appliedAt", pd."applyError",
            pd."skipReason", pd."decidedAt"
       FROM "PriceDecision" pd
       JOIN "ShopifyVariant" v ON v.id = pd."shopifyVariantId"
@@ -46,6 +47,16 @@ export const loader = async ({ request }) => {
   return {
     products: products.map((p) => {
       const r = recentByPid.get(p.id);
+      // Lifecycle status — see app.stats.$productId.jsx for the same logic.
+      // autoApplied alone is just INTENT; the row only counts as "applied"
+      // when appliedAt is set (Shopify accepted the push).
+      let status = "none";
+      if (r) {
+        if (r.appliedAt) status = "applied";
+        else if (r.applyError) status = "failed";
+        else if (r.autoApplied) status = "pending";
+        else status = "skipped";
+      }
       return {
         id: p.id,
         title: p.title,
@@ -55,7 +66,7 @@ export const loader = async ({ request }) => {
         basePrice: p.basePrice?.toString() ?? null,
         lastDecisionAt: r?.decidedAt ? new Date(r.decidedAt).toISOString() : null,
         lastChangePct: r?.changePct ?? null,
-        lastApplied:   r?.autoApplied ?? null,
+        lastStatus:    status,
         lastSkipReason: r?.skipReason ?? null,
       };
     }),
@@ -101,12 +112,17 @@ export default function StatsIndex() {
                           <s-text>
                             Last: {new Date(p.lastDecisionAt).toLocaleString()}
                           </s-text>
-                          <s-text tone={p.lastChangePct < 0 ? "critical" : "success"}>
-                            {p.lastChangePct != null
-                              ? `${(p.lastChangePct * 100).toFixed(2)}%`
-                              : "no change"}
-                            {p.lastApplied ? " · applied" : p.lastSkipReason ? ` · ${p.lastSkipReason}` : ""}
-                          </s-text>
+                          <s-stack direction="inline" gap="tight" align="center">
+                            <s-text tone={p.lastChangePct < 0 ? "critical" : "success"}>
+                              {p.lastChangePct != null
+                                ? `${(p.lastChangePct * 100).toFixed(2)}%`
+                                : "no change"}
+                            </s-text>
+                            {p.lastStatus === "applied"  && <s-badge tone="success">Applied</s-badge>}
+                            {p.lastStatus === "failed"   && <s-badge tone="critical">Push failed</s-badge>}
+                            {p.lastStatus === "pending"  && <s-badge tone="warning">Pending push</s-badge>}
+                            {p.lastStatus === "skipped"  && <s-badge tone="subdued">Skipped</s-badge>}
+                          </s-stack>
                         </>
                       ) : (
                         <s-text tone="subdued">No decisions yet</s-text>
