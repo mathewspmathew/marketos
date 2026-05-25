@@ -12,7 +12,7 @@ because SQLAlchemy has no native pgvector type; all vector reads/writes use raw 
 """
 import uuid
 
-from sqlalchemy import BIGINT, Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, func, UniqueConstraint
+from sqlalchemy import BIGINT, Boolean, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM as PgEnum, JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -386,3 +386,79 @@ class ShopSettings(Base):
     serperHl                 = Column("serperHl",       String, nullable=False, default="en")
     serperLocation           = Column("serperLocation", String, nullable=False, default="Kochi, Kerala")
     updatedAt                = Column("updatedAt", DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chatbot (merchant-facing assistant)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_chat_role = PgEnum(
+    "user", "assistant", "tool",
+    name="ChatRole",
+    create_type=False,
+)
+
+_preview_kind = PgEnum(
+    "price_change", "dynamic_pricing_toggle",
+    name="PreviewKind",
+    create_type=False,
+)
+
+# Public names for import by other modules
+ChatRole = _chat_role
+PreviewKind = _preview_kind
+
+
+class ChatSession(Base):
+    __tablename__ = "ChatSession"
+    __table_args__ = (
+        Index("ChatSession_shopDomain_updatedAt_idx", "shopDomain", "updatedAt"),
+    )
+
+    id         = Column(String, primary_key=True)
+    shopDomain = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    userId     = Column("userId",     String, nullable=True)
+    title      = Column("title",      String, nullable=True)
+    createdAt  = Column("createdAt",  DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updatedAt  = Column("updatedAt",  DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
+
+    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
+    previews = relationship("ChatPreview", back_populates="session", cascade="all, delete-orphan")
+
+
+class ChatMessage(Base):
+    __tablename__ = "ChatMessage"
+    __table_args__ = (
+        Index("ChatMessage_sessionId_createdAt_idx", "sessionId", "createdAt"),
+    )
+
+    id        = Column(String, primary_key=True)
+    sessionId = Column("sessionId", String, ForeignKey("ChatSession.id", ondelete="CASCADE"), nullable=False)
+    role      = Column("role",      _chat_role, nullable=False)
+    content   = Column("content",   JSONB, nullable=False)
+    createdAt = Column("createdAt", DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    session = relationship("ChatSession", back_populates="messages")
+
+
+class ChatPreview(Base):
+    __tablename__ = "ChatPreview"
+    __table_args__ = (
+        Index("ChatPreview_shopDomain_expiresAt_idx", "shopDomain", "expiresAt"),
+    )
+
+    id          = Column(String, primary_key=True)
+    sessionId   = Column("sessionId",   String, ForeignKey("ChatSession.id", ondelete="CASCADE"), nullable=False)
+    shopDomain  = Column("shopDomain",  String, nullable=False)
+    kind        = Column("kind",        _preview_kind, nullable=False)
+    scopeFilter = Column("scopeFilter", JSONB, nullable=False)
+    change      = Column("change",      JSONB, nullable=False)
+    variantIds  = Column("variantIds",  ARRAY(String), nullable=False)
+    summary     = Column("summary",     JSONB, nullable=False)
+    expiresAt   = Column("expiresAt",   DateTime(timezone=True), nullable=False)
+    appliedAt   = Column("appliedAt",   DateTime(timezone=True), nullable=True)
+    appliedBy   = Column("appliedBy",   String, nullable=True)
+    result      = Column("result",      JSONB, nullable=True)
+    createdAt   = Column("createdAt",   DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    session = relationship("ChatSession", back_populates="previews")
