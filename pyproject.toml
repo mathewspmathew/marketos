@@ -29,3 +29,8 @@ dependencies = [
     "joblib>=1.4",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
