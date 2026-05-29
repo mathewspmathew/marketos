@@ -1,0 +1,90 @@
+MarketOS — Technical Glance
+===========================
+
+One-line:
+  Shopify-embedded dynamic-pricing + competitor-intelligence platform.
+
+Top-level shape:
+  shopify_ui/   → React Router 7 embedded Shopify app (frontend + webhooks)
+  services/     → Python Celery microservices (backend pipeline)
+  prisma/       → shared Postgres schema (pgvector)
+  docker-compose.yml → Redis + workers + beat + api_gateway
+
+Languages / runtimes:
+  - TypeScript / React Router 7 (frontend)
+  - Python 3.12 (services)
+  - Node 20+ (frontend tooling, Shopify CLI)
+
+Frontend stack (shopify_ui/):
+  - @shopify/shopify-app-react-router
+  - React Router 7
+  - Prisma JS client
+  - Shopify Polaris (UI), Shopify CLI (dev tunnel)
+  - ESLint + TypeScript
+
+Backend stack (services/):
+  - Celery (queue routing in services/common/celery_app.py)
+  - Celery beat (30s tick → services/scraper_svc/celery_beat.py)
+  - FastAPI (api_gateway, chatbot_svc)
+  - SQLAlchemy + prisma-client-py
+  - Pydantic / Pydantic-AI (chatbot agent)
+  - uv (package manager, pyproject.toml per service)
+  - Logfire (observability, chatbot_svc)
+
+Storage / infra:
+  - PostgreSQL + pgvector (768D vector columns)
+  - Redis (Celery broker + result backend)
+  - Google Cloud Storage (raw HTML/markdown + product images)
+
+External APIs:
+  - Firecrawl       — web scraping
+  - Groq            — LLM extraction + chatbot inference (llama-3.3-70b-versatile)
+  - Serper          — competitor discovery (Google SERP)
+  - Vertex AI       — text + image embeddings (text-multilingual-embedding-002)
+  - Shopify Admin GraphQL — read (orders/inventory) + write (price update)
+
+Services (queue → responsibility):
+  api_gateway        HTTP        internal entry for UI → Celery fan-out
+  scraper_svc        scraping_queue       Firecrawl fetch + GCS persist
+                     extraction_queue     Groq → ScrapedProduct/Variant
+                     scheduler_queue      beat tick: rescrape + backfill
+  discovery_svc      discovery_queue      Serper → CompetitorCandidate
+  semantic (in scraper_svc)
+                     semantic_queue       competitor variant semantics
+                     shopify_semantic_queue merchant variant semantics
+  embedding_svc      embedding_queue      Vertex AI → pgvector
+  matcher_svc        match_queue          vector sim → ProductMatch / ProductLevelMatch
+  pricing_svc        pricing_queue        PriceDecision + apply via RR proxy
+  suggestion_svc     suggestion_queue     ProductSuggestion fan-out
+                     shopify_sync_queue   SalesAggregate recompute
+  shopify_svc        stats_queue          daily orders/inventory rebuild
+  chatbot_svc        HTTP/SSE             Pydantic-AI agent (search/stats/preview/apply tools)
+  guardian_svc       —                    (stub) safety/rule enforcement
+  observability_mcp  —                    (stub) MCP server for ops introspection
+  common             —                    shared: Celery app, db, models, GCS, embed, Groq, Shopify
+
+Data model highlights (prisma/schema.prisma):
+  Session, ShopAuth, ShopSettings
+  ShopifyUser, ShopifyProduct, ShopifyVariant, ShopifyEmbedding
+  ScrapedProduct, ScrapedVariant, ProductEmbedding
+  ScrapingConfig, ProductUrl (UrlStatus, ScrapeStatus)
+  DiscoveryJob, CompetitorCandidate (DiscoveryStatus, CandidateStatus)
+  ProductMatch, ProductLevelMatch (MatchConfidenceTier)
+  CompetitorPriceObservation, VariantCompetitorStats
+  ProductSuggestion (SuggestionStatus), PriceDecision
+  ChatSession, ChatMessage, ChatPreview
+
+Pipeline (one line each):
+  merchant install     → Shopify OAuth → Session
+  product sync         → ShopifyProduct/Variant → shopify-semantic → embedding
+  discovery            → Serper → CompetitorCandidate → merchant accept → ProductUrl
+  competitor scrape    → Firecrawl → Groq extract → ScrapedProduct/Variant → semantic → embedding
+  matching             → matcher_svc → ProductMatch / ProductLevelMatch
+  pricing              → stats → decide → PriceDecision → (suggestion) → ProductSuggestion
+  apply                → RR /internal/apply-price → Shopify productVariantsBulkUpdate
+  chat                 → FastAPI SSE → Pydantic-AI agent → tools → DB
+
+Run:
+  Frontend: cd shopify_ui && npm run dev
+  Backend : docker-compose up         (redis + all workers + beat + api_gateway)
+  Schema  : cd shopify_ui && npm run setup   (prisma generate + migrate)

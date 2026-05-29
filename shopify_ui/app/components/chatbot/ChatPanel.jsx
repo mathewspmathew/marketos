@@ -1,4 +1,6 @@
 import { useState, useRef } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import PreviewCard from "./PreviewCard";
 import AskCard from "./AskCard";
 
@@ -60,9 +62,13 @@ export default function ChatPanel() {
         {turns.map((t, i) => (
           <div key={i}>
             {t.text && (
-              <s-paragraph tone={t.role === "user" ? "subdued" : undefined}>
-                {t.role === "user" ? "You: " : ""}{t.text}
-              </s-paragraph>
+              t.role === "user" ? (
+                <s-paragraph tone="subdued">You: {t.text}</s-paragraph>
+              ) : (
+                <div className="chat-md">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.text}</ReactMarkdown>
+                </div>
+              )
             )}
             {t.preview && (
               <PreviewCard preview={t.preview} onApply={applyPreview} onCancel={() => {}} busy={busy} />
@@ -75,6 +81,12 @@ export default function ChatPanel() {
             label=""
             value={input}
             onInput={(e) => setInput(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !busy) {
+                e.preventDefault();
+                send(input);
+              }
+            }}
             autoComplete="off"
             placeholder="Ask anything…"
           />

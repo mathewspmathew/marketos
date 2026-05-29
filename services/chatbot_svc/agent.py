@@ -15,15 +15,24 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import sys
 import logfire
 from pydantic_ai import Agent, RunContext
 
-# Observability — silent no-op if LOGFIRE_TOKEN is unset, so this is safe
-# in CI/tests. Send_to_logfire="if-token-present" avoids interactive prompts.
+# Observability: write the agent's span tree to chatbot_svc stdout. Cloud
+# upload (logfire.dev) disabled because this venv's OpenSSL can't TLS-handshake
+# with logfire-eu.pydantic.dev; revisit if/when that env is fixed.
 logfire.configure(
     send_to_logfire="if-token-present",
     service_name="chatbot_svc",
-    console=False,
+    console=logfire.ConsoleOptions(
+        output=sys.stderr,
+        colors="never",
+        span_style="show-parents",
+        include_timestamps=True,
+        verbose=False,
+        min_log_level="debug",
+    ),
 )
 logfire.instrument_pydantic_ai()
 
