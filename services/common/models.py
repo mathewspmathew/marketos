@@ -419,6 +419,7 @@ class ChatSession(Base):
     shopDomain = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain", ondelete="RESTRICT", onupdate="CASCADE"), nullable=False)
     userId     = Column("userId",     String, nullable=True)
     title      = Column("title",      String, nullable=True)
+    runningSummary = Column("runningSummary", Text, nullable=True)
     createdAt  = Column("createdAt",  DateTime(timezone=True), server_default=func.now(), nullable=False)
     updatedAt  = Column("updatedAt",  DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -430,13 +431,16 @@ class ChatMessage(Base):
     __tablename__ = "ChatMessage"
     __table_args__ = (
         Index("ChatMessage_sessionId_createdAt_idx", "sessionId", "createdAt"),
+        Index("ChatMessage_sessionId_pinned_idx", "sessionId", "pinned"),
     )
 
-    id        = Column(String, primary_key=True)
-    sessionId = Column("sessionId", String, ForeignKey("ChatSession.id", ondelete="CASCADE"), nullable=False)
-    role      = Column("role",      _chat_role, nullable=False)
-    content   = Column("content",   JSONB, nullable=False)
-    createdAt = Column("createdAt", DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id         = Column(String, primary_key=True)
+    sessionId  = Column("sessionId", String, ForeignKey("ChatSession.id", ondelete="CASCADE"), nullable=False)
+    role       = Column("role",      _chat_role, nullable=False)
+    content    = Column("content",   JSONB, nullable=False)
+    tokenCount = Column("tokenCount", Integer, nullable=True)
+    pinned     = Column("pinned",    Boolean, nullable=False, server_default="false")
+    createdAt  = Column("createdAt", DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     session = relationship("ChatSession", back_populates="messages")
 
