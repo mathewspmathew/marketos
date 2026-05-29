@@ -115,10 +115,10 @@ model ShopifyProduct {
   lifetimeCapPctOverride        Float?
   lastDecisionAt                DateTime?
   // How many competitor product links to fetch per discovery run.
-  discoveryNumResults   Int       @default(10)
+  discoveryNumResults           Int         @default(10)
   // If a discovered URL is a listing/search page, expand into this many
   // individual product cards. Null → fall back to ShopSettings, then hard-default 5.
-  listingExpansionCap   Int?
+  listingExpansionCap           Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -339,20 +339,20 @@ enum DiscoveryStatus {
 }
 
 model DiscoveryJob {
-  id               String          @id @default(uuid())
-  shopDomain       String
-  shop             ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
-  shopifyProductId String
-  shopifyProduct   ShopifyProduct  @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
-  status           DiscoveryStatus @default(QUEUED)
-  query            String?
-  numResults       Int             @default(10)
+  id                  String          @id @default(uuid())
+  shopDomain          String
+  shop                ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
+  shopifyProductId    String
+  shopifyProduct      ShopifyProduct  @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+  status              DiscoveryStatus @default(QUEUED)
+  query               String?
+  numResults          Int             @default(10)
   // Per-job cap for listing-page expansion (overrides ShopifyProduct + ShopSettings).
   listingExpansionCap Int?
-  candidateCount   Int             @default(0)
-  error            String?
-  requestedAt      DateTime        @default(now())
-  completedAt      DateTime?
+  candidateCount      Int             @default(0)
+  error               String?
+  requestedAt         DateTime        @default(now())
+  completedAt         DateTime?
 
   candidates CompetitorCandidate[]
 
@@ -578,8 +578,8 @@ model PriceDecision {
   // autoApplied=false and a skipReason) so the merchant can see *why* no
   // change happened on this cycle.
   changePct       Float?
-  refPrice        Decimal?    @db.Decimal(10, 2)
-  formulaTarget   Decimal?    @db.Decimal(10, 2)
+  refPrice        Decimal?     @db.Decimal(10, 2)
+  formulaTarget   Decimal?     @db.Decimal(10, 2)
   competitorsUsed Int          @default(0)
   oosObservations Int          @default(0)
   currencyDrops   Int          @default(0)
@@ -619,31 +619,31 @@ model ShopSettings {
   // Default cap on listing-page expansion; ShopifyProduct / DiscoveryJob override.
   listingExpansionCap      Int?
 
-  marketplaceBlocklist     String[]    @default([])
-  killSwitch               Boolean     @default(false)
+  marketplaceBlocklist String[] @default([])
+  killSwitch           Boolean  @default(false)
   // Global pause for all rescrape work in this shop. Distinct from killSwitch
   // (which gates PriceDecision writes). When false, beat skips rescrape
   // dispatch for every ProductUrl belonging to this shop, regardless of
   // per-product frequency.
-  autoRescrapeEnabled      Boolean     @default(true)
+  autoRescrapeEnabled  Boolean  @default(true)
   // When false (default), competitor observations marked isInStock=false are
   // dropped from the pricing reference. Flip to true if the scraper's stock
   // signal is unreliable for your competitor set — observations will then
   // count regardless. The OOS count is still recorded on each PriceDecision
   // for the stats page.
-  includeOosInPricing      Boolean     @default(false)
+  includeOosInPricing  Boolean  @default(false)
 
   // Serper geo/language targeting for competitor discovery.
-  serperGl                 String      @default("in")
-  serperHl                 String      @default("en")
-  serperLocation           String      @default("Kochi, Kerala")
+  serperGl       String @default("in")
+  serperHl       String @default("en")
+  serperLocation String @default("Kochi, Kerala")
 
   // ISO-4217 currency code for the merchant store (e.g. "USD", "INR").
   // Read from Shopify shop.currencyCode during install/refresh. Nullable
   // until first sync — matcher treats null as "unknown" (no mismatch flag).
-  currency                 String?
+  currency String?
 
-  updatedAt                DateTime    @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
 // ─────────────────────────────────────────
@@ -661,28 +661,32 @@ enum PreviewKind {
 }
 
 model ChatSession {
-  id         String        @id @default(cuid())
-  shopDomain String
-  shop       ShopifyUser   @relation(fields: [shopDomain], references: [shopDomain])
-  userId     String?
-  title      String?
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
-  messages   ChatMessage[]
-  previews   ChatPreview[]
+  id             String        @id @default(cuid())
+  shopDomain     String
+  shop           ShopifyUser   @relation(fields: [shopDomain], references: [shopDomain])
+  userId         String?
+  title          String?
+  runningSummary String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  messages       ChatMessage[]
+  previews       ChatPreview[]
 
   @@index([shopDomain, updatedAt])
 }
 
 model ChatMessage {
-  id        String      @id @default(cuid())
-  sessionId String
-  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role      ChatRole
-  content   Json
-  createdAt DateTime    @default(now())
+  id         String      @id @default(cuid())
+  sessionId  String
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role       ChatRole
+  content    Json
+  tokenCount Int?
+  pinned     Boolean     @default(false)
+  createdAt  DateTime    @default(now())
 
   @@index([sessionId, createdAt])
+  @@index([sessionId, pinned])
 }
 
 model ChatPreview {
