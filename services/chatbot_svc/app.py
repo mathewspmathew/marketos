@@ -87,7 +87,9 @@ def _ensure_session(
 
 
 def _record(session_id: str, role: str, content: dict) -> None:
-    """Persist a ChatMessage row.  ChatRole is a plain PgEnum string."""
+    """Persist a ChatMessage row with computed tokenCount."""
+    from services.chatbot_svc.context import count_tokens
+
     with get_db() as s:
         s.add(
             ChatMessage(
@@ -95,6 +97,7 @@ def _record(session_id: str, role: str, content: dict) -> None:
                 sessionId=session_id,
                 role=role,
                 content=content,
+                tokenCount=count_tokens(content),
                 createdAt=datetime.now(timezone.utc),
             )
         )
