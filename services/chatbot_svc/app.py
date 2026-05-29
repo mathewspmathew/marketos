@@ -12,13 +12,6 @@ Endpoints:
                         (currently RR routes do not post a callback, but the
                         endpoint is reserved for symmetry). Inserts a tool
                         message.
-
-NOTE (message_history): agent.run() supports a `message_history` kwarg that
-accepts Sequence[pydantic_ai.messages.ModelMessage].  Constructing typed
-ModelRequest / ModelResponse objects from raw DB rows is non-trivial.  For
-now the agent runs single-turn (no message history passed).  A follow-up
-task should load prior ChatMessage rows, convert them to ModelMessage
-objects, and pass them as `message_history=` so the agent has context.
 """
 from __future__ import annotations
 
@@ -32,6 +25,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from services.chatbot_svc.agent import agent
+from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps
 from services.chatbot_svc.tools.ask import AskUserRequested
 from services.common.db import get_db
@@ -112,6 +106,9 @@ def _record(session_id: str, role: str, content: dict) -> None:
 async def chat(req: ChatRequest):
     """Stream agent output as Server-Sent Events."""
     sid = _ensure_session(req.shop_domain, req.user_id, req.session_id)
+    # Build history BEFORE recording the new user message so the current
+    # prompt isn't double-counted (pydantic-ai also receives it as the prompt).
+    history = build_context(sid)
     _record(sid, "user", {"text": req.message})
     deps = build_deps(req.shop_domain, req.user_id, sid)
 
@@ -121,11 +118,7 @@ async def chat(req: ChatRequest):
 
         try:
             try:
-                # NOTE: message_history omitted (single-turn for now).
-                # TODO: load prior ChatMessage rows, convert to
-                #       pydantic_ai.messages.ModelMessage objects, and pass
-                #       as `message_history=` for multi-turn context.
-                result = await agent.run(req.message, deps=deps)
+                result = await agent.run(req.message, deps=deps, message_history=history)
             except AskUserRequested as ask:
                 # The agent raised a clarification request via the ask tool.
                 payload = {"question": ask.question, "options": ask.options}
