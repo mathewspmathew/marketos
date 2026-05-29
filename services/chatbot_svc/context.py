@@ -106,3 +106,31 @@ def load_recent_messages(
         for row in combined:
             s.expunge(row)
         return combined
+
+
+DEFAULT_BUDGET_TOKENS = 12_000
+
+
+def build_context(
+    session_id: str,
+    *,
+    budget_tokens: int = DEFAULT_BUDGET_TOKENS,
+    summary: str | None = None,  # Reserved: running summary, unused in v1.
+) -> list[ModelMessage]:
+    """Build the `message_history` argument for `agent.run`.
+
+    Loads recent messages within `budget_tokens`, including pinned
+    messages unconditionally, and converts each to a `ModelMessage`.
+
+    The `summary` parameter is accepted but ignored in v1. When the
+    running-summary feature lands, it will be prepended as a synthetic
+    `ModelRequest` system note.
+    """
+    _ = summary  # placeholder until summary feature lands
+    rows = load_recent_messages(session_id, budget_tokens=budget_tokens)
+    messages: list[ModelMessage] = []
+    for row in rows:
+        msg = row_to_model_message(row.role, row.content)
+        if msg is not None:
+            messages.append(msg)
+    return messages

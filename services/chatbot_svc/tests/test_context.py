@@ -115,3 +115,19 @@ def test_load_recent_pinned_always_included(seed_session):
 def test_load_recent_large_budget_returns_all(seed_session):
     rows = load_recent_messages(seed_session, budget_tokens=10_000)
     assert len(rows) == 5
+
+
+from services.chatbot_svc.context import build_context, DEFAULT_BUDGET_TOKENS
+
+
+def test_build_context_returns_model_messages(seed_session):
+    history = build_context(seed_session, budget_tokens=10_000)
+    # 5 rows, all user/assistant -> all should convert.
+    assert len(history) == 5
+    # First is the oldest (pinned) -> user role (i=0 even) -> ModelRequest.
+    assert isinstance(history[0], ModelRequest)
+
+
+def test_build_context_default_budget_constant_exists():
+    assert isinstance(DEFAULT_BUDGET_TOKENS, int)
+    assert DEFAULT_BUDGET_TOKENS >= 4000
