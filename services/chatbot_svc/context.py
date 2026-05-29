@@ -59,3 +59,50 @@ def row_to_model_message(role: str, content: dict) -> ModelMessage | None:
 
     # Tool rows are not replayed in v1 — see plan doc for rationale.
     return None
+
+
+from services.common.db import get_db
+from services.common.models import ChatMessage
+
+
+def load_recent_messages(
+    session_id: str,
+    budget_tokens: int,
+) -> list[ChatMessage]:
+    """Return chat messages for a session, oldest→newest, budget-bounded.
+
+    Walks the session's messages newest→oldest, accumulating those that
+    fit in `budget_tokens`. Pinned messages are included unconditionally
+    (their cost does not count against the budget). The result is returned
+    in chronological order so it can be replayed directly to the LLM.
+    """
+    with get_db() as s:
+        # Pinned set, returned regardless of budget.
+        pinned_rows = (
+            s.query(ChatMessage)
+            .filter(ChatMessage.sessionId == session_id, ChatMessage.pinned.is_(True))
+            .all()
+        )
+        # Unpinned, newest first, for budget walk.
+        unpinned_rows = (
+            s.query(ChatMessage)
+            .filter(ChatMessage.sessionId == session_id, ChatMessage.pinned.is_(False))
+            .order_by(ChatMessage.createdAt.desc())
+            .all()
+        )
+
+        selected: list[ChatMessage] = []
+        used = 0
+        for row in unpinned_rows:
+            cost = row.tokenCount if row.tokenCount is not None else count_tokens(row.content)
+            if used + cost > budget_tokens:
+                break
+            selected.append(row)
+            used += cost
+
+        combined = pinned_rows + selected
+        combined.sort(key=lambda r: r.createdAt)
+        # Detach so callers can access attributes after the session closes.
+        for row in combined:
+            s.expunge(row)
+        return combined

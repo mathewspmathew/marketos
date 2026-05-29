@@ -60,3 +60,58 @@ def test_tool_row_returns_none():
 
 def test_user_row_with_missing_text_returns_none():
     assert row_to_model_message("user", {}) is None
+
+
+import uuid
+from datetime import datetime, timezone, timedelta
+
+import pytest
+
+from services.common.db import get_db
+from services.common.models import ChatMessage, ChatSession
+from services.chatbot_svc.context import load_recent_messages
+
+
+@pytest.fixture
+def seed_session(seed_shop):
+    sid = uuid.uuid4().hex
+    base = datetime.now(timezone.utc)
+    with get_db() as s:
+        s.add(ChatSession(id=sid, shopDomain=seed_shop, createdAt=base, updatedAt=base))
+        # 5 messages, increasing tokenCount, oldest first
+        for i, tc in enumerate([10, 20, 30, 40, 50]):
+            s.add(ChatMessage(
+                id=f"{sid}-m{i}",
+                sessionId=sid,
+                role="user" if i % 2 == 0 else "assistant",
+                content={"text": f"msg {i}"},
+                tokenCount=tc,
+                pinned=(i == 0),  # oldest is pinned
+                createdAt=base + timedelta(seconds=i),
+            ))
+    yield sid
+    with get_db() as s:
+        s.query(ChatMessage).filter(ChatMessage.sessionId == sid).delete()
+        s.query(ChatSession).filter(ChatSession.id == sid).delete()
+
+
+def test_load_recent_respects_budget(seed_session):
+    # Budget 70 -> would fit last two (50+40=90 > 70, so just 50), plus pinned (10).
+    rows = load_recent_messages(seed_session, budget_tokens=70)
+    ids = [r.id for r in rows]
+    # Pinned msg 0 included, msg 4 (newest, 50 tokens) included.
+    assert f"{seed_session}-m0" in ids
+    assert f"{seed_session}-m4" in ids
+    # Chronological order in result
+    assert ids == sorted(ids, key=lambda x: int(x.rsplit("m", 1)[1]))
+
+
+def test_load_recent_pinned_always_included(seed_session):
+    # Budget 0 -> only pinned should come back.
+    rows = load_recent_messages(seed_session, budget_tokens=0)
+    assert [r.id for r in rows] == [f"{seed_session}-m0"]
+
+
+def test_load_recent_large_budget_returns_all(seed_session):
+    rows = load_recent_messages(seed_session, budget_tokens=10_000)
+    assert len(rows) == 5
