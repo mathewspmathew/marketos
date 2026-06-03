@@ -1,3 +1,6 @@
+import os
+os.environ.setdefault("GROQ_API_KEY", "test")
+
 from services.chatbot_svc.titling import is_refusal, REFUSAL_SENTENCE
 
 
@@ -142,6 +145,7 @@ def test_chat_schedules_titling(seed_shop):
             # though the task itself runs fire-and-forget.
             mock_title.assert_called_once()
             call = mock_title.call_args
+            assert call.args[0] == sid
             assert call.args[1] == "what do I sell?"
             assert call.args[2] == "Your store sells speakers."
     finally:

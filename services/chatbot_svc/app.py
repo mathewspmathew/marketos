@@ -141,6 +141,8 @@ async def chat(req: ChatRequest):
             # Fire-and-forget: generate a chat title from the first real
             # exchange. Skipped for refusals / already-titled sessions inside
             # maybe_set_title. Does not block the SSE response.
+            # The maybe_set_title(...) call (recording call_args) runs synchronously here;
+            # the coroutine body executes later via create_task.
             task = asyncio.create_task(maybe_set_title(sid, req.message, text))
             _title_tasks.add(task)
             task.add_done_callback(_title_tasks.discard)

@@ -66,6 +66,8 @@ async def maybe_set_title(session_id: str, user_message: str, reply_text: str) -
     try:
         if is_refusal(reply_text):
             return
+        # These are synchronous DB calls running inside a fire-and-forget task
+        # (known service-wide pattern; flagged for future asyncio.to_thread migration).
         with get_db() as s:
             sess = s.get(ChatSession, session_id)
             if sess is None or sess.title:
