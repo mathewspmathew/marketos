@@ -38,3 +38,78 @@ def test_clean_title_collapses_whitespace_and_newlines():
 def test_clean_title_empty():
     assert clean_title("") == ""
     assert clean_title("   ") == ""
+
+
+import uuid
+from datetime import datetime, timezone
+from unittest.mock import patch, AsyncMock
+
+from services.common.db import get_db
+from services.common.models import ChatSession
+from services.chatbot_svc.titling import maybe_set_title
+
+
+def _make_session(shop):
+    sid = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+    with get_db() as s:
+        s.add(ChatSession(id=sid, shopDomain=shop, createdAt=now, updatedAt=now))
+    return sid
+
+
+def _title_of(sid):
+    with get_db() as s:
+        return s.get(ChatSession, sid).title
+
+
+def _cleanup(sid):
+    with get_db() as s:
+        row = s.get(ChatSession, sid)
+        if row:
+            s.delete(row)
+
+
+@pytest.mark.asyncio
+async def test_maybe_set_title_sets_on_real_reply(seed_shop):
+    sid = _make_session(seed_shop)
+    try:
+        with patch(
+            "services.chatbot_svc.titling.generate_title",
+            new=AsyncMock(return_value="Nike discount plan"),
+        ):
+            await maybe_set_title(sid, "make all Nike shoes 10% off", "Previewed 12 variants.")
+        assert _title_of(sid) == "Nike discount plan"
+    finally:
+        _cleanup(sid)
+
+
+@pytest.mark.asyncio
+async def test_maybe_set_title_skips_refusal(seed_shop):
+    sid = _make_session(seed_shop)
+    try:
+        with patch(
+            "services.chatbot_svc.titling.generate_title",
+            new=AsyncMock(return_value="Time question"),
+        ) as gen:
+            await maybe_set_title(sid, "what is the time now", REFUSAL_SENTENCE)
+        assert _title_of(sid) is None
+        gen.assert_not_called()
+    finally:
+        _cleanup(sid)
+
+
+@pytest.mark.asyncio
+async def test_maybe_set_title_noop_when_already_titled(seed_shop):
+    sid = _make_session(seed_shop)
+    with get_db() as s:
+        s.get(ChatSession, sid).title = "Existing title"
+    try:
+        with patch(
+            "services.chatbot_svc.titling.generate_title",
+            new=AsyncMock(return_value="New title"),
+        ) as gen:
+            await maybe_set_title(sid, "another message", "A real answer.")
+        assert _title_of(sid) == "Existing title"
+        gen.assert_not_called()
+    finally:
+        _cleanup(sid)

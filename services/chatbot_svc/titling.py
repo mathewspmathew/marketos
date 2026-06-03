@@ -50,3 +50,32 @@ async def generate_title(first_message: str) -> str:
     result = await _title_agent.run(first_message)
     output = result.output if hasattr(result, "output") else getattr(result, "data", "")
     return clean_title(output if isinstance(output, str) else "")
+
+
+from services.common.db import get_db
+from services.common.models import ChatSession
+
+
+async def maybe_set_title(session_id: str, user_message: str, reply_text: str) -> None:
+    """Set the session title from the user's message iff the session has no
+    title yet and this turn was a real (non-refused) answer. No-op otherwise.
+
+    Designed to be fire-and-forget: swallows its own errors so a titling
+    failure never affects the chat response.
+    """
+    try:
+        if is_refusal(reply_text):
+            return
+        with get_db() as s:
+            sess = s.get(ChatSession, session_id)
+            if sess is None or sess.title:
+                return
+        title = await generate_title(user_message)
+        if not title:
+            return
+        with get_db() as s:
+            sess = s.get(ChatSession, session_id)
+            if sess and not sess.title:
+                sess.title = title
+    except Exception:  # titling is best-effort; never raise into the request
+        pass
