@@ -13,6 +13,7 @@
  * is its only auth surface, so the env var must be a high-entropy random.
  */
 import prisma from "../db.server";
+import { deleteCompetitorData } from "../lib/competitorTeardown.server";
 
 export const action = async ({ request }) => {
   if (request.method !== "POST") {
@@ -52,11 +53,67 @@ export const action = async ({ request }) => {
 
   const enabled = !!preview.change?.enabled;
   const productIds = preview.variantIds; // overloaded — holds product ids for flag previews
+  const shopDomain = preview.shopDomain;
+  const clamp = (v, lo, hi, dflt) => {
+    const n = parseInt(v, 10);
+    if (Number.isNaN(n)) return dflt;
+    return Math.max(lo, Math.min(n, hi));
+  };
+
+  // "pause" unless the merchant explicitly chose delete (disable branch only).
+  const mode = body.mode === "delete" ? "delete" : "pause";
 
   const upd = await prisma.shopifyProduct.updateMany({
-    where: { id: { in: productIds }, shopDomain: preview.shopDomain },
+    where: { id: { in: productIds }, shopDomain },
     data: { dynamicPricingEnabled: enabled },
   });
+
+  if (enabled) {
+    // Re-arm known ProductUrls so the rescrape loop resumes (mirrors the
+    // discover page's toggle-on behavior).
+    await prisma.productUrl.updateMany({
+      where: {
+        shopifyProductId: { in: productIds },
+        status: "ACTIVE",
+        OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+      },
+      data: { nextRunAt: new Date() },
+    });
+    // "Rescrape now" gates the credit-spending fresh discovery.
+    if (body.rescrape) {
+      const numResults = clamp(body.numResults, 1, 50, 10);
+      const listingExpansionCap = clamp(body.listingExpansionCap, 1, 50, 5);
+      for (const pid of productIds) {
+        const product = await prisma.shopifyProduct.findFirst({
+          where: { id: pid, shopDomain },
+        });
+        const query =
+          product?.searchQueryOverride || product?.searchQuery || product?.title || "";
+        if (query) {
+          await prisma.discoveryJob.create({
+            data: { shopDomain, shopifyProductId: pid, status: "QUEUED",
+                    query, numResults, listingExpansionCap },
+          });
+        }
+      }
+    }
+  } else {
+    for (const pid of productIds) {
+      // Cooperative-cancel the in-flight run: stop the job, drop only its
+      // not-yet-scraped (PENDING) candidates. The scrape_candidate guard
+      // halts any task already dispatched (flag is now false).
+      await prisma.discoveryJob.updateMany({
+        where: { shopDomain, shopifyProductId: pid, status: { in: ["QUEUED", "RUNNING"] } },
+        data: { status: "FAILED", error: "cancelled: dynamic pricing turned off" },
+      });
+      await prisma.competitorCandidate.deleteMany({
+        where: { shopDomain, shopifyProductId: pid, status: "PENDING" },
+      });
+      if (mode === "delete") {
+        await deleteCompetitorData(prisma, shopDomain, pid);
+      }
+    }
+  }
 
   const succeeded = productIds.slice(0, upd.count);
   const failed = [];
@@ -66,7 +123,8 @@ export const action = async ({ request }) => {
     data: {
       appliedAt: new Date(),
       appliedBy: applied_by ?? null,
-      result: { succeeded, failed, updatedCount: upd.count },
+      result: { succeeded, failed, updatedCount: upd.count, enabled,
+                mode: enabled ? undefined : mode },
     },
   });
 

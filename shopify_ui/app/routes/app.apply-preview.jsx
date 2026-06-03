@@ -8,12 +8,28 @@ import { authenticate } from "../shopify.server";
 
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const { preview_id, kind } = await request.json();
+  const body = await request.json();
+  const { preview_id, kind } = body;
   const path = kind === "dynamic_pricing_toggle"
     ? "/internal/apply-chat-flag"
     : "/internal/apply-chat-price";
 
-  // Best practice: hit our own app URL via SHOPIFY_APP_URL or APP_URL env var.
+  // Forward only the fields the internal route understands; never trust these
+  // for auth (shop comes from the ChatPreview row server-side).
+  const forward = {
+    preview_id,
+    applied_by: session.userId ? String(session.userId) : null,
+  };
+  if (kind === "dynamic_pricing_toggle") {
+    if (body.enable) {
+      forward.rescrape = !!body.rescrape;
+      forward.numResults = body.numResults;
+      forward.listingExpansionCap = body.listingExpansionCap;
+    } else {
+      forward.mode = body.mode === "delete" ? "delete" : "pause";
+    }
+  }
+
   const base = process.env.APP_URL || process.env.SHOPIFY_APP_URL || "";
   const r = await fetch(`${base}${path}`, {
     method: "POST",
@@ -21,10 +37,7 @@ export const action = async ({ request }) => {
       "content-type": "application/json",
       "x-internal-token": process.env.INTERNAL_API_TOKEN ?? "",
     },
-    body: JSON.stringify({
-      preview_id,
-      applied_by: session.userId ? String(session.userId) : null,
-    }),
+    body: JSON.stringify(forward),
   });
   return new Response(await r.text(), {
     status: r.status,

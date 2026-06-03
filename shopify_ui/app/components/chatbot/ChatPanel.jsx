@@ -105,12 +105,12 @@ export default function ChatPanel() {
     if (isNewSession) delayedRefreshRef.current = setTimeout(refreshSessions, 2500);
   }
 
-  async function applyPreview(preview) {
+  async function applyPreview(preview, extras = {}) {
     setBusy(true);
     const r = await fetch("/app/apply-preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ preview_id: preview.preview_id, kind: preview.kind }),
+      body: JSON.stringify({ preview_id: preview.preview_id, kind: preview.kind, ...extras }),
     }).catch(() => null);
     let data; try { data = await r?.json(); } catch { data = null; }
     if (!r?.ok || !data?.ok) {
