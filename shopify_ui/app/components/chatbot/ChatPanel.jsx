@@ -12,6 +12,7 @@ export default function ChatPanel() {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const sessionId = useRef(null);
+  const delayedRefreshRef = useRef(null);
 
   const refreshSessions = useCallback(async () => {
     const r = await fetch("/api/sessions");
@@ -21,6 +22,10 @@ export default function ChatPanel() {
 
   useEffect(() => {
     refreshSessions();
+    // Cancel any pending delayed refresh on unmount to avoid setState after unmount.
+    return () => {
+      if (delayedRefreshRef.current != null) clearTimeout(delayedRefreshRef.current);
+    };
   }, [refreshSessions]);
 
   function newChat() {
@@ -43,13 +48,21 @@ export default function ChatPanel() {
   }
 
   async function deleteChat(id) {
-    await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+    const r = await fetch(`/api/sessions/${id}`, { method: "DELETE" }).catch(() => null);
+    if (!r?.ok) {
+      setTurns((t) => [...t, { role: "assistant", text: "Couldn't delete chat." }]);
+      return;
+    }
     if (id === sessionId.current) newChat();
     refreshSessions();
   }
 
   async function clearAll() {
-    await fetch("/api/sessions", { method: "DELETE" });
+    const r = await fetch("/api/sessions", { method: "DELETE" }).catch(() => null);
+    if (!r?.ok) {
+      setTurns((t) => [...t, { role: "assistant", text: "Couldn't clear chats." }]);
+      return;
+    }
     newChat();
     refreshSessions();
   }
@@ -89,7 +102,7 @@ export default function ChatPanel() {
     // New chats appear in the list; the title fills in shortly after (async),
     // so refresh now and once more after a short delay.
     refreshSessions();
-    if (isNewSession) setTimeout(refreshSessions, 2500);
+    if (isNewSession) delayedRefreshRef.current = setTimeout(refreshSessions, 2500);
   }
 
   async function applyPreview(preview) {
@@ -98,13 +111,14 @@ export default function ChatPanel() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ preview_id: preview.preview_id, kind: preview.kind }),
-    });
-    const data = await r.json();
-    if (data.ok) {
-      setTurns((t) => [...t, { role: "assistant", text: `Applied to ${data.succeeded?.length ?? 0} item(s).` }]);
-    } else {
-      setTurns((t) => [...t, { role: "assistant", text: `Apply failed: ${data.reason}` }]);
+    }).catch(() => null);
+    let data; try { data = await r?.json(); } catch { data = null; }
+    if (!r?.ok || !data?.ok) {
+      setTurns((t) => [...t, { role: "assistant", text: `Apply failed: ${data?.reason ?? "network error"}` }]);
+      setBusy(false);
+      return;
     }
+    setTurns((t) => [...t, { role: "assistant", text: `Applied to ${data.succeeded?.length ?? 0} item(s).` }]);
     setBusy(false);
   }
 
@@ -135,7 +149,7 @@ export default function ChatPanel() {
                   )
                 )}
                 {t.preview && (
-                  <PreviewCard preview={t.preview} onApply={applyPreview} onCancel={() => {}} busy={busy} />
+                  <PreviewCard preview={t.preview} onApply={applyPreview} onCancel={() => {}} busy={busy} /> // TODO: wire cancel
                 )}
                 {t.ask && <AskCard ask={t.ask} onAnswer={send} />}
               </div>

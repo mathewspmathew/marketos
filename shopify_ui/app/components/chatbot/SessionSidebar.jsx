@@ -13,12 +13,12 @@ import PropTypes from "prop-types";
 
 export default function SessionSidebar({
   sessions,
-  activeId,
+  activeId = null,
   onNew,
   onSelect,
   onDelete,
   onClearAll,
-  busy,
+  busy = false,
 }) {
   return (
     <div style={{ width: "220px", flexShrink: 0, borderRight: "1px solid #e1e3e5", paddingRight: "12px" }}>
@@ -36,6 +36,7 @@ export default function SessionSidebar({
                 key={sess.id}
                 role="button"
                 tabIndex={0}
+                aria-disabled={busy}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -45,9 +46,11 @@ export default function SessionSidebar({
                   borderRadius: "8px",
                   cursor: "pointer",
                   background: sess.id === activeId ? "#f1f1f1" : "transparent",
+                  opacity: busy ? 0.6 : 1,
+                  pointerEvents: busy ? "none" : "auto",
                 }}
-                onClick={() => onSelect(sess.id)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(sess.id); }}
+                onClick={() => !busy && onSelect(sess.id)}
+                onKeyDown={(e) => { if (!busy && (e.key === "Enter" || e.key === " ")) onSelect(sess.id); }}
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {sess.title || "New chat"}
@@ -95,7 +98,3 @@ SessionSidebar.propTypes = {
   busy: PropTypes.bool,
 };
 
-SessionSidebar.defaultProps = {
-  activeId: null,
-  busy: false,
-};

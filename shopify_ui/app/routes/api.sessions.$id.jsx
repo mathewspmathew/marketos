@@ -3,6 +3,11 @@
  *   GET    /api/sessions/:id    -> { ok, turns: [...] }   (rehydrate a chat)
  *   DELETE /api/sessions/:id    -> { ok }                 (delete one chat)
  * The shop is taken from the authenticated session, never from the client.
+ *
+ * Resource-route nesting note: this file is a flat-routes child of api.sessions.jsx.
+ * A request to /api/sessions/:id runs only this loader/action — the parent's is NOT
+ * invoked. Do NOT add a default-export component to api.sessions.jsx or it becomes a
+ * layout parent and this route would need an <Outlet> to render.
  */
 import { authenticate } from "../shopify.server";
 
