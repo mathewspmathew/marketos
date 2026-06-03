@@ -9,6 +9,8 @@
  *   onClearAll  : () => void                  delete all chats
  *   busy        : bool                        disable controls while loading
  */
+import PropTypes from "prop-types";
+
 export default function SessionSidebar({
   sessions,
   activeId,
@@ -32,6 +34,8 @@ export default function SessionSidebar({
             {sessions.map((sess) => (
               <div
                 key={sess.id}
+                role="button"
+                tabIndex={0}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -43,6 +47,7 @@ export default function SessionSidebar({
                   background: sess.id === activeId ? "#f1f1f1" : "transparent",
                 }}
                 onClick={() => onSelect(sess.id)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(sess.id); }}
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {sess.title || "New chat"}
@@ -72,3 +77,25 @@ export default function SessionSidebar({
     </div>
   );
 }
+
+SessionSidebar.propTypes = {
+  sessions: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string.isRequired,
+      title: PropTypes.string,
+      updated_at: PropTypes.string,
+      message_count: PropTypes.number,
+    })
+  ).isRequired,
+  activeId: PropTypes.string,
+  onNew: PropTypes.func.isRequired,
+  onSelect: PropTypes.func.isRequired,
+  onDelete: PropTypes.func.isRequired,
+  onClearAll: PropTypes.func.isRequired,
+  busy: PropTypes.bool,
+};
+
+SessionSidebar.defaultProps = {
+  activeId: null,
+  busy: false,
+};
