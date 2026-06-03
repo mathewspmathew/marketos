@@ -26,7 +26,9 @@ def test_toggle_preview_persists(seed_shop, chat_session):
         row = s.get(ChatPreview, res.preview_id)
         assert row is not None
         assert row.kind == "dynamic_pricing_toggle"
-        assert row.change == {"enabled": True}
+        assert row.change["enabled"] is True
+        assert row.change["rescrape"] is False
+        assert row.change["numResults"] == 10
         assert row.variantIds  # product ids stored
 
 
