@@ -114,6 +114,19 @@ def scrape_candidate(self, candidate_id: str):
         if not cand:
             logger.warning("scrape_candidate: candidate %s missing", candidate_id)
             return {"status": "missing"}
+        # Cooperative cancellation: if the merchant turned dynamic pricing OFF
+        # for this product, abort before spending a Firecrawl call. The chatbot
+        # disable flow flips dynamicPricingEnabled=false; this is the signal that
+        # halts already-queued in-flight scrapes. (See the toggle-brief spec.)
+        # shopifyProductId is NOT NULL; the None check below is strictly
+        # defensive (e.g. a row deleted out from under us).
+        product = db.get(models.ShopifyProduct, cand.shopifyProductId)
+        if product is not None and not product.dynamicPricingEnabled:
+            logger.info(
+                "scrape_candidate: product %s dynamic pricing off, skipping %s",
+                cand.shopifyProductId, candidate_id,
+            )
+            return {"status": "skipped_disabled"}
         url    = cand.url
         domain = cand.domain
 
