@@ -113,3 +113,42 @@ async def test_maybe_set_title_noop_when_already_titled(seed_shop):
         gen.assert_not_called()
     finally:
         _cleanup(sid)
+
+
+import json as _json
+from fastapi.testclient import TestClient
+
+
+def test_chat_schedules_titling(seed_shop):
+    """/chat fires maybe_set_title with the user message and reply text."""
+    from unittest.mock import patch, AsyncMock
+    from services.chatbot_svc.app import app
+    from services.common.models import ChatMessage, ChatPreview
+
+    client = TestClient(app)
+    fake = type("R", (), {"output": "Your store sells speakers."})()
+    sid = None
+    try:
+        with patch("services.chatbot_svc.app.agent.run", new=AsyncMock(return_value=fake)), \
+             patch("services.chatbot_svc.app.maybe_set_title", new=AsyncMock()) as mock_title:
+            r = client.post("/chat", json={"shop_domain": seed_shop, "message": "what do I sell?"})
+            for line in r.iter_lines():
+                if line.startswith("data: ") and "session_id" in line:
+                    sid = _json.loads(line[6:])["session_id"]
+                    break
+            assert sid
+            # maybe_set_title is invoked synchronously to build the coroutine
+            # that create_task schedules, so call_args is reliable here even
+            # though the task itself runs fire-and-forget.
+            mock_title.assert_called_once()
+            call = mock_title.call_args
+            assert call.args[1] == "what do I sell?"
+            assert call.args[2] == "Your store sells speakers."
+    finally:
+        if sid:
+            with get_db() as s:
+                s.query(ChatMessage).filter(ChatMessage.sessionId == sid).delete()
+                s.query(ChatPreview).filter(ChatPreview.sessionId == sid).delete()
+                row = s.get(ChatSession, sid)
+                if row:
+                    s.delete(row)

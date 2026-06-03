@@ -15,6 +15,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -27,11 +28,16 @@ from sse_starlette.sse import EventSourceResponse
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps
+from services.chatbot_svc.titling import maybe_set_title
 from services.chatbot_svc.tools.ask import AskUserRequested
 from services.common.db import get_db
 from services.common.models import ChatMessage, ChatPreview, ChatSession
 
 app = FastAPI(title="MarketOS Chatbot Service")
+
+# Strong refs to fire-and-forget titling tasks so the event loop keeps them
+# alive until completion (asyncio only holds weak refs to tasks).
+_title_tasks: set[asyncio.Task] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +138,12 @@ async def chat(req: ChatRequest):
             text = output if isinstance(output, str) else json.dumps(output)
 
             _record(sid, "assistant", {"text": text})
+            # Fire-and-forget: generate a chat title from the first real
+            # exchange. Skipped for refusals / already-titled sessions inside
+            # maybe_set_title. Does not block the SSE response.
+            task = asyncio.create_task(maybe_set_title(sid, req.message, text))
+            _title_tasks.add(task)
+            task.add_done_callback(_title_tasks.discard)
             yield {"event": "text", "data": json.dumps({"text": text})}
 
             # Emit a preview event if the agent created a pending ChatPreview.
