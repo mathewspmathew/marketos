@@ -43,6 +43,8 @@ def test_list_sessions_orders_newest_first_with_counts(seed_shop):
         new_row = next(r for r in rows if r["id"] == new)
         assert new_row["title"] == "Newer"
         assert new_row["message_count"] == 2
+        old_row = next(r for r in rows if r["id"] == old)
+        assert old_row["message_count"] == 0  # outer-join must yield 0, not NULL
     finally:
         _drop(old, new)
 

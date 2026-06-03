@@ -18,7 +18,7 @@ def list_sessions(shop: str) -> list[dict]:
     """Sessions for `shop`, newest `updatedAt` first, with message counts."""
     with get_db() as s:
         rows = (
-            s.query(ChatSession, func.count(ChatMessage.id))
+            s.query(ChatSession, func.count(ChatMessage.id).label("message_count"))
             .outerjoin(ChatMessage, ChatMessage.sessionId == ChatSession.id)
             .filter(ChatSession.shopDomain == shop)
             .group_by(ChatSession.id)
@@ -37,7 +37,12 @@ def list_sessions(shop: str) -> list[dict]:
 
 
 def delete_session(shop: str, session_id: str) -> bool:
-    """Delete one session owned by `shop`. Returns True if a row was deleted."""
+    """Delete one session owned by `shop`. Returns True if a row was deleted.
+
+    Returns False (0 rows deleted) for both "session not found" and "session
+    belongs to a different shop". This is intentional: the calling route maps
+    both cases to 404, so existence is never leaked across shops.
+    """
     with get_db() as s:
         deleted = (
             s.query(ChatSession)
@@ -77,6 +82,8 @@ def get_turns(shop: str, session_id: str) -> list[dict] | None:
         )
         turns: list[dict] = []
         for row in rows:
+            # JSONB content is always a dict in practice; fallback guards against
+            # any unexpected deserialization edge-cases (e.g. None or raw string).
             content = row.content if isinstance(row.content, dict) else {}
             if row.role == "user" and content.get("text"):
                 turns.append({"role": "user", "text": content["text"]})
