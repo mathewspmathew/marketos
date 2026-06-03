@@ -9,6 +9,7 @@ from services.common.db import get_db
 
 
 class StatsMetric(str, enum.Enum):
+    catalog_summary = "catalog_summary"
     priced_above_competitor = "priced_above_competitor"
     priced_below_competitor = "priced_below_competitor"
     match_coverage = "match_coverage"
@@ -25,6 +26,16 @@ class StatsMetric(str, enum.Enum):
 #   PriceDecision.decidedAt                  — timestamp column (not "createdAt")
 
 _QUERIES: dict[StatsMetric, str] = {
+    StatsMetric.catalog_summary: """
+        SELECT
+          (SELECT COUNT(*)
+             FROM "ShopifyProduct"
+             WHERE "shopDomain" = :shop) AS products,
+          (SELECT COUNT(*)
+             FROM "ShopifyVariant" v
+             JOIN "ShopifyProduct" p ON p.id = v."productId"
+             WHERE p."shopDomain" = :shop) AS variants
+    """,
     StatsMetric.priced_above_competitor: """
         SELECT COUNT(*) AS count
         FROM "ShopifyVariant" v
@@ -80,6 +91,10 @@ def get_stats(
     sql = _QUERIES[metric]
     with get_db() as s:
         rows = s.execute(sa_text(sql), {"shop": shop_domain}).mappings().all()
+
+    if metric == StatsMetric.catalog_summary:
+        r = rows[0]
+        return {"products": int(r["products"]), "variants": int(r["variants"])}
 
     if metric in (StatsMetric.priced_above_competitor, StatsMetric.priced_below_competitor):
         return {"count": int(rows[0]["count"])}

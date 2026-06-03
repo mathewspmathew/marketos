@@ -1,6 +1,19 @@
 from services.chatbot_svc.tools.stats import StatsMetric, get_stats
 
 
+def test_catalog_summary_counts_products_and_variants(seed_shop):
+    # seed_shop fixture creates exactly one product with one variant.
+    res = get_stats(seed_shop, StatsMetric.catalog_summary)
+    assert res == {"products": 1, "variants": 1}
+
+
+def test_catalog_summary_is_shop_scoped(seed_shop, seed_other_shop):
+    # The other shop's product/variant must not leak into seed_shop's counts.
+    res = get_stats(seed_shop, StatsMetric.catalog_summary)
+    assert res["products"] == 1
+    assert res["variants"] == 1
+
+
 def test_priced_above_competitor_returns_count(seed_shop):
     res = get_stats(seed_shop, StatsMetric.priced_above_competitor)
     assert "count" in res
