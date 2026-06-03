@@ -89,3 +89,37 @@ def test_delete_all_sessions_clears_only_this_shop(seed_shop, seed_other_shop):
             assert s.get(ChatSession, theirs) is not None
     finally:
         _drop(a, b, theirs)
+
+
+def test_get_turns_returns_chronological_panel_shapes(seed_shop):
+    sid = _mk_session(seed_shop, title="Chat")
+    with get_db() as s:
+        base = datetime.now(timezone.utc)
+        s.add(ChatMessage(id=uuid.uuid4().hex, sessionId=sid, role="user",
+                          content={"text": "hello"}, createdAt=base))
+        s.add(ChatMessage(id=uuid.uuid4().hex, sessionId=sid, role="assistant",
+                          content={"text": "hi there"},
+                          createdAt=base + timedelta(seconds=1)))
+        s.add(ChatMessage(id=uuid.uuid4().hex, sessionId=sid, role="assistant",
+                          content={"ask": {"question": "Which vendor?", "options": ["Nike"]}},
+                          createdAt=base + timedelta(seconds=2)))
+        s.add(ChatMessage(id=uuid.uuid4().hex, sessionId=sid, role="tool",
+                          content={"tool_name": "apply"},
+                          createdAt=base + timedelta(seconds=3)))
+    try:
+        turns = S.get_turns(seed_shop, sid)
+        assert turns == [
+            {"role": "user", "text": "hello"},
+            {"role": "assistant", "text": "hi there"},
+            {"role": "assistant", "ask": {"question": "Which vendor?", "options": ["Nike"]}},
+        ]  # tool row is skipped
+    finally:
+        _drop(sid)
+
+
+def test_get_turns_refuses_other_shop(seed_shop, seed_other_shop):
+    theirs = _mk_session(seed_other_shop, title="Theirs")
+    try:
+        assert S.get_turns(seed_shop, theirs) is None
+    finally:
+        _drop(theirs)

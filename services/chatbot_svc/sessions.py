@@ -55,3 +55,34 @@ def delete_all_sessions(shop: str) -> int:
             .filter(ChatSession.shopDomain == shop)
             .delete(synchronize_session=False)
         )
+
+
+def get_turns(shop: str, session_id: str) -> list[dict] | None:
+    """Return a session's messages as front-end turn objects, oldest first.
+
+    Returns None if the session does not exist or is not owned by `shop`.
+    Tool rows and malformed bodies are skipped. Shapes match what the SSE
+    stream emits: {role:"user", text}, {role:"assistant", text},
+    {role:"assistant", ask:{question, options}}.
+    """
+    with get_db() as s:
+        sess = s.get(ChatSession, session_id)
+        if sess is None or sess.shopDomain != shop:
+            return None
+        rows = (
+            s.query(ChatMessage)
+            .filter(ChatMessage.sessionId == session_id)
+            .order_by(ChatMessage.createdAt)
+            .all()
+        )
+        turns: list[dict] = []
+        for row in rows:
+            content = row.content if isinstance(row.content, dict) else {}
+            if row.role == "user" and content.get("text"):
+                turns.append({"role": "user", "text": content["text"]})
+            elif row.role == "assistant" and content.get("text"):
+                turns.append({"role": "assistant", "text": content["text"]})
+            elif row.role == "assistant" and isinstance(content.get("ask"), dict):
+                turns.append({"role": "assistant", "ask": content["ask"]})
+            # tool rows and anything else are skipped
+        return turns
