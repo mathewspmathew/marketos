@@ -29,6 +29,7 @@ from services.chatbot_svc.agent import agent
 from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps
 from services.chatbot_svc.titling import maybe_set_title
+from services.chatbot_svc import sessions as sessions_svc
 from services.chatbot_svc.tools.ask import AskUserRequested
 from services.common.db import get_db
 from services.common.models import ChatMessage, ChatPreview, ChatSession
@@ -213,3 +214,32 @@ async def apply_callback(
             )
 
     return {"ok": True}
+
+
+@app.get("/sessions")
+async def list_sessions(shop_domain: str):
+    """List a shop's chat sessions, newest first, with message counts."""
+    return {"sessions": sessions_svc.list_sessions(shop_domain)}
+
+
+@app.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, shop_domain: str):
+    """Return a chat's messages as front-end turns. 404 if not owned by shop."""
+    turns = sessions_svc.get_turns(shop_domain, session_id)
+    if turns is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"turns": turns}
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, shop_domain: str):
+    """Delete one chat owned by shop. 404 if not found / not owned."""
+    if not sessions_svc.delete_session(shop_domain, session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"ok": True}
+
+
+@app.delete("/sessions")
+async def delete_all_sessions(shop_domain: str):
+    """Delete all chats for a shop."""
+    return {"ok": True, "deleted": sessions_svc.delete_all_sessions(shop_domain)}
