@@ -9,9 +9,7 @@ from services.common.models import ChatSession
 from services.chatbot_svc.tools.preview import (
     preview_price_change, preview_dynamic_pricing_toggle,
 )
-from services.chatbot_svc.tools.apply import (
-    apply_price_change, apply_dynamic_pricing_toggle,
-)
+from services.chatbot_svc.tools.apply import apply_price_change
 from services.chatbot_svc.tools.stats import get_stats, StatsMetric
 from services.chatbot_svc.schemas import ScopeFilter, PriceChange
 from services.chatbot_svc.deps import AgentDeps
@@ -65,29 +63,21 @@ async def test_full_price_change_flow(seed_shop, session_row):
 
 @pytest.mark.asyncio
 async def test_full_dynamic_pricing_toggle_flow(seed_shop, session_row):
-    """(a) Toggle: preview → apply for dynamic_pricing_toggle."""
+    """(a) Toggle: the agent previews and STOPS — applying is the card's job, so
+    there is no Python apply step. Assert a pending preview persists for the card."""
     prev = preview_dynamic_pricing_toggle(
         seed_shop, session_row,
         ScopeFilter(vendor="Boat"),
         enabled=True,
     )
     assert prev.count >= 1
-    async with respx.mock(base_url="http://rr.test") as r:
-        succeeded_product_ids = [row.product_id for row in prev.sample_rows]
-        route = r.post("/internal/apply-chat-flag").mock(
-            return_value=Response(
-                200,
-                json={"ok": True, "preview_id": prev.preview_id,
-                      "succeeded": succeeded_product_ids, "failed": []},
-            )
-        )
-        deps = _deps(seed_shop, session_row)
-        res = await apply_dynamic_pricing_toggle(deps, prev.preview_id)
-        await deps.http.aclose()
-    assert res.preview_id == prev.preview_id
-    assert route.called
-    body = json.loads(route.calls[0].request.content)
-    assert body["preview_id"] == prev.preview_id
+    assert prev.kind == "dynamic_pricing_toggle"
+    # A pending (unapplied) ChatPreview row exists for the card to apply.
+    with get_db() as s:
+        from services.common.models import ChatPreview
+        row = s.get(ChatPreview, prev.preview_id)
+        assert row is not None
+        assert row.appliedAt is None
 
 
 def test_intent_c_stats_no_confirm_required(seed_shop):

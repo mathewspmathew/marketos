@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from services.chatbot_svc.tools.apply import apply_price_change, apply_dynamic_pricing_toggle
+from services.chatbot_svc.tools.apply import apply_price_change
 from services.chatbot_svc.deps import AgentDeps
 
 
@@ -33,14 +33,6 @@ def test_apply_price_change_posts_to_rr():
     assert args[0] == "http://rr.test/internal/apply-chat-price"
     assert kwargs["headers"]["x-internal-token"] == "tok"
     assert kwargs["json"] == {"preview_id": "p-1", "applied_by": "u-1"}
-
-
-def test_apply_flag_posts_to_rr():
-    deps = _fake_deps({"ok": True, "preview_id": "p-2", "succeeded": ["prod-1"], "failed": []})
-    res = asyncio.run(apply_dynamic_pricing_toggle(deps, "p-2"))
-    assert res.preview_id == "p-2"
-    args, _ = deps.http.post.call_args
-    assert args[0] == "http://rr.test/internal/apply-chat-flag"
 
 
 def test_apply_raises_on_not_ok():

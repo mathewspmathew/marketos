@@ -12,14 +12,21 @@ def test_all_expected_tools_registered():
     expected = {
         "structured_search", "semantic_search", "get_variant", "get_stats",
         "preview_price_change", "preview_dynamic_pricing_toggle",
-        "apply_price_change", "apply_dynamic_pricing_toggle", "ask_user",
+        "apply_price_change", "ask_user",
     }
     assert expected <= _tool_names()
 
 
+def test_toggle_apply_tool_absent():
+    """The toggle is applied only via the interactive card. The agent must NOT
+    expose a Python apply tool for it — its presence let the model bypass the
+    'preview then STOP' rule and hit the unreachable host.docker.internal path."""
+    assert "apply_dynamic_pricing_toggle" not in _tool_names()
+
+
 def test_apply_tools_only_take_preview_id():
     """Invariant: apply_* must NOT accept a scope_filter — only preview_id."""
-    for name in ("apply_price_change", "apply_dynamic_pricing_toggle"):
+    for name in ("apply_price_change",):
         tool = agent._function_toolset.tools[name]
         # Tool exposes its JSON schema for the arguments
         schema = tool.function_schema.json_schema

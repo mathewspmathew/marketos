@@ -121,7 +121,7 @@ def preview_dynamic_pricing_toggle(
     scope: ScopeFilter,
     enabled: bool,
 ) -> PreviewSummary:
-    """Preview enabling/disabling dynamic pricing on matched products — MUST be called before apply_dynamic_pricing_toggle."""
+    """Preview enabling/disabling dynamic pricing on matched products. Surfaces an interactive card; the merchant's Continue on the card performs the change (the agent does not apply toggles itself)."""
     return t_preview.preview_dynamic_pricing_toggle(
         ctx.deps.shop_domain,
         ctx.deps.session_id,
@@ -137,15 +137,6 @@ async def apply_price_change(
 ) -> ApplyResult:
     """Apply a previously previewed price change. Requires preview_id from preview_price_change."""
     return await t_apply.apply_price_change(ctx.deps, preview_id)
-
-
-@agent.tool
-async def apply_dynamic_pricing_toggle(
-    ctx: RunContext[AgentDeps],
-    preview_id: str,
-) -> ApplyResult:
-    """Apply a previously previewed dynamic-pricing toggle. Requires preview_id from preview_dynamic_pricing_toggle."""
-    return await t_apply.apply_dynamic_pricing_toggle(ctx.deps, preview_id)
 
 
 @agent.tool

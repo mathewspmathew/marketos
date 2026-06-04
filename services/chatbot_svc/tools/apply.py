@@ -22,7 +22,3 @@ async def _post_apply(deps: AgentDeps, path: str, preview_id: str) -> ApplyResul
 
 async def apply_price_change(deps: AgentDeps, preview_id: str) -> ApplyResult:
     return await _post_apply(deps, "/internal/apply-chat-price", preview_id)
-
-
-async def apply_dynamic_pricing_toggle(deps: AgentDeps, preview_id: str) -> ApplyResult:
-    return await _post_apply(deps, "/internal/apply-chat-flag", preview_id)
