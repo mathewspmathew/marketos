@@ -41,13 +41,11 @@ from services.chatbot_svc.schemas import (
     ScopeFilter,
     PriceChange,
     PreviewSummary,
-    ApplyResult,
     VariantSummary,
 )
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
 from services.chatbot_svc.tools import preview as t_preview
-from services.chatbot_svc.tools import apply as t_apply
 from services.chatbot_svc.tools.ask import ask_user as _ask_user_raw
 
 
@@ -106,7 +104,7 @@ def preview_price_change(
     scope: ScopeFilter,
     change: PriceChange,
 ) -> PreviewSummary:
-    """Preview a price change on the matched variants — MUST be called before apply_price_change."""
+    """Preview a price change on the matched variants. Surfaces a preview card whose Apply button performs the change (the agent does not apply prices itself)."""
     return t_preview.preview_price_change(
         ctx.deps.shop_domain,
         ctx.deps.session_id,
@@ -128,15 +126,6 @@ def preview_dynamic_pricing_toggle(
         scope,
         enabled,
     )
-
-
-@agent.tool
-async def apply_price_change(
-    ctx: RunContext[AgentDeps],
-    preview_id: str,
-) -> ApplyResult:
-    """Apply a previously previewed price change. Requires preview_id from preview_price_change."""
-    return await t_apply.apply_price_change(ctx.deps, preview_id)
 
 
 @agent.tool
