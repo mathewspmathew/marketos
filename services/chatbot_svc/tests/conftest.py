@@ -63,6 +63,15 @@ def seed_other_shop():
     variant_id = "other-shop-variant"
 
     with get_db() as s:
+        # Defensive: these are fixed PKs, so a crashed prior teardown could leave
+        # them behind and duplicate-key on insert. Clear any stragglers first
+        # (FK-safe order: variant before product).
+        s.query(ShopifyVariant).filter(ShopifyVariant.id == variant_id).delete(
+            synchronize_session=False
+        )
+        s.query(ShopifyProduct).filter(ShopifyProduct.id == product_id).delete(
+            synchronize_session=False
+        )
         existing = s.get(ShopifyUser, shop)
         if not existing:
             s.add(ShopifyUser(shopDomain=shop))

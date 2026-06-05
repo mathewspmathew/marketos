@@ -20,10 +20,14 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
+from typing import Literal, Optional
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+
+from services.chatbot_svc.schemas import QueryCandidate
+from services.chatbot_svc.tools import query_studio as t_query_studio
 
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.context import build_context
@@ -51,6 +55,15 @@ class ChatRequest(BaseModel):
     user_id: str | None = None
     session_id: str | None = None
     message: str
+
+
+class QueryStudioRequest(BaseModel):
+    shop_domain: str
+    product_id: str
+    focus: str = ""
+    mode: Literal["propose", "refine"] = "propose"
+    prior: Optional[list[QueryCandidate]] = None
+    instruction: Optional[str] = None
 
 
 class ApplyCallback(BaseModel):
@@ -85,6 +98,23 @@ def _ensure_session(
             )
         )
     return sid
+
+
+def _preview_event_data(preview: ChatPreview) -> dict:
+    """Build the SSE `preview` payload from a ChatPreview row.
+
+    Must include `change` so the client card can tell enable from disable
+    (DynamicPricingCard branches on change.enabled) and `variantIds` for the
+    affected count / frozen ids.
+    """
+    return {
+        "preview_id": preview.id,
+        "kind": preview.kind,
+        "change": preview.change,
+        "variantIds": preview.variantIds,
+        "summary": preview.summary,
+        "expires_at": preview.expiresAt.isoformat(),
+    }
 
 
 def _record(session_id: str, role: str, content: dict) -> None:
@@ -163,14 +193,7 @@ async def chat(req: ChatRequest):
                 if last_preview:
                     yield {
                         "event": "preview",
-                        "data": json.dumps(
-                            {
-                                "preview_id": last_preview.id,
-                                "kind": last_preview.kind,
-                                "summary": last_preview.summary,
-                                "expires_at": last_preview.expiresAt.isoformat(),
-                            }
-                        ),
+                        "data": json.dumps(_preview_event_data(last_preview)),
                     }
 
             yield {"event": "done", "data": "{}"}
@@ -183,6 +206,20 @@ async def chat(req: ChatRequest):
             await deps.http.aclose()
 
     return EventSourceResponse(event_stream())
+
+
+@app.post("/query-studio")
+async def query_studio(req: QueryStudioRequest):
+    """Stateless Query Studio turn: propose 3 candidate competitor-search queries,
+    or refine the prior ones per an instruction. Shop-scoped via the engine."""
+    if req.mode == "refine":
+        cands = t_query_studio.refine_queries(
+            req.shop_domain, req.product_id, req.focus,
+            req.prior or [], req.instruction or "",
+        )
+    else:
+        cands = t_query_studio.propose_queries(req.shop_domain, req.product_id, req.focus)
+    return {"candidates": [c.model_dump() for c in cands]}
 
 
 @app.post("/apply-callback")

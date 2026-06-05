@@ -154,3 +154,32 @@ def test_serper_not_called_when_disabled(seed_shop, monkeypatch):
     qs.propose_queries(seed_shop, _product_id(seed_shop), "", n=3,
                        use_serper=False, client=_fake_client(_GOOD))
     assert calls["n"] == 0
+
+
+def test_refine_queries_returns_candidates(seed_shop):
+    from services.chatbot_svc.tools import query_studio as qs
+    from services.chatbot_svc.schemas import QueryCandidate
+    prior = [QueryCandidate(query="slim chinos", confidence=6, reason="x")]
+    out = qs.refine_queries(seed_shop, _product_id(seed_shop), "chinos", prior,
+                            "make them more premium", n=3, client=_fake_client(_GOOD))
+    assert len(out) == 3
+    assert out[0].query == "slim chino pants"
+
+
+def test_refine_includes_prior_and_instruction(seed_shop):
+    from services.chatbot_svc.tools import query_studio as qs
+    from services.chatbot_svc.schemas import QueryCandidate
+    client = _fake_client(_GOOD)
+    prior = [QueryCandidate(query="slim chinos", confidence=6, reason="x")]
+    qs.refine_queries(seed_shop, _product_id(seed_shop), "", prior,
+                      "cheaper options", n=3, client=client)
+    user_msg = client.last_kwargs["messages"][1]["content"]
+    assert "slim chinos" in user_msg
+    assert "cheaper options" in user_msg
+
+
+def test_refine_other_shop_empty(seed_shop, seed_other_shop):
+    from services.chatbot_svc.tools import query_studio as qs
+    out = qs.refine_queries(seed_other_shop, _product_id(seed_shop), "", [], "x",
+                            n=3, client=_fake_client(_GOOD))
+    assert out == []

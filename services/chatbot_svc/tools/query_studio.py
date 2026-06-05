@@ -86,6 +86,40 @@ def _fetch_web_brands(g: QueryGrounding, limit: int = 8) -> list[str]:
     return out
 
 
+def _complete(user_payload: dict, n: int, client) -> list[QueryCandidate]:
+    """Run one Groq JSON call for `user_payload` and parse up to `n` candidates.
+    Degrades to [] on malformed / non-dict JSON; clamps confidence to 0-10."""
+    client = client or _get_client()
+    resp = client.chat.completions.create(
+        model=_MODEL,
+        messages=[
+            {"role": "system", "content": _PROMPT},
+            {"role": "user", "content": json.dumps(user_payload)},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.4,
+    )
+    try:
+        data = json.loads(resp.choices[0].message.content)
+        candidates = data.get("candidates") if isinstance(data, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+    out: list[QueryCandidate] = []
+    for c in (candidates or [])[:n]:
+        if not isinstance(c, dict):
+            continue
+        query = str(c.get("query", "")).strip()
+        if not query:
+            continue
+        try:
+            conf = max(0, min(10, int(float(c.get("confidence", 0) or 0))))
+        except (ValueError, TypeError):
+            conf = 0
+        out.append(QueryCandidate(query=query, confidence=conf, reason=str(c.get("reason", "")).strip()))
+    return out
+
+
 def propose_queries(
     shop_domain: str,
     product_id: str,
@@ -109,45 +143,37 @@ def propose_queries(
     if use_serper and len(brands) < 2:
         brands += _fetch_web_brands(g)
 
-    client = client or _get_client()
-    user = json.dumps({
-        "product": {
-            "title": g.title,
-            "vendor": g.vendor,
-            "type": g.product_type,
-            "tags": g.tags,
-        },
+    return _complete({
+        "product": {"title": g.title, "vendor": g.vendor, "type": g.product_type, "tags": g.tags},
         "known_brands": brands,
         "focus": focus_prompt or "",
         "n": n,
-    })
-    resp = client.chat.completions.create(
-        model=_MODEL,
-        messages=[
-            {"role": "system", "content": _PROMPT},
-            {"role": "user", "content": user},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.4,
-    )
-    # The LLM can return malformed JSON, a top-level array, or a non-numeric
-    # confidence. Degrade gracefully to [] rather than crashing the caller.
-    try:
-        data = json.loads(resp.choices[0].message.content)
-        candidates = data.get("candidates") if isinstance(data, dict) else None
-    except (json.JSONDecodeError, TypeError):
+    }, n, client)
+
+
+def refine_queries(
+    shop_domain: str,
+    product_id: str,
+    focus_prompt: str,
+    prior: list[QueryCandidate],
+    instruction: str,
+    n: int = 3,
+    *,
+    client=None,
+) -> list[QueryCandidate]:
+    """Revise `prior` candidates per the merchant's `instruction`, same grounding.
+    No extra Serper call on refine. Returns [] if the product is not in this shop."""
+    g = gather_grounding(shop_domain, product_id)
+    if g is None:
         return []
 
-    out: list[QueryCandidate] = []
-    for c in (candidates or [])[:n]:
-        if not isinstance(c, dict):
-            continue
-        query = str(c.get("query", "")).strip()
-        if not query:
-            continue
-        try:
-            conf = max(0, min(10, int(float(c.get("confidence", 0) or 0))))
-        except (ValueError, TypeError):
-            conf = 0
-        out.append(QueryCandidate(query=query, confidence=conf, reason=str(c.get("reason", "")).strip()))
-    return out
+    prior_payload = [{"query": c.query, "confidence": c.confidence, "reason": c.reason} for c in prior]
+
+    return _complete({
+        "product": {"title": g.title, "vendor": g.vendor, "type": g.product_type, "tags": g.tags},
+        "known_brands": list(g.known_brands),
+        "focus": focus_prompt or "",
+        "prior": prior_payload,
+        "instruction": instruction or "",
+        "n": n,
+    }, n, client)
