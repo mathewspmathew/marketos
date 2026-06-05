@@ -3,6 +3,7 @@ import os
 os.environ.setdefault("GROQ_API_KEY", "test")
 
 import uuid
+import pytest
 from datetime import datetime, timezone
 
 from services.common.db import get_db
@@ -55,3 +56,22 @@ def test_disable_preview_carries_delete_counts(seed_shop):
             assert row.change == {"enabled": False}
     finally:
         _cleanup(sid)
+
+
+def test_preview_toggle_raises_on_empty_scope(seed_shop):
+    from services.chatbot_svc.tools.preview import preview_dynamic_pricing_toggle
+    from services.chatbot_svc.schemas import ScopeFilter
+    with pytest.raises(RuntimeError, match="nothing to"):
+        preview_dynamic_pricing_toggle(
+            seed_shop, "sess-empty", ScopeFilter(product_ids=["gid://does-not-exist"]), enabled=True
+        )
+
+
+def test_preview_price_raises_on_empty_scope(seed_shop):
+    from services.chatbot_svc.tools.preview import preview_price_change
+    from services.chatbot_svc.schemas import ScopeFilter, PriceChange
+    with pytest.raises(RuntimeError, match="nothing to"):
+        preview_price_change(
+            seed_shop, "sess-empty", ScopeFilter(product_ids=["gid://does-not-exist"]),
+            PriceChange(type="percent", value=10),
+        )

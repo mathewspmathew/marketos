@@ -41,11 +41,15 @@ from services.chatbot_svc.schemas import (
     ScopeFilter,
     PriceChange,
     PreviewSummary,
+    ApplyResult,
     VariantSummary,
+    ResolvedProduct,
+    DynamicPricingStatus,
 )
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
 from services.chatbot_svc.tools import preview as t_preview
+from services.chatbot_svc.tools import status as t_status
 from services.chatbot_svc.tools.ask import ask_user as _ask_user_raw
 
 
@@ -57,6 +61,30 @@ agent: Agent[AgentDeps, str] = Agent(
     deps_type=AgentDeps,
     system_prompt=_PROMPT,
 )
+
+
+@agent.tool
+def resolve_product(
+    ctx: RunContext[AgentDeps],
+    reference: str,
+) -> list[ResolvedProduct]:
+    """Resolve a product the user named (e.g. 'Luxury Tailored Pant') to REAL products
+    in this shop. Call this BEFORE any preview/apply when the user refers to a product,
+    and use ONLY the product_id / variant_ids it returns — never invent ids.
+    Returns: [] = not found (tell the user); 1 item = use it; >1 = call ask_user to pick."""
+    return t_search.resolve_product(ctx.deps.shop_domain, reference)
+
+
+@agent.tool
+def get_dynamic_pricing_status(
+    ctx: RunContext[AgentDeps],
+    product_id: str,
+) -> DynamicPricingStatus | None:
+    """Report where a product stands in the dynamic-pricing pipeline (OFF / SETTING_UP /
+    DISCOVERING / PROCESSING / READY / NEEDS_ATTENTION) with competitor + match counts.
+    Call this with a product_id from resolve_product before enabling/changing dynamic pricing.
+    Returns None if the product_id is not in this shop."""
+    return t_status.get_dynamic_pricing_status(ctx.deps.shop_domain, product_id)
 
 
 @agent.tool

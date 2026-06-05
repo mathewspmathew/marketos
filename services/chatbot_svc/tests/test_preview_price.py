@@ -56,8 +56,10 @@ def test_preview_freezes_variant_ids(seed_shop, chat_session):
                len(row.variantIds) >= len(res.sample_rows)
 
 
-def test_empty_scope_returns_count_zero(seed_shop, chat_session):
-    res = preview_price_change(seed_shop, chat_session,
-                               ScopeFilter(vendor="NonExistentVendor"),
-                               PriceChange(type="percent", value=10))
-    assert res.count == 0
+def test_empty_scope_raises(seed_shop, chat_session):
+    # An empty match set must not build a 0-match preview; it raises so the
+    # agent resolves the product first instead of "applying to 0 items".
+    with pytest.raises(RuntimeError, match="nothing to"):
+        preview_price_change(seed_shop, chat_session,
+                             ScopeFilter(vendor="NonExistentVendor"),
+                             PriceChange(type="percent", value=10))

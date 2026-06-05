@@ -32,3 +32,13 @@ def test_ask_user_registered():
 def test_get_stats_does_not_require_confirmation():
     """get_stats is a plain read tool; presence alone is the invariant."""
     assert "get_stats" in _tool_names()
+
+
+def test_resolve_product_tool_registered():
+    from services.chatbot_svc.agent import agent
+    assert "resolve_product" in list(agent._function_toolset.tools)
+
+
+def test_get_dynamic_pricing_status_tool_registered():
+    from services.chatbot_svc.agent import agent
+    assert "get_dynamic_pricing_status" in list(agent._function_toolset.tools)

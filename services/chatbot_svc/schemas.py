@@ -38,6 +38,34 @@ class VariantSummary(BaseModel):
     dynamic_pricing_enabled: bool
 
 
+class ResolvedProduct(BaseModel):
+    """A real product matched from a free-text reference (product-level)."""
+    product_id: str
+    title: str
+    vendor: Optional[str] = None
+    variant_ids: list[str]
+    dynamic_pricing_enabled: bool
+    fuzzy: bool = False  # True when matched by similarity (typo/partial), not exact title
+
+
+class DynamicPricingStatus(BaseModel):
+    """Where a product stands in the dynamic-pricing pipeline (merchant-facing)."""
+    product_id: str
+    title: str
+    status: Literal["OFF", "SETTING_UP", "DISCOVERING", "PROCESSING", "READY", "NEEDS_ATTENTION"]
+    competitors_found: int
+    matches: int
+    last_discovery_at: Optional[str] = None
+    detail: str
+
+
+class QueryCandidate(BaseModel):
+    """One proposed competitor-search query with a rough self-confidence."""
+    query: str
+    confidence: int = Field(ge=0, le=10, description="0-10 rough belief it surfaces real competitors")
+    reason: str
+
+
 class PreviewSummary(BaseModel):
     preview_id: str
     kind: Literal["price_change", "dynamic_pricing_toggle"]

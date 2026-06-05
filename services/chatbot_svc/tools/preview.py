@@ -27,6 +27,11 @@ def _compute_new_price(current: float, change: PriceChange) -> float:
 def preview_price_change(shop_domain: str, session_id: str,
                          scope: ScopeFilter, change: PriceChange) -> PreviewSummary:
     rows = structured_search(shop_domain, scope, limit=1000)
+    if not rows:
+        raise RuntimeError(
+            "No products in your store match that selection, so there's nothing to "
+            "preview. Resolve the product with resolve_product first."
+        )
     variant_ids = [r.variant_id for r in rows]
     new_prices = [_compute_new_price(r.current_price, change) for r in rows]
     sample = rows[:10]
@@ -55,14 +60,12 @@ def preview_price_change(shop_domain: str, session_id: str,
             expiresAt=now + PREVIEW_TTL,
             createdAt=now,
         ))
-    if rows:
-        human = (
-            f"I'll change prices on {len(rows)} variant(s) "
-            f"(min ${summary_dict['minNew']}, max ${summary_dict['maxNew']}, "
-            f"avg ${summary_dict['avgNew']:.2f}). Apply?"
-        )
-    else:
-        human = "No variants match that scope. Want to broaden it?"
+    # rows is guaranteed non-empty here: the empty-match guard above raises otherwise.
+    human = (
+        f"I'll change prices on {len(rows)} variant(s) "
+        f"(min ${summary_dict['minNew']}, max ${summary_dict['maxNew']}, "
+        f"avg ${summary_dict['avgNew']:.2f}). Apply?"
+    )
     return PreviewSummary(
         preview_id=preview_id, kind="price_change", count=len(rows),
         sample_rows=sample, min_new=summary_dict["minNew"],
@@ -75,6 +78,11 @@ def preview_price_change(shop_domain: str, session_id: str,
 def preview_dynamic_pricing_toggle(shop_domain: str, session_id: str,
                                    scope: ScopeFilter, enabled: bool) -> PreviewSummary:
     rows = structured_search(shop_domain, scope, limit=1000)
+    if not rows:
+        raise RuntimeError(
+            "No products in your store match that selection, so there's nothing to "
+            "enable or disable. Resolve the product with resolve_product first."
+        )
     product_ids = sorted({r.product_id for r in rows})
     sample = rows[:10]
     now = datetime.now(timezone.utc)

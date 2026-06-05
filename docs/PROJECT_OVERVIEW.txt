@@ -33,16 +33,12 @@ How a merchant uses it (the journey)
    recognised as the same item as a rival's listing, even when the titles
    and photos are different.
 
-4. For each matched product, MarketOS suggests a new price. The suggestion
-   takes into account what competitors are charging and how sensitive the
-   product is to price changes (price elasticity).
+4. For each matched product, MarketOS suggests a new price. The suggestion price applied to store
+   takes into account automatically if it passes threshold what competitors are charging and how sensitive the
+   product is to price changes (price elasticity).  
 
 5. The merchant reviews suggestions on a clean dashboard, approves the ones
    they like, and the new prices are pushed straight back into Shopify.
-
-6. The merchant also gets alerts when something important changes — a
-   competitor drops their price, a new rival product appears, or a match
-   needs human review.
 
 
 The main pages the merchant sees
@@ -161,7 +157,8 @@ place.
 
 Alerts
 ------
-When something noteworthy happens in the market — a competitor drops
+When something noteworthwatch them, match them, build market stats, suggest prices, surface
+y happens in the market — a competitor drops
 their price sharply, a new rival listing appears, a match needs review —
 the merchant sees it on an alerts screen so nothing important is missed.
 
@@ -178,7 +175,6 @@ applying a suggested price, with the merchant's confirmation.
 Where things stand
 ------------------
 The end-to-end loop — connect store, pick products, find competitors,
-watch them, match them, build market stats, suggest prices, surface
 alerts, and let the merchant apply changes — is in place. The current
 version is intentionally suggestion-first: MarketOS recommends, the
 merchant decides, and only then are prices written back to Shopify.

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from sqlalchemy import select, text as sa_text
+from sqlalchemy import func, select, text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from services.common.db import get_db
 from services.common.models import ShopifyProduct, ShopifyVariant
-from services.chatbot_svc.schemas import ScopeFilter, VariantSummary
+from services.chatbot_svc.schemas import ScopeFilter, VariantSummary, ResolvedProduct
 from services.common.vertex_embed import embed_text as _embed_text
 
 
@@ -70,6 +70,14 @@ def structured_search(
 def semantic_search(shop_domain: str, query: str, top_k: int = 20) -> list[VariantSummary]:
     """Vector similarity search against ShopifyEmbedding.vectorText, scoped to shop_domain."""
     vec = _embed_text(query)
+    if vec is None:
+        # Embedding failed (e.g. missing Vertex credentials) or query was blank.
+        # Surface a legible error instead of crashing on iteration over None;
+        # the message nudges the agent to fall back to structured_search.
+        raise RuntimeError(
+            "semantic search unavailable: text embedding failed "
+            "(check Vertex credentials). Use structured_search instead."
+        )
     vec_lit = "[" + ",".join(str(x) for x in vec) + "]"
     sql = sa_text("""
         SELECT v.id AS variant_id, p.id AS product_id, p.title, p.vendor,
@@ -121,3 +129,84 @@ def get_variant(shop_domain: str, variant_id: str) -> VariantSummary | None:
             current_price=float(v.currentPrice or 0),
             dynamic_pricing_enabled=bool(p.dynamicPricingEnabled),
         )
+
+
+DEFAULT_SIM_THRESHOLD = 0.3
+
+
+def resolve_product(
+    shop_domain: str,
+    reference: str,
+    limit: int = 10,
+    threshold: float = DEFAULT_SIM_THRESHOLD,
+) -> list[ResolvedProduct]:
+    """Resolve a free-text product reference to real ShopifyProducts in this shop.
+
+    Exact (case-insensitive) title match wins and is returned as a non-fuzzy match.
+    Otherwise fall back to trigram word-similarity (pg_trgm), which tolerates typos,
+    dropped/reordered words, and partial names; those results are flagged fuzzy=True
+    and ranked by similarity. Empty list means no match above `threshold`.
+
+    Scoped to shop_domain so a reference can never resolve to another merchant's product.
+    """
+    ref = (reference or "").strip()
+    if not ref:
+        return []
+
+    with get_db() as s:
+        exact = (
+            s.execute(
+                select(ShopifyProduct).where(
+                    ShopifyProduct.shopDomain == shop_domain,
+                    func.lower(ShopifyProduct.title) == ref.lower(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        is_fuzzy = not exact
+        if exact:
+            products = exact
+        else:
+            sim_sql = sa_text(
+                """
+                SELECT id
+                FROM "ShopifyProduct"
+                WHERE "shopDomain" = :shop
+                  AND word_similarity(lower(:ref), lower(title)) >= :thr
+                ORDER BY word_similarity(lower(:ref), lower(title)) DESC
+                LIMIT :lim
+                """
+            )
+            ids = [
+                row[0]
+                for row in s.execute(
+                    sim_sql,
+                    {"shop": shop_domain, "ref": ref, "thr": threshold, "lim": limit},
+                ).all()
+            ]
+            # ids are already similarity-ranked; the comprehension keeps that order.
+            # Skip any product that vanished between the SELECT and the fetch.
+            products = [
+                p for p in (s.get(ShopifyProduct, pid) for pid in ids) if p is not None
+            ]
+
+        out: list[ResolvedProduct] = []
+        for p in products:
+            vids = (
+                s.execute(select(ShopifyVariant.id).where(ShopifyVariant.productId == p.id))
+                .scalars()
+                .all()
+            )
+            out.append(
+                ResolvedProduct(
+                    product_id=p.id,
+                    title=p.title,
+                    vendor=p.vendor,
+                    variant_ids=list(vids),
+                    dynamic_pricing_enabled=bool(p.dynamicPricingEnabled),
+                    fuzzy=is_fuzzy,
+                )
+            )
+        return out
