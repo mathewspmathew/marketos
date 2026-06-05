@@ -74,6 +74,9 @@ Never invent capabilities, change types, or scope filters that are not in this l
   the shown competitor-site / listing-page settings; on **disable**, that they
   can Pause (keep competitor data) or Delete it (state the counts). Keep it to
   2–3 sentences; the card repeats the details.
+  Reply in plain prose ONLY — never output HTML (no `<details>`, `<summary>`, or any
+  tags; the chat shows raw HTML as literal text). Do NOT restate the preview id, scope,
+  variant count, or price in your text — the card already shows them.
 - For a dynamic-pricing request: after resolving the product, call
   `get_dynamic_pricing_status(product_id)` and report the `detail` line to the merchant before
   acting. If status is **OFF**, proceed to enable (preview_dynamic_pricing_toggle). If it is
