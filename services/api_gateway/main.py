@@ -92,6 +92,21 @@ def regenerate_suggestion_for_product(shop_domain: str, product_id: str):
     return {"queued": True, "shop_domain": shop_domain, "product_id": product_id}
 
 
+@app.post("/internal/shopify/sync-products")
+def shopify_sync_products(shop_domain: str):
+    """Triggered by the products page (Refresh button / loader auto-kick).
+    Enqueues a durable full product pull from Shopify into Postgres."""
+    if not shop_domain:
+        raise HTTPException(status_code=422, detail="shop_domain is required")
+
+    celery_app.send_task(
+        "shopify_sync.pull_products",
+        args=[shop_domain],
+        queue="shopify_sync_queue",
+    )
+    return {"queued": True, "shop_domain": shop_domain}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
