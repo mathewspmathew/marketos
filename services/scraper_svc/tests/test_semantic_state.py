@@ -68,3 +68,37 @@ def test_finalize_done_cas_version_mismatch_discards():
         assert st2 == "DONE"
         s.execute(text('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
         s.execute(text('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
+
+
+def test_task_discards_when_version_moved(monkeypatch):
+    import uuid as _uuid
+    from sqlalchemy import text as _t
+    with get_db() as s:
+        shop = _setup_shop(s)
+        pid = _mk_product(s, shop, "QUEUED", version=1)
+        vid = f"gid://test/Variant/{_uuid.uuid4()}"
+        s.execute(_t('''INSERT INTO "ShopifyVariant" (id,"productId",title,"currentPrice","semanticText","updatedAt")
+                        VALUES (:i,:p,'v',10,NULL,NOW())'''), {"i": vid, "p": pid})
+        s.commit()
+
+    monkeypatch.setattr(sem, "_groq_semantic_call", lambda *a, **k: {sem._short_id(vid): "fp text"})
+    monkeypatch.setattr(sem, "_groq_search_query", lambda **k: "q")
+    orig_finalize = sem._finalize_semantic_done
+    def bump_then_finalize(session, product_id, version_read):
+        with get_db() as s2:
+            s2.execute(_t('UPDATE "ShopifyProduct" SET "semanticVersion"=99 WHERE id=:i'), {"i": product_id}); s2.commit()
+        return orig_finalize(session, product_id, version_read)
+    monkeypatch.setattr(sem, "_finalize_semantic_done", bump_then_finalize)
+    monkeypatch.setattr(sem.app, "send_task", lambda *a, **k: None)
+
+    sem.generate_shopify_variant_semantics.run(pid)
+
+    with get_db() as s:
+        st, semt = s.execute(_t('''SELECT p."semanticStatus", v."semanticText"
+                                   FROM "ShopifyProduct" p JOIN "ShopifyVariant" v ON v."productId"=p.id
+                                   WHERE p.id=:i'''), {"i": pid}).first()
+        assert st != "DONE"
+        assert semt is None
+        s.execute(_t('DELETE FROM "ShopifyVariant" WHERE "productId"=:p'), {"p": pid})
+        s.execute(_t('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
+        s.execute(_t('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()

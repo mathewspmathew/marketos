@@ -405,122 +405,101 @@ def _short_id(gid: str) -> str:
     return gid.rsplit("/", 1)[-1]
 
 
-@app.task(name='scraper.generate_shopify_variant_semantics', bind=True, max_retries=3, default_retry_delay=30, rate_limit='3/m')
+@app.task(name='scraper.generate_shopify_variant_semantics', bind=True,
+          max_retries=3, default_retry_delay=30, rate_limit='3/m')
 def generate_shopify_variant_semantics(self, product_id: str):
-    """One Groq call generates semanticText for all ShopifyVariants, then queues embeddings."""
-    print(f"[>] Generating Shopify semantic text for product {product_id}")
+    """Generate semanticText + searchQuery for a product, fenced by semanticVersion.
+    Reads version at load; CAS on write so a concurrent edit can't be clobbered."""
+    # READ PHASE (short txn)
+    with get_db() as session:
+        product = session.query(ShopifyProduct).filter(ShopifyProduct.id == product_id).first()
+        if not product:
+            return
+        version_read = product.semanticVersion
+        variants = session.query(ShopifyVariant).filter(
+            ShopifyVariant.productId == product_id,
+            ShopifyVariant.semanticText == None,  # noqa: E711
+        ).all()
+        needs_search_query = not product.searchQuery and not product.searchQueryOverride
+        if not variants and not needs_search_query:
+            _finalize_semantic_done(session, product_id, version_read)
+            session.commit()
+            return
+        p_title, p_vendor, p_type = product.title, product.vendor, product.productType
+        p_desc, p_tags = product.description, product.tags
+        p_search_override, p_search = product.searchQueryOverride, product.searchQuery
+        p_category = product.categoryTop
+        id_map = {_short_id(v.id): v.id for v in variants}
+        variants_payload = [{
+            "id": _short_id(v.id), "title": v.title, "options": v.options or {},
+            "current_price": float(v.currentPrice or 0),
+            "original_price": float(v.compareAtPrice) if v.compareAtPrice else None,
+            "is_in_stock": v.isInStock,
+        } for v in variants]
 
-    updated_ids = []
-
-    try:
-        with get_db() as session:
-            product  = session.query(ShopifyProduct).filter(ShopifyProduct.id == product_id).first()
-            if not product:
-                print(f"[!] ShopifyProduct {product_id} not found — skipping")
+    # GENERATE PHASE (no DB held)
+    semantic_map = {}
+    if variants_payload:
+        try:
+            semantic_map = _groq_semantic_call(
+                _build_semantic_prompt(p_title, p_vendor, p_type, p_desc, p_tags, None,
+                                       variants_payload), shopify=True)
+        except GroqRateLimitError:
+            raise self.retry(countdown=65)
+        except Exception as e:
+            if self.request.retries >= self.max_retries:
+                _mark_semantic_failed(product_id, version_read, str(e))
                 return
+            raise self.retry(exc=e)
 
-            variants = session.query(ShopifyVariant).filter(
-                ShopifyVariant.productId == product_id,
-                ShopifyVariant.semanticText == None,  # noqa: E711
-            ).all()
+    parsed = []
+    var_texts = {}
+    for short_key, full_id in id_map.items():
+        t = semantic_map.get(short_key, "")
+        if t:
+            var_texts[full_id] = t
+            parsed.append(_parse_fingerprint_fields(t))
 
-            needs_search_query = (
-                not product.searchQuery
-                and not product.searchQueryOverride
-            )
+    product_fields = _consolidate_product_fields(parsed) if parsed else {}
+    category_for_query = (product_fields.get("categoryTop") if product_fields else None) or p_category or p_type
 
-            # If neither variants nor the product itself need anything, we're done.
-            if not variants and not needs_search_query:
-                print(f"[!] Nothing to generate for ShopifyProduct {product_id} — skipping")
+    new_query = None
+    if not p_search_override and not p_search:
+        try:
+            new_query = _groq_search_query(title=p_title, vendor=p_vendor,
+                                           category=category_for_query, description=p_desc)
+        except Exception as e:
+            if self.request.retries >= self.max_retries:
+                _mark_semantic_failed(product_id, version_read, str(e))
                 return
+            raise self.retry(exc=e)
 
-            now = datetime.now(timezone.utc)
-            parsed_per_variant: list[dict] = []
-
-            # ── Variant-level semanticText (only for variants missing it) ──
-            if variants:
-                id_map = {_short_id(v.id): v.id for v in variants}
-                variants_payload = [
-                    {
-                        "id":             _short_id(v.id),
-                        "title":          v.title,
-                        "options":        v.options or {},
-                        "current_price":  float(v.currentPrice or 0),
-                        "original_price": float(v.compareAtPrice) if v.compareAtPrice else None,
-                        "is_in_stock":    v.isInStock,
-                    }
-                    for v in variants
-                ]
-                try:
-                    semantic_map = _groq_semantic_call(
-                        _build_semantic_prompt(
-                            product.title, product.vendor, product.productType,
-                            product.description, product.tags, None,
-                            variants_payload,
-                        ),
-                        shopify=True,
-                    )
-                except GroqRateLimitError:
-                    raise self.retry(countdown=65)
-                except Exception as e:
-                    if self.request.retries >= self.max_retries:
-                        print(f"[!] Giving up on Shopify semantics for {product_id}: {e}")
-                        return
-                    raise self.retry(exc=e)
-
-                for short_key, full_id in id_map.items():
-                    text = semantic_map.get(short_key, "")
-                    if text:
-                        session.execute(
-                            sa_update(ShopifyVariant)
+    # WRITE PHASE (CAS-fenced txn)
+    # Order matters: write variants first, then CAS on ShopifyProduct (which
+    # acquires the row lock). Only if the CAS succeeds do we write the
+    # ShopifyProduct-level fields (searchQuery, categoryTop, productGender) —
+    # keeping them after the CAS avoids a lock-order conflict where a concurrent
+    # version bump tries to UPDATE ShopifyProduct while we already hold its lock.
+    now = datetime.now(timezone.utc)
+    with get_db() as session:
+        for full_id, t in var_texts.items():
+            session.execute(sa_update(ShopifyVariant)
                             .where(ShopifyVariant.id == full_id)
-                            .values(semanticText=text, updatedAt=now)
-                        )
-                        updated_ids.append(full_id)
-                        parsed_per_variant.append(_parse_fingerprint_fields(text))
+                            .values(semanticText=t, updatedAt=now))
+        rc = _finalize_semantic_done(session, product_id, version_read)
+        if rc == 0:
+            session.rollback()
+            print(f"[semantics] discarded stale result for {product_id} (version moved)")
+            return
+        # CAS succeeded — safe to write ShopifyProduct fields in the same txn
+        if product_fields.get("categoryTop") or product_fields.get("productGender"):
+            session.execute(sa_update(ShopifyProduct).where(ShopifyProduct.id == product_id)
+                            .values(categoryTop=product_fields.get("categoryTop"),
+                                    productGender=product_fields.get("productGender"), updatedAt=now))
+        if new_query:
+            session.execute(sa_update(ShopifyProduct).where(ShopifyProduct.id == product_id)
+                            .values(searchQuery=new_query, updatedAt=now))
+        session.commit()
 
-            product_fields = _consolidate_product_fields(parsed_per_variant) if parsed_per_variant else {}
-            category_for_query = product_fields.get("categoryTop") if product_fields else (product.categoryTop or None)
-            if product_fields and (product_fields.get("categoryTop") or product_fields.get("productGender")):
-                session.execute(
-                    sa_update(ShopifyProduct)
-                    .where(ShopifyProduct.id == product_id)
-                    .values(
-                        categoryTop=product_fields["categoryTop"],
-                        productGender=product_fields["productGender"],
-                        updatedAt=now,
-                    )
-                )
-
-            # ── searchQuery generation (runs independently of variants) ────
-            # Generate when no override pinned AND product.searchQuery is empty.
-            if not product.searchQueryOverride and not product.searchQuery:
-                new_query = _groq_search_query(
-                    title=product.title,
-                    vendor=product.vendor,
-                    category=category_for_query or product.productType,
-                    description=product.description,
-                )
-                if new_query:
-                    session.execute(
-                        sa_update(ShopifyProduct)
-                        .where(ShopifyProduct.id == product_id)
-                        .values(
-                            searchQuery=new_query,
-                            updatedAt=now,
-                        )
-                    )
-                    product.searchQuery = new_query
-
-            print(
-                f"    [✓] semantics updated for '{product.title[:40]}' — "
-                f"variants={len(updated_ids)}/{len(variants)} "
-                f"searchQuery={'set' if product.searchQuery else 'missing'}"
-            )
-
-    except Exception as exc:
-        raise self.retry(exc=exc)
-
-    for variant_id in updated_ids:
-        app.send_task('shopify_embedder.generate_shopify_embeddings', args=[variant_id], queue='embedding_queue')
-        print(f"    [>] Queued Shopify embedding: {variant_id[:8]}")
+    for full_id in var_texts:
+        app.send_task('shopify_embedder.generate_shopify_embeddings', args=[full_id], queue='embedding_queue')
