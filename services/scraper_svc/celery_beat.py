@@ -210,40 +210,11 @@ def _tick_queued_discovery_jobs() -> None:
 
 
 def _shopify_semantic_backfill() -> None:
-    """Queue semantic generation for any ShopifyProduct/Variant still missing
-    either semanticText (per variant) OR searchQuery (per product).
-
-    Two backfill triggers, one task: the same generate_shopify_variant_semantics
-    task handles both responsibilities (variant fingerprints + product-level
-    search-query phrase).
-    """
+    """Safety-net: claim any PENDING (or stale-QUEUED) ShopifyProduct and enqueue
+    one semantic task each. Bounded by the claim — products already QUEUED are
+    never re-enqueued, so the queue cannot grow without bound."""
+    from services.scraper_svc.semantics import claim_and_enqueue_semantics
     with get_db() as session:
-        rows = session.execute(
-            text("""
-                SELECT sp.id FROM "ShopifyProduct" sp
-                WHERE
-                    -- product itself needs a searchQuery (user hasn't overridden it)
-                    (sp."searchQuery" IS NULL AND sp."searchQueryOverride" IS NULL)
-                    -- or any variant of this product still missing semanticText
-                    OR sp.id IN (
-                        SELECT DISTINCT "productId" FROM "ShopifyVariant"
-                        WHERE "semanticText" IS NULL
-                    )
-                LIMIT 50
-            """),
-        ).all()
-        product_ids = [r.id for r in rows]
-
-    if not product_ids:
-        return
-
-    print(f"[Beat] semantic+searchQuery backfill: {len(product_ids)} product(s)", flush=True)
-    for product_id in product_ids:
-        try:
-            app.send_task(
-                'scraper.generate_shopify_variant_semantics',
-                args=[product_id],
-                queue='shopify_semantic_queue',
-            )
-        except Exception as exc:
-            print(f"[Beat] dispatch failed for semantics product {product_id}: {exc}", flush=True)
+        claimed = claim_and_enqueue_semantics(session, ids=None)
+    if claimed:
+        print(f"[Beat] semantic backfill: claimed {len(claimed)} product(s)", flush=True)

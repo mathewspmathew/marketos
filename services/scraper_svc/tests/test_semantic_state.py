@@ -128,3 +128,20 @@ def test_task_incomplete_groq_not_marked_done(monkeypatch):
         s.execute(_t('DELETE FROM "ShopifyVariant" WHERE "productId"=:p'), {"p": pid})
         s.execute(_t('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
         s.execute(_t('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
+
+
+def test_beat_backfill_claims_once(monkeypatch):
+    import services.scraper_svc.celery_beat as beat
+    from sqlalchemy import text as _t
+    with get_db() as s:
+        shop = _setup_shop(s)
+        pids = [_mk_product(s, shop, "PENDING") for _ in range(3)]
+        s.commit()
+    calls = []
+    monkeypatch.setattr(sem.app, "send_task", lambda *a, **k: calls.append(k.get("args") or (a[1] if len(a) > 1 else a)))
+    beat._shopify_semantic_backfill()
+    beat._shopify_semantic_backfill()   # second tick: all now QUEUED -> no new enqueues
+    assert len(calls) == 3
+    with get_db() as s:
+        s.execute(_t('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
+        s.execute(_t('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
