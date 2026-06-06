@@ -9,11 +9,12 @@ Run: uvicorn services.api_gateway.main:app --host 0.0.0.0 --port 8000
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from sqlalchemy import distinct
+from sqlalchemy import distinct, text
 
 from services.common.celery_app import app as celery_app
 from services.common.db import get_db
 from services.common.models import ShopifyVariant
+from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
 load_dotenv()
 
@@ -22,19 +23,30 @@ app = FastAPI(title="MarketOS Internal API", docs_url=None, redoc_url=None)
 
 @app.post("/internal/shopify/product-updated")
 def shopify_product_updated(product_id: str):
-    """
-    Triggered by webhooks.products.create / webhooks.products.update after DB upsert.
-    Resets semanticText on all variants then queues semantic generation.
-    """
+    """Triggered by products/create / products/update webhooks after DB upsert.
+    Claims the product (PENDING -> QUEUED) and enqueues one semantic task."""
     if not product_id:
         raise HTTPException(status_code=422, detail="product_id is required")
-
-    celery_app.send_task(
-        'scraper.generate_shopify_variant_semantics',
-        args=[product_id],
-        queue='shopify_semantic_queue',
-    )
+    with get_db() as session:
+        claim_and_enqueue_semantics(session, ids=[product_id])
     return {"queued": True, "product_id": product_id}
+
+
+@app.post("/internal/shopify/retry-failed-semantics")
+def retry_failed_semantics(shop_domain: str):
+    """Reset all FAILED products for a shop back to PENDING (+ bump version) so the
+    next beat tick re-claims them."""
+    if not shop_domain:
+        raise HTTPException(status_code=422, detail="shop_domain is required")
+    with get_db() as session:
+        rc = session.execute(text('''
+            UPDATE "ShopifyProduct"
+               SET "semanticStatus"='PENDING', "semanticVersion"="semanticVersion"+1,
+                   "semanticFailureReason"=NULL
+             WHERE "shopDomain"=:sd AND "semanticStatus"='FAILED'
+        '''), {"sd": shop_domain}).rowcount
+        session.commit()
+    return {"ok": True, "reset": rc}
 
 
 @app.post("/internal/shopify/backfill-semantics")

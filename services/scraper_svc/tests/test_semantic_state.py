@@ -130,6 +130,38 @@ def test_task_incomplete_groq_not_marked_done(monkeypatch):
         s.execute(_t('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
 
 
+def test_product_updated_claims(monkeypatch):
+    from fastapi.testclient import TestClient
+    import services.api_gateway.main as gw
+    from sqlalchemy import text as _t
+    with get_db() as s:
+        shop = _setup_shop(s); pid = _mk_product(s, shop, "PENDING"); s.commit()
+    with patch.object(sem.app, "send_task") as send:
+        r = TestClient(gw.app).post(f"/internal/shopify/product-updated?product_id={pid}")
+    assert r.status_code == 200
+    send.assert_called_once()
+    with get_db() as s:
+        st = s.execute(_t('SELECT "semanticStatus" FROM "ShopifyProduct" WHERE id=:i'), {"i": pid}).scalar()
+        assert st == "QUEUED"
+        s.execute(_t('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
+        s.execute(_t('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
+
+
+def test_retry_failed_resets_to_pending():
+    from fastapi.testclient import TestClient
+    import services.api_gateway.main as gw
+    from sqlalchemy import text as _t
+    with get_db() as s:
+        shop = _setup_shop(s); pid = _mk_product(s, shop, "FAILED", version=2); s.commit()
+    r = TestClient(gw.app).post(f"/internal/shopify/retry-failed-semantics?shop_domain={shop}")
+    assert r.status_code == 200 and r.json()["reset"] == 1
+    with get_db() as s:
+        st, v = s.execute(_t('SELECT "semanticStatus","semanticVersion" FROM "ShopifyProduct" WHERE id=:i'), {"i": pid}).first()
+        assert st == "PENDING" and v == 3
+        s.execute(_t('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
+        s.execute(_t('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
+
+
 def test_beat_backfill_claims_once(monkeypatch):
     import services.scraper_svc.celery_beat as beat
     from sqlalchemy import text as _t
