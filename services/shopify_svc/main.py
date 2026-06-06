@@ -144,6 +144,51 @@ def _fetch_orders(shop_domain: str, token: str, days: int) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Product pull: GraphQL → model field mappers (pure)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _map_product_node(node: dict, shop_domain: str) -> dict:
+    """Shopify product GraphQL node → ShopifyProduct synced-column dict.
+    Only columns the sync owns; merchant-config columns are never touched."""
+    return {
+        "id":          node["id"],
+        "shopDomain":  shop_domain,
+        "title":       node.get("title") or "",
+        "description": node.get("descriptionHtml") or "",
+        "vendor":      node.get("vendor"),
+        "productType": node.get("productType") or "",
+        "tags":        node.get("tags") or [],
+        "imageUrl":    (node.get("featuredImage") or {}).get("url"),
+        "handle":      node.get("handle"),
+        "status":      node.get("status") or "ACTIVE",
+    }
+
+
+def _map_variant_node(vnode: dict, product_id: str) -> dict:
+    """Shopify variant GraphQL node → ShopifyVariant synced-column dict."""
+    options = {
+        opt["name"]: opt["value"]
+        for opt in (vnode.get("selectedOptions") or [])
+    }
+    return {
+        "id":             vnode["id"],
+        "productId":      product_id,
+        "title":          vnode.get("title") or "Default Title",
+        "currentPrice":   vnode.get("price") or "0",
+        "compareAtPrice": vnode.get("compareAtPrice"),
+        "sku":            vnode.get("sku"),
+        "barcode":        vnode.get("barcode"),
+        "imageUrl":       (vnode.get("image") or {}).get("url"),
+        "options":        options,
+    }
+
+
+def _diff_new_ids(existing_ids: set[str], pulled_ids: list[str]) -> list[str]:
+    """Product ids present in the pull but not already in the DB."""
+    return [pid for pid in pulled_ids if pid not in existing_ids]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Aggregation + write-back
 # ─────────────────────────────────────────────────────────────────────────────
 
