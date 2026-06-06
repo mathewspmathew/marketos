@@ -103,3 +103,89 @@ def test_diff_new_ids():
     assert _diff_new_ids({"a", "b"}, ["a", "b", "c"]) == ["c"]
     assert _diff_new_ids(set(), ["x"]) == ["x"]
     assert _diff_new_ids({"a"}, ["a"]) == []
+
+
+from contextlib import contextmanager
+from unittest.mock import MagicMock
+
+import services.shopify_svc.main as sync_mod
+
+
+class _FakeSession:
+    """Records execute() calls; returns canned existing-ids for the SELECT."""
+    def __init__(self, existing_ids):
+        self._existing = existing_ids
+        self.executed = []
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        self.executed.append((sql, params))
+        if 'SELECT id FROM "ShopifyProduct"' in sql:
+            return [(i,) for i in self._existing]
+        return MagicMock()
+
+
+@contextmanager
+def _fake_get_db(session):
+    yield session
+
+
+_FAKE_NODES = [
+    {
+        "id": "gid://shopify/Product/1", "title": "P1", "descriptionHtml": "",
+        "vendor": "V", "productType": "T", "handle": "p1", "status": "ACTIVE",
+        "tags": ["a"], "featuredImage": {"url": "u1"},
+        "variants": {"edges": [{"node": {
+            "id": "gid://shopify/ProductVariant/10", "title": "d",
+            "price": "10.00", "compareAtPrice": None, "sku": "s1",
+            "barcode": None, "image": None, "selectedOptions": [],
+        }}]},
+    },
+]
+
+
+def test_pull_products_happy_path(monkeypatch):
+    session = _FakeSession(existing_ids=set())  # product 1 is NEW
+    monkeypatch.setattr(sync_mod, "_get_offline_token", lambda s: "tok")
+    monkeypatch.setattr(sync_mod, "_fetch_products", lambda s, t: _FAKE_NODES)
+    monkeypatch.setattr(sync_mod, "get_db", lambda: _fake_get_db(session))
+    send = MagicMock()
+    monkeypatch.setattr(sync_mod.app, "send_task", send)
+
+    result = sync_mod.pull_products("demo.myshopify.com")
+
+    assert result == {"ok": True, "count": 1, "new": 1}
+    send.assert_called_once_with(
+        "scraper.generate_shopify_variant_semantics",
+        args=["gid://shopify/Product/1"],
+        queue="shopify_semantic_queue",
+    )
+    assert any("productSyncState" in sql and "SYNCED" in str(p)
+               for sql, p in session.executed)
+
+
+def test_pull_products_no_token(monkeypatch):
+    session = _FakeSession(existing_ids=set())
+    monkeypatch.setattr(sync_mod, "_get_offline_token", lambda s: None)
+    monkeypatch.setattr(sync_mod, "get_db", lambda: _fake_get_db(session))
+    send = MagicMock()
+    monkeypatch.setattr(sync_mod.app, "send_task", send)
+
+    result = sync_mod.pull_products("demo.myshopify.com")
+
+    assert result == {"ok": False, "reason": "no_offline_token"}
+    send.assert_not_called()
+    assert any("ERROR" in str(p) for _, p in session.executed)
+
+
+def test_pull_products_error_sets_state_and_raises(monkeypatch):
+    session = _FakeSession(existing_ids=set())
+    monkeypatch.setattr(sync_mod, "_get_offline_token", lambda s: "tok")
+    def boom(s, t): raise RuntimeError("shopify down")
+    monkeypatch.setattr(sync_mod, "_fetch_products", boom)
+    monkeypatch.setattr(sync_mod, "get_db", lambda: _fake_get_db(session))
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        sync_mod.pull_products("demo.myshopify.com")
+    assert any("ERROR" in str(p) for _, p in session.executed)

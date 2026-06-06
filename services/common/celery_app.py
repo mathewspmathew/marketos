@@ -53,6 +53,7 @@ app.conf.update(
         'suggestion.suggest_for_product':               {'queue': 'suggestion_queue'},
         'shopify_sync.recompute_sales_aggregate':       {'queue': 'shopify_sync_queue'},
         'shopify_sync.refresh_all_sales_aggregates':    {'queue': 'shopify_sync_queue'},
+        'shopify_sync.pull_products':                   {'queue': 'shopify_sync_queue'},
         'stats.recompute_for_variant':                  {'queue': 'stats_queue'},
         'stats.recompute_after_observation':            {'queue': 'stats_queue'},
         'pricing.decide_for_product':                   {'queue': 'pricing_queue'},
