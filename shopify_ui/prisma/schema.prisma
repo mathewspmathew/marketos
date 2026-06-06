@@ -78,6 +78,11 @@ model ShopifyProduct {
   imageUrl    String?
   handle      String?
   status      String  @default("ACTIVE")
+  semanticStatus        String    @default("PENDING") // PENDING | QUEUED | DONE | FAILED
+  semanticClaimedAt     DateTime?
+  semanticVersion       Int       @default(0)
+  semanticAttempts      Int       @default(0)
+  semanticFailureReason String?
 
   // Parsed from the structured semanticText fingerprint. Used by the matcher
   // SQL pre-filter as a hard gate before HNSW similarity is computed.
