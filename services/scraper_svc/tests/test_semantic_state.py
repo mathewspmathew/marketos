@@ -1,0 +1,70 @@
+import uuid
+from unittest.mock import patch
+from dotenv import load_dotenv; load_dotenv()
+from sqlalchemy import text
+from services.common.db import get_db
+import services.scraper_svc.semantics as sem
+
+
+def _mk_product(session, shop, status="PENDING", version=0, claimed_sql="NULL"):
+    pid = f"gid://test/Product/{uuid.uuid4()}"
+    session.execute(text(f'''
+      INSERT INTO "ShopifyProduct" (id,"shopDomain",title,"semanticStatus","semanticVersion","semanticClaimedAt","updatedAt")
+      VALUES (:id,:sd,'t',:st,:v,{claimed_sql},NOW())'''), {"id": pid, "sd": shop, "st": status, "v": version})
+    return pid
+
+
+def _setup_shop(session):
+    shop = f"claimtest-{uuid.uuid4()}.myshopify.com"
+    session.execute(text('INSERT INTO "ShopifyUser" ("shopDomain") VALUES (:s)'), {"s": shop})
+    return shop
+
+
+def test_claim_specific_ids_only_pending():
+    with get_db() as s:
+        shop = _setup_shop(s)
+        p_pending = _mk_product(s, shop, "PENDING")
+        p_queued  = _mk_product(s, shop, "QUEUED")
+        s.commit()
+        with patch.object(sem.app, "send_task") as send:
+            claimed = sem.claim_and_enqueue_semantics(s, ids=[p_pending, p_queued])
+        assert claimed == [p_pending]
+        send.assert_called_once_with("scraper.generate_shopify_variant_semantics",
+                                     args=[p_pending], queue="shopify_semantic_queue")
+        row = s.execute(text('SELECT "semanticStatus","semanticAttempts" FROM "ShopifyProduct" WHERE id=:i'),
+                        {"i": p_pending}).first()
+        assert row[0] == "QUEUED" and row[1] == 1
+        s.execute(text('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
+        s.execute(text('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
+
+
+def test_claim_beat_includes_stale_queued():
+    with get_db() as s:
+        shop = _setup_shop(s)
+        p_pending = _mk_product(s, shop, "PENDING")
+        p_fresh   = _mk_product(s, shop, "QUEUED", claimed_sql="NOW()")
+        p_stale   = _mk_product(s, shop, "QUEUED", claimed_sql="NOW() - INTERVAL '20 minutes'")
+        p_done    = _mk_product(s, shop, "DONE")
+        s.commit()
+        with patch.object(sem.app, "send_task"):
+            claimed = set(sem.claim_and_enqueue_semantics(s, ids=None))
+        assert p_pending in claimed and p_stale in claimed
+        assert p_fresh not in claimed and p_done not in claimed
+        s.execute(text('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
+        s.execute(text('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
+
+
+def test_finalize_done_cas_version_mismatch_discards():
+    with get_db() as s:
+        shop = _setup_shop(s)
+        pid = _mk_product(s, shop, "QUEUED", version=7); s.commit()
+        rc = sem._finalize_semantic_done(s, pid, version_read=6); s.commit()
+        assert rc == 0
+        st = s.execute(text('SELECT "semanticStatus" FROM "ShopifyProduct" WHERE id=:i'), {"i": pid}).scalar()
+        assert st == "QUEUED"
+        rc2 = sem._finalize_semantic_done(s, pid, version_read=7); s.commit()
+        assert rc2 == 1
+        st2 = s.execute(text('SELECT "semanticStatus" FROM "ShopifyProduct" WHERE id=:i'), {"i": pid}).scalar()
+        assert st2 == "DONE"
+        s.execute(text('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
+        s.execute(text('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()

@@ -12,12 +12,12 @@ Task 4 — generate_shopify_variant_semantics (shopify_semantic_queue)
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from celery.exceptions import Retry as CeleryRetry
 from dotenv import load_dotenv
 from groq import RateLimitError as GroqRateLimitError
-from sqlalchemy import text as sa_text, update as sa_update
+from sqlalchemy import text, text as sa_text, update as sa_update
 
 from services.common.celery_app import app
 from services.common.db import get_db
@@ -228,6 +228,73 @@ def _consolidate_product_fields(parsed_per_variant: list[dict]) -> dict[str, str
         "categoryTop":   cat.most_common(1)[0][0] if cat else None,
         "productGender": gen.most_common(1)[0][0] if gen else None,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Claim + CAS helpers for the ShopifyProduct semantic state machine
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STALE_QUEUED_MINUTES = 10
+_BACKFILL_BATCH = 100
+
+
+def claim_and_enqueue_semantics(session, *, ids=None, limit=_BACKFILL_BATCH):
+    """Atomically claim PENDING (ids path) or PENDING+stale-QUEUED (beat path)
+    ShopifyProducts via PENDING/stale -> QUEUED, then enqueue one semantic task
+    per claimed product. Returns the list of claimed product ids."""
+    if ids is not None:
+        if not ids:
+            return []
+        rows = session.execute(text('''
+            UPDATE "ShopifyProduct"
+               SET "semanticStatus"='QUEUED', "semanticClaimedAt"=NOW(),
+                   "semanticAttempts"="semanticAttempts"+1
+             WHERE id = ANY(:ids) AND "semanticStatus"='PENDING'
+            RETURNING id
+        '''), {"ids": list(ids)}).all()
+    else:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STALE_QUEUED_MINUTES)
+        rows = session.execute(text('''
+            UPDATE "ShopifyProduct"
+               SET "semanticStatus"='QUEUED', "semanticClaimedAt"=NOW(),
+                   "semanticAttempts"="semanticAttempts"+1
+             WHERE id IN (
+               SELECT id FROM "ShopifyProduct"
+                WHERE "semanticStatus"='PENDING'
+                   OR ("semanticStatus"='QUEUED' AND "semanticClaimedAt" < :cutoff)
+                ORDER BY "semanticClaimedAt" NULLS FIRST
+                LIMIT :limit
+                FOR UPDATE SKIP LOCKED
+             )
+            RETURNING id
+        '''), {"cutoff": cutoff, "limit": limit}).all()
+    claimed = [r.id for r in rows]
+    session.commit()
+    for pid in claimed:
+        app.send_task('scraper.generate_shopify_variant_semantics', args=[pid],
+                      queue='shopify_semantic_queue')
+    return claimed
+
+
+def _finalize_semantic_done(session, product_id, version_read) -> int:
+    """CAS: mark DONE + clear claim only if version unchanged. Returns rowcount."""
+    return session.execute(text('''
+        UPDATE "ShopifyProduct"
+           SET "semanticStatus"='DONE', "semanticClaimedAt"=NULL
+         WHERE id=:id AND "semanticVersion"=:v
+    '''), {"id": product_id, "v": version_read}).rowcount
+
+
+def _mark_semantic_failed(product_id, version_read, reason: str) -> None:
+    """CAS: mark FAILED if version unchanged (else a newer task owns it)."""
+    with get_db() as session:
+        session.execute(text('''
+            UPDATE "ShopifyProduct"
+               SET "semanticStatus"='FAILED', "semanticClaimedAt"=NULL,
+                   "semanticFailureReason"=:r
+             WHERE id=:id AND "semanticVersion"=:v
+        '''), {"id": product_id, "v": version_read, "r": reason[:500]})
+        session.commit()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
