@@ -18,10 +18,16 @@ export const loader = async ({ request }) => {
 
   // Non-blocking auto-kick: enqueue a background pull if the DB was never
   // synced (fresh install / stale). Never await it — the loader is read-only.
+  // ERROR is excluded so a persistent failure (e.g. expired offline token)
+  // doesn't re-enqueue on every load — the Refresh/Retry button owns recovery.
   const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
   const user = await db.shopifyUser.findUnique({ where: { shopDomain } });
   const count = await db.shopifyProduct.count({ where: { shopDomain } });
-  if ((count === 0 || user?.productSyncedAt == null) && user?.productSyncState !== "SYNCING") {
+  if (
+    (count === 0 || user?.productSyncedAt == null) &&
+    user?.productSyncState !== "SYNCING" &&
+    user?.productSyncState !== "ERROR"
+  ) {
     await db.shopifyUser.update({
       where: { shopDomain },
       data: { productSyncState: "SYNCING", productSyncStartedAt: new Date() },
