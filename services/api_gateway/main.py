@@ -9,11 +9,10 @@ Run: uvicorn services.api_gateway.main:app --host 0.0.0.0 --port 8000
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from sqlalchemy import distinct, text
+from sqlalchemy import text
 
 from services.common.celery_app import app as celery_app
 from services.common.db import get_db
-from services.common.models import ShopifyVariant
 from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
 load_dotenv()
@@ -51,27 +50,12 @@ def retry_failed_semantics(shop_domain: str):
 
 @app.post("/internal/shopify/backfill-semantics")
 def backfill_shopify_semantics():
-    """
-    One-shot trigger: queue semantic generation for every ShopifyProduct
-    that has at least one variant with semanticText still null.
-    Safe to call multiple times — the task itself skips variants that already have text.
-    """
+    """Manual kick of the semantic backfill — same bounded claim the beat uses.
+    Claims PENDING/stale-QUEUED products (at most the claim's batch limit) and
+    enqueues one task each; never bypasses the claim."""
     with get_db() as session:
-        rows = (
-            session.query(distinct(ShopifyVariant.productId))
-            .filter(ShopifyVariant.semanticText == None)  # noqa: E711
-            .all()
-        )
-
-    product_ids = [row[0] for row in rows]
-    for product_id in product_ids:
-        celery_app.send_task(
-            'scraper.generate_shopify_variant_semantics',
-            args=[product_id],
-            queue='semantic_queue',
-        )
-
-    return {"queued": len(product_ids), "product_ids": product_ids}
+        claimed = claim_and_enqueue_semantics(session, ids=None)
+    return {"queued": len(claimed), "product_ids": claimed}
 
 
 @app.post("/internal/suggestion/regenerate")
