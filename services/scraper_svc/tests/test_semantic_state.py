@@ -102,3 +102,29 @@ def test_task_discards_when_version_moved(monkeypatch):
         s.execute(_t('DELETE FROM "ShopifyVariant" WHERE "productId"=:p'), {"p": pid})
         s.execute(_t('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
         s.execute(_t('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()
+
+
+def test_task_incomplete_groq_not_marked_done(monkeypatch):
+    import uuid as _uuid
+    from sqlalchemy import text as _t
+    from celery.exceptions import Retry
+    import pytest
+    with get_db() as s:
+        shop = _setup_shop(s)
+        pid = _mk_product(s, shop, "QUEUED", version=1)
+        vid = f"gid://test/Variant/{_uuid.uuid4()}"
+        s.execute(_t('''INSERT INTO "ShopifyVariant" (id,"productId",title,"currentPrice","semanticText","updatedAt")
+                        VALUES (:i,:p,'v',10,NULL,NOW())'''), {"i": vid, "p": pid})
+        s.commit()
+    monkeypatch.setattr(sem, "_groq_semantic_call", lambda *a, **k: {})  # Groq returns nothing
+    monkeypatch.setattr(sem.app, "send_task", lambda *a, **k: None)
+    with pytest.raises(Retry):
+        sem.generate_shopify_variant_semantics.run(pid)
+    with get_db() as s:
+        st, semt = s.execute(_t('''SELECT p."semanticStatus", v."semanticText"
+            FROM "ShopifyProduct" p JOIN "ShopifyVariant" v ON v."productId"=p.id WHERE p.id=:i'''), {"i": pid}).first()
+        assert st != "DONE"
+        assert semt is None
+        s.execute(_t('DELETE FROM "ShopifyVariant" WHERE "productId"=:p'), {"p": pid})
+        s.execute(_t('DELETE FROM "ShopifyProduct" WHERE "shopDomain"=:s'), {"s": shop})
+        s.execute(_t('DELETE FROM "ShopifyUser" WHERE "shopDomain"=:s'), {"s": shop}); s.commit()

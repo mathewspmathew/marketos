@@ -460,6 +460,16 @@ def generate_shopify_variant_semantics(self, product_id: str):
             var_texts[full_id] = t
             parsed.append(_parse_fingerprint_fields(t))
 
+    # Don't mark DONE on a partial/empty Groq result — that would strand the
+    # un-returned variants un-embedded (DONE removes them from backfill).
+    missing = set(id_map.values()) - set(var_texts.keys())
+    if missing:
+        reason = f"semantic generation incomplete: {len(missing)}/{len(id_map)} variant(s) missing"
+        if self.request.retries >= self.max_retries:
+            _mark_semantic_failed(product_id, version_read, reason)
+            return
+        raise self.retry(countdown=30)
+
     product_fields = _consolidate_product_fields(parsed) if parsed else {}
     category_for_query = (product_fields.get("categoryTop") if product_fields else None) or p_category or p_type
 
