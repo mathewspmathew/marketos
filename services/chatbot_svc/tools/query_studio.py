@@ -66,23 +66,21 @@ def _get_client():
     return _client
 
 
-def _fetch_web_brands(g: QueryGrounding, limit: int = 8) -> list[str]:
-    """One Serper call to fetch real competitor brand domains, used only when we
-    have no known brands. Best-effort: returns [] on any failure."""
+def _fetch_web_context(g: QueryGrounding, limit: int = 6) -> list[dict]:
+    """One Serper call returning result title+snippet text — used only when we
+    have no known brands. Article titles/snippets typically NAME real competitor
+    brands; the LLM extracts them. Best-effort: returns [] on any failure."""
     q = f"best {g.product_type or g.title} brands"
     try:
         hits = search_web(q, num=10)
     except Exception:
         return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for h in hits:
-        d = getattr(h, "domain", None)
-        if d and d not in seen:
-            seen.add(d)
-            out.append(d)
-        if len(out) >= limit:
-            break
+    out: list[dict] = []
+    for h in hits[:limit]:
+        title = getattr(h, "title", "") or ""
+        snippet = getattr(h, "snippet", "") or ""
+        if title or snippet:
+            out.append({"title": title, "snippet": snippet})
     return out
 
 
@@ -140,12 +138,14 @@ def propose_queries(
         return []
 
     brands = list(g.known_brands)
+    web_results = []
     if use_serper and len(brands) < 2:
-        brands += _fetch_web_brands(g)
+        web_results = _fetch_web_context(g)
 
     return _complete({
         "product": {"title": g.title, "vendor": g.vendor, "type": g.product_type, "tags": g.tags},
         "known_brands": brands,
+        "web_results": web_results,
         "focus": focus_prompt or "",
         "n": n,
     }, n, client)

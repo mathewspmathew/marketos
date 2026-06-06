@@ -108,16 +108,20 @@ def test_serper_called_only_when_brands_sparse(seed_shop, monkeypatch):
     calls = {"n": 0}
 
     class _Hit:
-        def __init__(self, d): self.domain = d
+        def __init__(self, title, snippet):
+            self.title = title
+            self.snippet = snippet
+
     def fake_search(q, num=10):
         calls["n"] += 1
-        return [_Hit("websearch-brand.example")]
+        return [_Hit("Best wide-leg pants: Everlane, Madewell",
+                     "Everlane and Madewell make great wide-leg pants")]
     monkeypatch.setattr(qs, "search_web", fake_search)
 
     client = _fake_client(_GOOD)
     qs.propose_queries(seed_shop, pid, "", n=3, use_serper=True, client=client)
     assert calls["n"] == 1
-    assert "websearch-brand.example" in client.last_kwargs["messages"][1]["content"]
+    assert "Everlane" in client.last_kwargs["messages"][1]["content"]
 
 
 def test_propose_queries_other_shop_empty(seed_shop, seed_other_shop):
@@ -183,3 +187,17 @@ def test_refine_other_shop_empty(seed_shop, seed_other_shop):
     out = qs.refine_queries(seed_other_shop, _product_id(seed_shop), "", [], "x",
                             n=3, client=_fake_client(_GOOD))
     assert out == []
+
+
+def test_fetch_web_context_returns_titles_snippets(seed_shop, monkeypatch):
+    from services.chatbot_svc.tools import query_studio as qs
+
+    class _Hit:
+        def __init__(self, t, s):
+            self.title = t
+            self.snippet = s
+
+    monkeypatch.setattr(qs, "search_web", lambda q, num=10: [_Hit("T1", "S1"), _Hit("T2", "S2")])
+    g = qs.gather_grounding(seed_shop, _product_id(seed_shop))
+    out = qs._fetch_web_context(g)
+    assert {"title": "T1", "snippet": "S1"} in out

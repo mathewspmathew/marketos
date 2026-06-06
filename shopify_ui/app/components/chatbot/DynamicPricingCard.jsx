@@ -1,5 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
+import QueryStudioPanel from "./QueryStudioPanel";
 
 const clamp = (v, lo, hi, dflt) => {
   const n = parseInt(v, 10);
@@ -22,6 +23,13 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
   const count = summary.count ?? (preview.variantIds?.length ?? 0);
   const dc = summary.deleteCounts || {};
 
+  // Search query the merchant can edit or pick via Query Studio (enable only).
+  const [query, setQuery] = useState(change.query ?? "");
+  const [showStudio, setShowStudio] = useState(false);
+  // For toggle previews, variantIds holds product ids; sampleRows carry titles.
+  const productId = (preview.variantIds && preview.variantIds[0]) || "";
+  const productTitle = summary.sampleRows?.[0]?.title || "";
+
   const apply = () => {
     if (enable) {
       onApply(preview, {
@@ -29,6 +37,7 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
         rescrape,
         numResults: clamp(num, 1, 50, 10),
         listingExpansionCap: clamp(cap, 1, 50, 5),
+        query: query.trim(),
       });
     } else {
       onApply(preview, { enable: false, mode });
@@ -66,6 +75,21 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
                   onInput={(e) => setCap(e.currentTarget.value)}
                 />
               </s-stack>
+            )}
+            <s-text-field
+              label="Search query (used to find competitors)"
+              value={query}
+              onInput={(e) => setQuery(e.currentTarget.value)}
+            />
+            <s-button onClick={() => setShowStudio((v) => !v)}>
+              {showStudio ? "Hide Query Studio" : "Find a better query"}
+            </s-button>
+            {showStudio && productId && (
+              <QueryStudioPanel
+                productId={productId}
+                productTitle={productTitle}
+                onUse={(q) => { setQuery(q); setShowStudio(false); }}
+              />
             )}
           </s-stack>
         ) : (

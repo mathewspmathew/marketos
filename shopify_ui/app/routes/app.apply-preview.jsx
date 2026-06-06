@@ -25,6 +25,7 @@ export const action = async ({ request }) => {
       forward.rescrape = !!body.rescrape;
       forward.numResults = body.numResults;
       forward.listingExpansionCap = body.listingExpansionCap;
+      forward.query = body.query;
     } else {
       forward.mode = body.mode === "delete" ? "delete" : "pause";
     }

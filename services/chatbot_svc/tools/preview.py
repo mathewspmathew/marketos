@@ -11,7 +11,7 @@ from services.chatbot_svc.tools.toggle_settings import (
     resolve_enable_settings, compute_disable_counts,
 )
 
-PREVIEW_TTL = timedelta(minutes=5)
+PREVIEW_TTL = timedelta(minutes=30)  # generous: the Query Studio detour can exceed 5 min
 
 
 def _compute_new_price(current: float, change: PriceChange) -> float:

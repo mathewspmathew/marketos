@@ -79,6 +79,15 @@ export const action = async ({ request }) => {
       },
       data: { nextRunAt: new Date() },
     });
+    // Persist the merchant's chosen/edited search query so discovery — this run
+    // and future rescrapes — uses it. The DiscoveryJob query computation below
+    // reads searchQueryOverride first.
+    if (typeof body.query === "string" && body.query.trim()) {
+      await prisma.shopifyProduct.updateMany({
+        where: { id: { in: productIds }, shopDomain },
+        data: { searchQueryOverride: body.query.trim() },
+      });
+    }
     // "Rescrape now" gates the credit-spending fresh discovery.
     if (body.rescrape) {
       const numResults = clamp(body.numResults, 1, 50, 10);

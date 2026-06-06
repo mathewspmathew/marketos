@@ -282,6 +282,9 @@ services:
       # same pattern as the workers (REACT_ROUTER_INTERNAL_URL / pricing_worker).
       - CHATBOT_RR_URL=${REACT_ROUTER_INTERNAL_URL:-http://host.docker.internal:3000}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      # Query Studio grounding fetches real competitor brands via Serper when the
+      # product has no already-scraped competitors.
+      - SERPER_API_KEY=${SERPER_API_KEY}
       - VERTEX_PROJECT=${VERTEX_PROJECT}
       - VERTEX_LOCATION=${VERTEX_LOCATION}
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
