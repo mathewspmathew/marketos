@@ -26,22 +26,25 @@ export const action = async ({ request }) => {
   await db.shopifyProduct.upsert({
     where: { id: shopifyId },
     update: {
-      title:       product.title        ?? "",
-      description: product.body_html    ?? "",
+      title:           product.title        ?? "",
+      description:     product.body_html    ?? "",
       tags,
-      productType: product.product_type ?? "",
+      productType:     product.product_type ?? "",
       imageUrl,
-      status: product.status?.toUpperCase() ?? "ACTIVE",
+      status:          product.status?.toUpperCase() ?? "ACTIVE",
+      semanticStatus:  "PENDING",
+      semanticVersion: { increment: 1 },
     },
     create: {
-      id:          shopifyId,
-      shopDomain:  shop,
-      title:       product.title        ?? "",
-      description: product.body_html    ?? "",
+      id:              shopifyId,
+      shopDomain:      shop,
+      title:           product.title        ?? "",
+      description:     product.body_html    ?? "",
       tags,
-      productType: product.product_type ?? "",
+      productType:     product.product_type ?? "",
       imageUrl,
-      status: product.status?.toUpperCase() ?? "ACTIVE",
+      status:          product.status?.toUpperCase() ?? "ACTIVE",
+      semanticStatus:  "PENDING",
     },
   });
 
@@ -128,7 +131,7 @@ export const action = async ({ request }) => {
     if (newMin._min.basePrice != null) {
       await db.shopifyProduct.update({
         where: { id: shopifyId },
-        data: { basePrice: newMin._min.basePrice, lastDecisionAt: null },
+        data: { basePrice: newMin._min.basePrice, lastDecisionAt: null, semanticStatus: "PENDING" },
       });
     }
   }
