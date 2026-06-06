@@ -1,8 +1,18 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
 
+const FOCUS_PRESETS = [
+  "Add brand diversity",
+  "Focus on other brands",
+  "Budget options",
+  "Premium brands",
+  "Material / fabric focus",
+];
+
 export default function QueryStudioPanel({ productId, productTitle = "", onUse }) {
   const [focus, setFocus] = useState("");
+  const addPreset = (preset) =>
+    setFocus((f) => (f.trim() ? `${f.trim()}, ${preset}` : preset));
   const [instruction, setInstruction] = useState("");
   const [candidates, setCandidates] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -39,6 +49,14 @@ export default function QueryStudioPanel({ productId, productTitle = "", onUse }
         <s-text emphasis="bold">
           {productTitle ? `Query Studio · ${productTitle}` : "Query Studio"}
         </s-text>
+
+        <s-stack direction="inline" gap="tight">
+          {FOCUS_PRESETS.map((p) => (
+            <s-button key={p} onClick={() => addPreset(p)}>
+              {p}
+            </s-button>
+          ))}
+        </s-stack>
 
         <s-stack direction="inline" gap="base" align="end">
           <s-text-field
