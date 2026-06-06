@@ -37,6 +37,7 @@ from sqlalchemy import text
 
 from services.common.celery_app import app
 from services.common.db import get_db
+from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
 
 SHOPIFY_API_VERSION = "2026-07"
@@ -315,12 +316,9 @@ def pull_products(shop_domain: str) -> dict:
 
             _set_sync_state(session, shop_domain, "SYNCED", synced=True)
 
-        for pid in new_ids:
-            app.send_task(
-                "scraper.generate_shopify_variant_semantics",
-                args=[pid],
-                queue="shopify_semantic_queue",
-            )
+        if new_ids:
+            with get_db() as session:
+                claim_and_enqueue_semantics(session, ids=new_ids)
         return {"ok": True, "count": len(nodes), "new": len(new_ids)}
 
     except Exception as exc:  # noqa: BLE001 — record then re-raise for Celery retry

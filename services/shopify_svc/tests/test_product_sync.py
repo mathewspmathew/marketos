@@ -152,14 +152,14 @@ def test_pull_products_happy_path(monkeypatch):
     send = MagicMock()
     monkeypatch.setattr(sync_mod.app, "send_task", send)
 
+    claim = MagicMock(return_value=["gid://shopify/Product/1"])
+    monkeypatch.setattr(sync_mod, "claim_and_enqueue_semantics", claim)
+
     result = sync_mod.pull_products("demo.myshopify.com")
 
     assert result == {"ok": True, "count": 1, "new": 1}
-    send.assert_called_once_with(
-        "scraper.generate_shopify_variant_semantics",
-        args=["gid://shopify/Product/1"],
-        queue="shopify_semantic_queue",
-    )
+    claim.assert_called_once()
+    assert claim.call_args.kwargs["ids"] == ["gid://shopify/Product/1"]
     assert any("productSyncState" in sql and "SYNCED" in str(p)
                for sql, p in session.executed)
 
