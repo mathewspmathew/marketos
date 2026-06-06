@@ -1,12 +1,12 @@
-import { useState, useMemo } from "react";
-import { useFetcher, useLoaderData } from "react-router";
+import { useState, useMemo, useEffect } from "react";
+import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
   // Ensure ShopifyUser row exists for this shop
@@ -16,10 +16,20 @@ export const loader = async ({ request }) => {
     create: { shopDomain },
   });
 
-  // First-time sync: pull products from Shopify GraphQL if none stored yet
+  // Non-blocking auto-kick: enqueue a background pull if the DB was never
+  // synced (fresh install / stale). Never await it — the loader is read-only.
+  const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+  const user = await db.shopifyUser.findUnique({ where: { shopDomain } });
   const count = await db.shopifyProduct.count({ where: { shopDomain } });
-  if (count === 0) {
-    await syncProductsFromShopify(admin, shopDomain);
+  if ((count === 0 || user?.productSyncedAt == null) && user?.productSyncState !== "SYNCING") {
+    await db.shopifyUser.update({
+      where: { shopDomain },
+      data: { productSyncState: "SYNCING", productSyncStartedAt: new Date() },
+    });
+    void fetch(
+      `${PYTHON_API_URL}/internal/shopify/sync-products?shop_domain=${encodeURIComponent(shopDomain)}`,
+      { method: "POST" },
+    ).catch(() => {});
   }
 
   const products = await db.shopifyProduct.findMany({
@@ -60,6 +70,15 @@ export const loader = async ({ request }) => {
     candidateCount: p._count.competitorCandidates,
   }));
 
+  const freshUser = await db.shopifyUser.findUnique({ where: { shopDomain } });
+  const processingCount = await db.shopifyProduct.count({
+    where: {
+      shopDomain,
+      updatedAt: { gte: new Date(Date.now() - 15 * 60 * 1000) },
+      variants: { some: { semanticText: null } },
+    },
+  });
+
   // With expiring offline tokens enabled, individual expiry is normal —
   // the library auto-refreshes via Token Exchange on the next call. The
   // only state worth banner-ing is "no offline session row at all", which
@@ -72,6 +91,9 @@ export const loader = async ({ request }) => {
   return {
     products: flattened,
     auth: { hasOfflineSession },
+    productSyncState: freshUser?.productSyncState ?? "IDLE",
+    productSyncedAt: freshUser?.productSyncedAt ? freshUser.productSyncedAt.toISOString() : null,
+    processingCount,
   };
 };
 
@@ -84,115 +106,34 @@ const FREQ_UNITS = [
   { value: "day",    label: "Days"    },
 ];
 
-// ─── GraphQL full sync helper ─────────────────────────────────────────────────
-async function syncProductsFromShopify(admin, shopDomain) {
-  let hasNextPage = true;
-  let cursor = null;
-
-  while (hasNextPage) {
-    const query = `#graphql
-      query getProducts($cursor: String) {
-        products(first: 50, after: $cursor) {
-          pageInfo { hasNextPage endCursor }
-          edges {
-            node {
-              id
-              title
-              descriptionHtml
-              productType
-              handle
-              status
-              tags
-              featuredImage { url }
-              variants(first: 10) {
-                edges {
-                  node {
-                    id
-                    title
-                    price
-                    compareAtPrice
-                    sku
-                    barcode
-                    image { url }
-                    selectedOptions { name value }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-    const response = await admin.graphql(query, { variables: { cursor } });
-    const json = await response.json();
-    const { edges, pageInfo } = json.data.products;
-
-    for (const { node } of edges) {
-      await db.shopifyProduct.upsert({
-        where: { id: node.id },
-        update: {
-          title: node.title,
-          description: node.descriptionHtml ?? "",
-          tags: node.tags ?? [],
-          productType: node.productType ?? "",
-          handle: node.handle ?? null,
-          imageUrl: node.featuredImage?.url ?? null,
-          status: node.status ?? "ACTIVE",
-        },
-        create: {
-          id: node.id,
-          shopDomain,
-          title: node.title,
-          description: node.descriptionHtml ?? "",
-          tags: node.tags ?? [],
-          productType: node.productType ?? "",
-          handle: node.handle ?? null,
-          imageUrl: node.featuredImage?.url ?? null,
-          status: node.status ?? "ACTIVE",
-        },
-      });
-
-      for (const { node: vNode } of node.variants.edges) {
-        const options = {};
-        vNode.selectedOptions.forEach((opt) => { options[opt.name] = opt.value; });
-
-        await db.shopifyVariant.upsert({
-          where: { id: vNode.id },
-          update: {
-            title: vNode.title,
-            currentPrice: vNode.price,
-            compareAtPrice: vNode.compareAtPrice ?? null,
-            sku: vNode.sku,
-            barcode: vNode.barcode,
-            imageUrl: vNode.image?.url ?? null,
-            options,
-          },
-          create: {
-            id: vNode.id,
-            productId: node.id,
-            title: vNode.title,
-            currentPrice: vNode.price,
-            compareAtPrice: vNode.compareAtPrice ?? null,
-            sku: vNode.sku,
-            barcode: vNode.barcode,
-            imageUrl: vNode.image?.url ?? null,
-            options,
-          },
-        });
-      }
-    }
-
-    hasNextPage = pageInfo.hasNextPage;
-    cursor = pageInfo.endCursor;
-  }
-}
-
 // ─── Action ───────────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
   const productId = formData.get("productId");
+
+  if (intent === "syncProducts") {
+    const shopDomain = session.shop;
+    const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+    const user = await db.shopifyUser.findUnique({ where: { shopDomain } });
+
+    // Guard against double-trigger: if a sync started < 10 min ago, no-op.
+    const startedAt = user?.productSyncStartedAt?.getTime() ?? 0;
+    const recentlyStarted = user?.productSyncState === "SYNCING"
+      && Date.now() - startedAt < 10 * 60 * 1000;
+    if (!recentlyStarted) {
+      await db.shopifyUser.update({
+        where: { shopDomain },
+        data: { productSyncState: "SYNCING", productSyncStartedAt: new Date() },
+      });
+      void fetch(
+        `${PYTHON_API_URL}/internal/shopify/sync-products?shop_domain=${encodeURIComponent(shopDomain)}`,
+        { method: "POST" },
+      ).catch(() => {});
+    }
+    return { ok: true };
+  }
 
   if (intent === "toggleDynamic") {
     // Pause/resume model. We no longer clear lastDiscoveryAt on toggle-off,
@@ -394,8 +335,17 @@ export const action = async ({ request }) => {
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const { products, auth } = useLoaderData();
+  const { products, auth, productSyncState, productSyncedAt, processingCount } = useLoaderData();
   const fetcher = useFetcher();
+  const revalidator = useRevalidator();
+  const syncFetcher = useFetcher();
+
+  const isBusy = productSyncState === "SYNCING" || processingCount > 0;
+  useEffect(() => {
+    if (!isBusy) return;
+    const t = setInterval(() => revalidator.revalidate(), 2000);
+    return () => clearInterval(t);
+  }, [isBusy, revalidator]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState("all");
@@ -572,6 +522,26 @@ export default function HomePage() {
       heading="Dynamic Pricing"
       subheading={`${filteredProducts.length} of ${products.length} product${products.length === 1 ? "" : "s"}`}
     >
+      <s-stack direction="inline" gap="base" alignment="center">
+        {productSyncState === "ERROR" ? (
+          <s-badge tone="critical">Sync failed</s-badge>
+        ) : isBusy ? (
+          <s-badge tone="info">
+            {processingCount > 0 ? `Updating ${processingCount} product${processingCount === 1 ? "" : "s"}…` : "Updating…"}
+          </s-badge>
+        ) : (
+          <s-badge tone="success">
+            {productSyncedAt ? `Synced ✓ ${new Date(productSyncedAt).toLocaleTimeString()}` : "Synced ✓"}
+          </s-badge>
+        )}
+        <syncFetcher.Form method="post">
+          <input type="hidden" name="intent" value="syncProducts" />
+          <s-button variant="secondary" type="submit" {...(productSyncState === "SYNCING" ? { disabled: true } : {})}>
+            {productSyncState === "ERROR" ? "Retry" : "Refresh"}
+          </s-button>
+        </syncFetcher.Form>
+      </s-stack>
+
       {missingOffline && (
         <s-banner tone="critical">
           <s-text emphasis="bold">App install incomplete.</s-text>{" "}
