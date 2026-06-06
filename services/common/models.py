@@ -58,6 +58,10 @@ class ShopifyUser(Base):
     email         = Column("email",         String)
     firstName     = Column("firstName",     String)
     installedAt   = Column("installedAt",   DateTime(timezone=True), server_default=func.now())
+    productSyncState     = Column("productSyncState",     String, nullable=False, server_default="'IDLE'")
+    productSyncStartedAt = Column("productSyncStartedAt", DateTime(timezone=True), nullable=True)
+    productSyncedAt      = Column("productSyncedAt",      DateTime(timezone=True), nullable=True)
+    productSyncError     = Column("productSyncError",     String, nullable=True)
 
     scrapingConfigs   = relationship("ScrapingConfig",   back_populates="shop")
     scrapedProducts   = relationship("ScrapedProduct",   back_populates="shop")

@@ -41,6 +41,10 @@ model ShopifyUser {
   email         String?
   firstName     String?
   installedAt   DateTime @default(now())
+  productSyncState     String    @default("IDLE") // IDLE | SYNCING | SYNCED | ERROR
+  productSyncStartedAt DateTime?
+  productSyncedAt      DateTime?
+  productSyncError     String?
 
   products          ShopifyProduct[]
   scrapedProducts   ScrapedProduct[]
