@@ -79,7 +79,7 @@ adjusting prices with an automated loop: watch the market, understand it,
 recommend a move, and apply it — all from inside Shopify.
 
 
-Implementation so far
+Features
 =====================
 
 This section describes what is actually working in the product today,
