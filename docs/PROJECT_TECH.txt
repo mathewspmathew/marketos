@@ -7,8 +7,8 @@ One-line:
 Top-level shape:
   shopify_ui/   → React Router 7 embedded Shopify app (frontend + webhooks)
   services/     → Python Celery microservices (backend pipeline)
-  prisma/       → shared Postgres schema (pgvector)
-  docker-compose.yml → Redis + workers + beat + api_gateway
+  shopify_ui/prisma/schema.prisma → shared Postgres schema (pgvector)
+  docker-compose.yml → Redis + workers + beat + api_gateway + chatbot_svc
 
 Languages / runtimes:
   - TypeScript / React Router 7 (frontend)
@@ -40,7 +40,7 @@ External APIs:
   - Firecrawl       — web scraping
   - Groq            — LLM extraction + chatbot inference (llama-3.3-70b-versatile)
   - Serper          — competitor discovery (Google SERP)
-  - Vertex AI       — text + image embeddings (text-multilingual-embedding-002)
+  - Vertex AI       — text (text-embedding-004) + image (multimodalembedding@001) embeddings, 768D
   - Shopify Admin GraphQL — read (orders/inventory) + write (price update)
 
 Services (queue → responsibility):
@@ -54,17 +54,23 @@ Services (queue → responsibility):
                      shopify_semantic_queue merchant variant semantics
   embedding_svc      embedding_queue      Vertex AI → pgvector
   matcher_svc        match_queue          vector sim → ProductMatch / ProductLevelMatch
-  pricing_svc        pricing_queue        PriceDecision + apply via RR proxy
+  pricing_svc        stats_queue          competitor price stats + elasticity inputs
+                     pricing_queue        PriceDecision (v1: suggestion-only, no auto-apply)
   suggestion_svc     suggestion_queue     ProductSuggestion fan-out
-                     shopify_sync_queue   SalesAggregate recompute
-  shopify_svc        stats_queue          daily orders/inventory rebuild
+  shopify_svc        shopify_sync_queue   merchant orders/inventory + sales-aggregate rebuild
+                     writer_queue         write approved price back to Shopify Admin
   chatbot_svc        HTTP/SSE             Pydantic-AI agent (search/stats/preview/apply tools)
+                     maintenance_queue    prune_old_sessions (beat, daily 03:15)
   guardian_svc       —                    (stub) safety/rule enforcement
   observability_mcp  —                    (stub) MCP server for ops introspection
   common             —                    shared: Celery app, db, models, GCS, embed, Groq, Shopify
 
+  Runtime note: on the dev laptop one pricing-worker consumes
+  stats_queue + pricing_queue + writer_queue + shopify_sync_queue together
+  (split into separate workers in production for independent scaling).
+
 Data model highlights (prisma/schema.prisma):
-  Session, ShopAuth, ShopSettings
+  Session, ShopSettings
   ShopifyUser, ShopifyProduct, ShopifyVariant, ShopifyEmbedding
   ScrapedProduct, ScrapedVariant, ProductEmbedding
   ScrapingConfig, ProductUrl (UrlStatus, ScrapeStatus)

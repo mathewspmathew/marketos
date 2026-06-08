@@ -4,24 +4,40 @@
 
 ## Core Idea (What's Built So Far)
 
-A Shopify merchant installs the app, configures competitor URLs, and the system runs an end-to-end loop:
+A Shopify merchant installs the app and switches **dynamic pricing** on for the
+products they want to compete on. From there the system runs an end-to-end loop:
 
-1. **Scrape** competitor product pages on a schedule (Firecrawl)
-2. **Extract** structured data — title, variants, prices, images — via Groq LLM
-3. **Persist** raw markdown + images to GCS, structured data to PostgreSQL
-4. **Semantic-summarize** every variant (merchant + competitor) via Groq into a single text blob
-5. **Embed** that text + first image into 768D vectors using Vertex AI, stored in pgvector
-6. **Match** each merchant variant against competitor variants via per-domain HNSW similarity + hybrid thresholds → `ProductMatch`
-7. **Suggest** new title / description / price per merchant product, aggregated from matched competitors (Groq for copy, statistics for price) → `ProductSuggestion` + `VariantPriceSuggestion`
-8. **Apply** — merchant reviews and approves in the Shopify UI; approved values are written back to Shopify via Admin API
+1. **Discover** competitor listings for each dynamic-pricing-enabled product
+   (Serper / Google SERP) → `CompetitorCandidate`; the merchant accepts the
+   genuine matches, which become tracked `ProductUrl`s
+2. **Scrape** each accepted competitor page on a schedule (Firecrawl)
+3. **Extract** structured data — title, variants, prices, images — via Groq LLM
+4. **Persist** raw markdown + images to GCS, structured data to PostgreSQL
+5. **Semantic-summarize** every variant (merchant + competitor) via Groq into a
+   single text blob
+6. **Embed** that text + first image into 768D vectors using Vertex AI, stored
+   in pgvector
+7. **Match** competitor variants/products against merchant variants/products via
+   per-domain HNSW similarity + hybrid thresholds → `ProductMatch` (variant↔variant)
+   and `ProductLevelMatch` (product↔product)
+8. **Measure the market** — roll matched competitor prices into per-variant
+   stats and elasticity inputs (`CompetitorPriceObservation`,
+   `VariantCompetitorStats`)
+9. **Decide a price** per variant/product from the competitor reference and the
+   product's pricing tier → `PriceDecision`
+10. **Suggest** new title / description / price per merchant product → `ProductSuggestion`
+11. **Apply** — merchant reviews and approves in the Shopify UI; approved values
+    are written back to Shopify via Admin API (v1 is suggestion-only — no
+    auto-apply)
+
+A Pydantic-AI **chat assistant** sits alongside the UI and can answer questions
+over this data and take guarded actions (toggle dynamic pricing, apply a price).
 
 ---
 
 ## User Flow Diagram (with files + dispatch path)
 
-> Visual version: [`docs/marketos_flow.png`](docs/marketos_flow.png) — regenerate via `uv run python scripts/generate_flow_diagram.py`.
-
-![MarketOS data flow](docs/marketos_flow.png)
+> Visual version: [`docs/ARCHITECTURE.svg`](ARCHITECTURE.svg).
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
@@ -32,59 +48,76 @@ A Shopify merchant installs the app, configures competitor URLs, and the system 
         ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
 │  Shopify UI  —  shopify_ui/app/routes/                                    │
-│    • app.jsx                  shell / nav                                 │
-│    • app._index.jsx           dashboard                                   │
-│    • app.controller.jsx       create / edit / delete ScrapingConfig       │
-│    • app.matches.jsx          view ProductMatch rows                      │
-│    • app.suggestions.jsx      review + Apply ProductSuggestion            │
+│    • app.jsx / app._index.jsx     shell / dashboard                       │
+│    • app.dynamic.jsx              toggle dynamicPricingEnabled per product │
+│    • app.discover.$id.jsx         accept / reject CompetitorCandidate      │
+│    • app.matches.jsx              view ProductMatch rows                   │
+│    • app.stats.*.jsx              competitor price picture + history       │
+│    • app.suggestions.jsx          review + Apply ProductSuggestion         │
+│    • app.pricing.*.jsx            per-variant price history / controls     │
+│    • app.approve.jsx / app.rules.jsx / app.alerts.jsx                     │
+│    • app.chatbot.jsx              chat assistant (SSE → chatbot_svc)       │
 │    • webhooks.products.{create,update,delete}.jsx                         │
 └───────────────────────────────────────────────────────────────────────────┘
         │                                              │
-        │ merchant saves ScrapingConfig                │ Shopify fires product webhook
-        │ (Prisma JS client)                           │ (create / update)
+        │ merchant toggles dynamic pricing /           │ Shopify fires product webhook
+        │ accepts candidates (Prisma JS client)        │ (create / update / delete)
         ▼                                              ▼
 ┌──────────────────────────────┐         ┌───────────────────────────────────┐
 │  PostgreSQL (Aiven)          │         │  services/api_gateway/main.py     │
 │  + pgvector                  │         │  FastAPI · port 8000              │
 │  shared via Prisma schema    │◀────────│  POST /internal/shopify/          │
-│  prisma/schema.prisma        │  reads  │       product-updated             │
-└──────────────────────────────┘         │  POST /internal/suggestion/       │
-        ▲                                │       regenerate[-product]        │
-        │                                └───────────────────────────────────┘
+│  shopify_ui/prisma/          │  reads  │       product-updated             │
+│      schema.prisma           │         │  POST /internal/suggestion/       │
+└──────────────────────────────┘         │       regenerate[-product]        │
+        ▲                                └───────────────────────────────────┘
         │                                              │
         │                                              │ celery_app.send_task(...)
         │                                              ▼
         │              ┌───────────────────────────────────────────────────┐
         │              │  Redis broker (REDIS_URL)                         │
-        │              │  queues: scraping_queue, extraction_queue,        │
-        │              │          semantic_queue, embedding_queue,         │
-        │              │          match_queue, suggestion_queue,           │
-        │              │          scheduler_queue                          │
+        │              │  queues: discovery_queue, scraping_queue,         │
+        │              │   extraction_queue, semantic_queue,               │
+        │              │   shopify_semantic_queue, embedding_queue,        │
+        │              │   match_queue, stats_queue, pricing_queue,        │
+        │              │   suggestion_queue, shopify_sync_queue,           │
+        │              │   writer_queue, scheduler_queue, maintenance_queue│
         │              └───────────────────────────────────────────────────┘
         │                                              ▲
-        │ celery-beat fires every 30s                  │ send_task
-        │ (services/common/celery_app.py beat_schedule)│
+        │ celery-beat fires check_idle_configs every   │ send_task
+        │ 30s (services/common/celery_app.py)          │
         ▼                                              │
 ┌───────────────────────────────────────────────────────────────────────────┐
 │  scheduler-worker  —  services/scraper_svc/celery_beat.py                 │
-│    • check_idle_configs        (every 30s)                                │
-│        picks IDLE ScrapingConfig rows whose nextScrapAt has passed,       │
-│        sets status=QUEUED, then send_task →                               │
-│          scraper.scrape_listing        (new configs)                      │
-│          scraper.rescrape_product      (per-product refresh,              │
-│                                         domain-spaced countdown)          │
-│    • _shopify_semantic_backfill                                           │
-│        catches ShopifyVariants missing semanticText (dropped webhooks)    │
-│    NOTE: matcher is fully event-driven — no periodic sweep                │
+│    check_idle_configs (every 30s):                                        │
+│    • _tick_enabled_products_discovery  → discovery.search_products        │
+│        for dynamicPricingEnabled products needing candidates              │
+│    • _tick_queued_discovery_jobs       → discovery.search_products        │
+│    • _tick_product_urls                → scraper.rescrape_url (due URLs,   │
+│                                          domain-spaced countdown)         │
+│    • _shopify_semantic_backfill        → catch ShopifyVariants missing    │
+│                                          semanticText (dropped webhooks)  │
+│    NOTE: matcher + pricing are event-driven — no periodic sweep           │
 └───────────────────────────────────────────────────────────────────────────┘
-        │                                                       │
-        │ scraping_queue                                        │ match_queue
-        ▼                                                       ▼
-┌─────────────────────────────────────────────┐    (see matcher block below)
+        │ discovery_queue
+        ▼
+┌─────────────────────────────────────────────┐
+│  discovery-worker                           │
+│  services/discovery_svc/main.py             │
+│    @task discovery.search_products          │
+│  Serper (Google SERP) → competitor product  │
+│  links → UPSERT CompetitorCandidate         │
+│  (merchant accepts in app.discover.$id.jsx  │
+│   → ProductUrl created → scrape)            │
+└─────────────────────────────────────────────┘
+        │ scraping_queue
+        ▼
+┌─────────────────────────────────────────────┐
 │  scraper-worker                             │
 │  services/scraper_svc/scraper.py            │
-│    @task scraper.scrape_listing             │
-│    @task scraper.rescrape_product           │
+│    @task scraper.scrape_candidate           │
+│    @task scraper.rescrape_url               │
+│    @task scraper.scrape_listing / rescrape_product │
 │  helpers: services/scraper_svc/helpers.py   │
 │  gcs:     services/common/gcs_utils.py      │
 │                                             │
@@ -92,47 +125,37 @@ A Shopify merchant installs the app, configures competitor URLs, and the system 
 │  2. Save markdown   → GCS (markdown bucket) │
 │  3. Save images     → GCS (image bucket)    │
 │  4. Upsert ScrapedProduct / ProductUrl      │
-│  5. send_task(scraper.extract_product, ...) │
+│  5. send_task(scraper.extract_candidate…)   │
 └─────────────────────────────────────────────┘
-        │
         │ extraction_queue
         ▼
 ┌─────────────────────────────────────────────┐
 │  extraction-worker                          │
 │  services/scraper_svc/extractor.py          │
+│    @task scraper.extract_candidate          │
 │    @task scraper.extract_product            │
 │    @task scraper.rescrape_extract           │
-│  (concurrency=1, rate_limit=3/m for Groq)   │
+│    @task scraper.expand_listing             │
+│  (concurrency=1 for Groq rate limits)       │
 │                                             │
 │  1. Read GCS markdown                       │
 │  2. Groq LLM → structured JSON              │
-│     (title, variants, prices, specs)        │
 │  3. Upsert ScrapedVariant rows              │
 │  4. set_next_scrap_at / mark_task_done      │
-│  5. send_task(                              │
-│       scraper.generate_variant_semantics)   │
+│  5. send_task(generate_variant_semantics)   │
 └─────────────────────────────────────────────┘
-        │
-        │ semantic_queue
-        ▼
-┌─────────────────────────────────────────────┐         ┌──────────────────────────────────────┐
-│  semantic-worker                            │◀────────│  Shopify-side variants (parallel)    │
-│  services/scraper_svc/semantics.py          │         │                                      │
-│    @task scraper.generate_variant_semantics │         │  webhooks.products.create.jsx        │
-│      (competitor variants)                  │         │  webhooks.products.update.jsx        │
-│    @task scraper.generate_shopify_variant_  │  POST   │     ↓ Prisma upsert                  │
-│            semantics                        │◀────────│  ShopifyProduct / ShopifyVariant     │
-│      (merchant's own variants)              │ /internal│     ↓ fetch                          │
-│                                             │ /shopify│  services/api_gateway/main.py        │
-│  Groq → one semanticText per variant        │ /product│     ↓ send_task                      │
-│  (concurrency=1, rate_limit=3/m)            │ -updated│  scraper.generate_shopify_variant_   │
-│                                             │         │       semantics                      │
-│  send_task →                                │         └──────────────────────────────────────┘
-│    embedder.generate_embeddings  (scraped)  │
-│    shopify_embedder.generate_shopify_       │
-│      embeddings (merchant)                  │
+        │ semantic_queue                          shopify_semantic_queue
+        ▼                                         ▲ (merchant side, parallel)
+┌─────────────────────────────────────────────┐  │
+│  semantic-worker (competitor)               │  │  shopify-semantic-worker
+│  shopify-semantic-worker (merchant)         │  │  webhooks.products.* → api_gateway
+│  services/scraper_svc/semantics.py          │  │  → generate_shopify_variant_semantics
+│    @task scraper.generate_variant_semantics │  │  (also product-level search query
+│    @task scraper.generate_shopify_variant_  │◀─┘   generation for ShopifyProducts)
+│            semantics                        │
+│  Groq → one semanticText per variant        │
+│  send_task → embedder.* / shopify_embedder.*│
 └─────────────────────────────────────────────┘
-        │
         │ embedding_queue
         ▼
 ┌─────────────────────────────────────────────┐
@@ -141,77 +164,80 @@ A Shopify merchant installs the app, configures competitor URLs, and the system 
 │    @task embedder.generate_embeddings       │
 │    @task shopify_embedder.generate_shopify_ │
 │            embeddings                       │
-│  (rate_limit=10/m on Vertex)                │
 │                                             │
 │  1. Read semanticText + image URL from DB   │
-│  2. Vertex text-embedding (768D)            │
-│  3. Vertex multimodal image embedding (768D)│
+│  2. Vertex text-embedding-004 (768D)        │
+│  3. Vertex multimodalembedding@001 (768D)   │
 │  4. Raw SQL INSERT → ProductEmbedding /     │
 │     ShopifyEmbedding (pgvector columns)     │
+│  5. Competitor PE written →                 │
+│     send_task matcher.match_for_scraped_product │
 └─────────────────────────────────────────────┘
-        │
-        │ Event-driven matcher trigger from embedding tail:
-        │   • Competitor PE written →                                │
-        │     send_task matcher.match_for_shop(shop_domain, full=False)
-        │   • Shopify SE written →                                   │
-        │     send_task matcher.match_for_variant(shop_domain, vid)
         │ match_queue
         ▼
 ┌─────────────────────────────────────────────┐
 │  matcher-worker                             │
 │  services/matcher_svc/main.py               │
 │  services/matcher_svc/threshold.py          │
-│    @task matcher.match_for_shop             │
-│    @task matcher.match_for_variant          │
-│                                             │
-│  Dirty-flag selector (full=False):          │
-│    • PE.matchedAt < PE.vectorizedAt OR NULL │
-│      → re-match every variant in shop       │
-│    • else SE.matchedAt < SE.updatedAt       │
-│      → only those merchant variants         │
-│  (full=True kept as manual escape hatch     │
-│   for threshold/algo changes)               │
+│    @task matcher.match_for_scraped_product  │
 │                                             │
 │  1. Per-domain HNSW similarity              │
-│     (ef_search=100, limit=50)               │
 │  2. Hybrid threshold per competitor domain  │
-│  3. UPSERT ProductMatch (matchScore)        │
-│  4. Stamp SE.matchedAt = NOW() (per variant)│
-│  5. Stamp PE.matchedAt = NOW() (per shop,   │
-│     after fan-out — optimistic)             │
-│  Redis shop-lock prevents overlap (30 min)  │
+│  3. UPSERT ProductMatch (variant↔variant)   │
+│     + ProductLevelMatch (product↔product,   │
+│       MatchConfidenceTier)                  │
+│  4. send_task → stats / pricing downstream  │
+│  Redis shop-lock prevents overlap           │
 └─────────────────────────────────────────────┘
-        │
+        │ stats_queue
+        ▼
+┌─────────────────────────────────────────────┐
+│  pricing-worker  (stats half)               │
+│  services/pricing_svc/stats.py              │
+│    @task stats.recompute_for_variant        │
+│    @task stats.recompute_after_observation  │
+│                                             │
+│  Roll matched competitor prices into        │
+│  CompetitorPriceObservation +               │
+│  VariantCompetitorStats (min/median/max,    │
+│  elasticity inputs) → send_task pricing.*   │
+└─────────────────────────────────────────────┘
+        │ pricing_queue
+        ▼
+┌─────────────────────────────────────────────┐
+│  pricing-worker  (decide half)              │
+│  services/pricing_svc/main.py               │
+│    @task pricing.decide_for_product         │
+│    @task pricing.apply_price                │
+│                                             │
+│  Decide per-variant / per-product price     │
+│  from competitor reference + PricingTier    │
+│  → UPSERT PriceDecision (v1: suggestion-only)│
+└─────────────────────────────────────────────┘
         │ suggestion_queue
-        │ (triggered from UI "Re-suggest" via api_gateway)
         ▼
 ┌─────────────────────────────────────────────┐
 │  suggestion-worker                          │
 │  services/suggestion_svc/main.py            │
 │    @task suggestion.suggest_for_shop        │
 │    @task suggestion.suggest_for_product     │
-│  (concurrency=1, rate_limit=3/m on Groq)    │
 │                                             │
-│  1. Pull merchant variants + matched        │
-│     ScrapedVariants (matchScore ≥ 65)       │
-│  2. Filter INR + IQR outliers               │
-│  3. Per-variant min/median/max →            │
-│     UPSERT VariantPriceSuggestion           │
-│  4. Aggregate competitor titles/descs →     │
-│     Groq → UPSERT ProductSuggestion         │
-│     (suggestedTitle, suggestedDescription,  │
-│      rationale)                             │
-│     Preserves edited* / chosenPrice fields  │
+│  Aggregate matched competitors → Groq copy  │
+│  + price → UPSERT ProductSuggestion         │
+│  (suggestedTitle/Description, matchCount,    │
+│   avgMatchScore, SuggestionStatus;          │
+│   preserves edited* / applied* fields)      │
 └─────────────────────────────────────────────┘
-        │
-        │ merchant opens
+        │ merchant opens, approves
         ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
-│  shopify_ui/app/routes/app.suggestions.jsx                                │
-│    • shows VariantPriceSuggestion + ProductSuggestion                     │
+│  shopify_ui/app/routes/app.suggestions.jsx (+ internal.apply-price.jsx)   │
+│    • shows ProductSuggestion + competitor stats                           │
 │    • merchant edits or Approves                                           │
-│    • on Apply: route writes back to Shopify Admin API                     │
-│      using the merchant's session token                                   │
+│    • on Apply: writes back to Shopify Admin API (productVariantsBulkUpdate)│
+│      via the merchant's session token                                     │
+│  Write-back jobs: services/shopify_svc/main.py (writer_queue):            │
+│    @task shopify_writer.apply_decision / sweep_pending                    │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -219,37 +245,50 @@ A Shopify merchant installs the app, configures competitor URLs, and the system 
 
 | Stage                | Table / Store                                  |
 |----------------------|------------------------------------------------|
-| Config               | `ScrapingConfig`, `ProductUrl`                 |
+| Per-shop config      | `ShopSettings`, `ScrapingConfig`               |
+| Discovery            | `DiscoveryJob`, `CompetitorCandidate`          |
+| Tracked competitor URLs | `ProductUrl` (`UrlStatus`, `ScrapeStatus`)  |
 | Scrape raw           | GCS markdown bucket, GCS image bucket          |
 | Scrape structured    | `ScrapedProduct`, `ScrapedVariant`             |
 | Shopify mirror       | `ShopifyProduct`, `ShopifyVariant`             |
 | Semantic text        | `semanticText` column on both variant tables   |
 | Vectors (768D)       | `ProductEmbedding`, `ShopifyEmbedding` (pgvector, HNSW idx; `matchedAt` tracks last consumed by matcher) |
-| Matches              | `ProductMatch` (shopify_variant ↔ scraped_variant, score)    |
-| Suggestions          | `ProductSuggestion`, `VariantPriceSuggestion`  |
+| Matches              | `ProductMatch` (variant↔variant), `ProductLevelMatch` (product↔product, `MatchConfidenceTier`) |
+| Price inputs         | `CompetitorPriceObservation`, `VariantCompetitorStats` |
+| Price decisions      | `PriceDecision` (`PricingTier`)                |
+| Suggestions          | `ProductSuggestion` (`SuggestionStatus`)       |
+| Chat                 | `ChatSession`, `ChatMessage`, `ChatPreview` (`ChatRole`, `PreviewKind`) |
 | Sessions             | `Session` (Shopify OAuth)                      |
 
 ---
 
 ## Celery Task / Queue Map
 
-| Queue              | Task                                              | File                                  |
-|--------------------|---------------------------------------------------|---------------------------------------|
-| `scheduler_queue`  | `services.scraper_svc.celery_beat.check_idle_configs` | `services/scraper_svc/celery_beat.py` |
-| `scraping_queue`   | `scraper.scrape_listing`                          | `services/scraper_svc/scraper.py`     |
-| `scraping_queue`   | `scraper.rescrape_product`                        | `services/scraper_svc/scraper.py`     |
-| `extraction_queue` | `scraper.extract_product`                         | `services/scraper_svc/extractor.py`   |
-| `extraction_queue` | `scraper.rescrape_extract`                        | `services/scraper_svc/extractor.py`   |
-| `semantic_queue`   | `scraper.generate_variant_semantics`              | `services/scraper_svc/semantics.py`   |
-| `semantic_queue`   | `scraper.generate_shopify_variant_semantics`      | `services/scraper_svc/semantics.py`   |
-| `embedding_queue`  | `embedder.generate_embeddings`                    | `services/embedding_svc/main.py`      |
-| `embedding_queue`  | `shopify_embedder.generate_shopify_embeddings`    | `services/embedding_svc/main.py`      |
-| `match_queue`      | `matcher.match_for_shop`                          | `services/matcher_svc/main.py`        |
-| `match_queue`      | `matcher.match_for_variant`                       | `services/matcher_svc/main.py`        |
-| `suggestion_queue` | `suggestion.suggest_for_shop`                     | `services/suggestion_svc/main.py`     |
-| `suggestion_queue` | `suggestion.suggest_for_product`                  | `services/suggestion_svc/main.py`     |
+| Queue                   | Task                                              | File                                  |
+|-------------------------|---------------------------------------------------|---------------------------------------|
+| `scheduler_queue`       | `services.scraper_svc.celery_beat.check_idle_configs` | `services/scraper_svc/celery_beat.py` |
+| `discovery_queue`       | `discovery.search_products`                       | `services/discovery_svc/main.py`      |
+| `scraping_queue`        | `scraper.scrape_listing` / `rescrape_product`     | `services/scraper_svc/scraper.py`     |
+| `scraping_queue`        | `scraper.scrape_candidate` / `rescrape_url`       | `services/scraper_svc/scraper.py`     |
+| `extraction_queue`      | `scraper.extract_product` / `rescrape_extract`    | `services/scraper_svc/extractor.py`   |
+| `extraction_queue`      | `scraper.extract_candidate` / `expand_listing`    | `services/scraper_svc/extractor.py`   |
+| `semantic_queue`        | `scraper.generate_variant_semantics`              | `services/scraper_svc/semantics.py`   |
+| `shopify_semantic_queue`| `scraper.generate_shopify_variant_semantics`      | `services/scraper_svc/semantics.py`   |
+| `embedding_queue`       | `embedder.generate_embeddings`                    | `services/embedding_svc/main.py`      |
+| `embedding_queue`       | `shopify_embedder.generate_shopify_embeddings`    | `services/embedding_svc/main.py`      |
+| `match_queue`           | `matcher.match_for_scraped_product`               | `services/matcher_svc/main.py`        |
+| `stats_queue`           | `stats.recompute_for_variant` / `recompute_after_observation` | `services/pricing_svc/stats.py` |
+| `pricing_queue`         | `pricing.decide_for_product` / `apply_price`      | `services/pricing_svc/main.py`        |
+| `suggestion_queue`      | `suggestion.suggest_for_shop` / `suggest_for_product` | `services/suggestion_svc/main.py` |
+| `shopify_sync_queue`    | `shopify_sync.recompute_sales_aggregate` / `pull_products` | `services/shopify_svc/main.py`  |
+| `writer_queue`          | `shopify_writer.apply_decision` / `sweep_pending` | `services/shopify_svc/main.py`        |
+| `maintenance_queue`     | `chatbot.prune_old_sessions` (beat, daily 03:15)  | `services/chatbot_svc/prune.py`       |
 
-Queue routing and beat schedule are defined in `services/common/celery_app.py`. Docker containers per queue are declared in `docker-compose.yml`.
+Queue routing and the beat schedule are defined in `services/common/celery_app.py`.
+Docker containers per worker are declared in `docker-compose.yml`. On the dev
+laptop a single `pricing-worker` consumes `stats_queue`, `pricing_queue`,
+`writer_queue`, and `shopify_sync_queue` together; split into separate workers in
+production for independent scaling and rate-limit isolation.
 
 ---
 
@@ -284,8 +323,10 @@ Queue routing and beat schedule are defined in `services/common/celery_app.py`. 
 | Google Cloud AI Platform (Vertex AI) | 1.148.1 |
 | Google Cloud Storage | 3.10.1 |
 | Pydantic | 2.13.3 |
+| Pydantic-AI (chatbot agent) | — |
 | SQLAlchemy | 2.0.49 |
 | FastAPI | 0.136.1 |
+| Logfire (observability) | — |
 
 ### Infrastructure
 | Component | Details |
@@ -293,10 +334,12 @@ Queue routing and beat schedule are defined in `services/common/celery_app.py`. 
 | Database | PostgreSQL + pgvector extension (768D vectors, HNSW idx) |
 | ORM | Prisma (shared schema, JS + Python clients) + SQLAlchemy (raw pgvector + matcher reads) |
 | Queue broker | Redis (also used for shop locks) |
-| Embeddings | Vertex AI (text + multimodal image, 768D) |
+| Embeddings | Vertex AI — `text-embedding-004` (text) + `multimodalembedding@001` (image), 768D |
 | Scraping | Firecrawl API |
-| LLM (extract / semantics / copy) | Groq (llama-3.1-8b-instant) |
+| Discovery | Serper (Google SERP) |
+| LLM (extract / semantics / copy) | Groq (`llama-3.1-8b-instant`) |
+| LLM (chat assistant) | Groq (`llama-3.3-70b-versatile`) via Pydantic-AI |
 | Object storage | Google Cloud Storage (markdown + image buckets) |
-| Internal API | FastAPI (`services/api_gateway/main.py`, port 8000, Docker-network only) |
+| Internal API | FastAPI (`services/api_gateway/main.py`, port 8000) + chatbot (`services/chatbot_svc/app.py`, port 8088) |
 
 ---
