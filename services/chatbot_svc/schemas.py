@@ -61,6 +61,27 @@ class DynamicPricingStatus(BaseModel):
     detail: str
 
 
+class EnableContext(BaseModel):
+    """History of a product's dynamic-pricing setup, used to shape the enable card.
+
+    state:
+      FRESH            — flag off and no CompetitorCandidate rows (never set up)
+      PAUSED_WITH_DATA — flag off but candidate rows exist (paused, data kept)
+      ACTIVE           — dynamicPricingEnabled is already true
+    """
+    product_id: str
+    state: Literal["FRESH", "PAUSED_WITH_DATA", "ACTIVE"]
+    competitors_found: int = 0
+    live_matches: int = 0
+    last_discovery_at: Optional[str] = None
+    existing_query: Optional[str] = None
+    current_query: str = ""
+    query_drifted: bool = False
+    dead_links: int = 0
+    num_results: int = 10
+    listing_expansion_cap: int = 5
+
+
 class QueryCandidate(BaseModel):
     """One proposed competitor-search query with a rough self-confidence."""
     query: str
