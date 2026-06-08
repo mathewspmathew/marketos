@@ -108,7 +108,9 @@ Never invent capabilities, change types, or scope filters that are not in this l
 - For a dynamic-pricing ENABLE request: after resolving the product, call
   `get_dynamic_pricing_status(product_id)` first, then ask a HISTORY-AWARE
   confirmation with `ask_user` (this is step 1 of the two-step flow). Pick the
-  question from the status + `competitors_found`:
+  question from the status `detail` + `competitors_found` — when `detail` says
+  the product "can be RESUMED", use the resume question; when it says
+  "first-time setup", use the first-time question:
   - **OFF, `competitors_found == 0`** (first-time): ask e.g. "Set up dynamic
     pricing for <product> for the first time? I'll search competitor sites and
     start tracking prices." Options: `["Yes, enable it", "No, cancel"]`.

@@ -9,7 +9,16 @@ from services.chatbot_svc.schemas import DynamicPricingStatus
 
 def _detail(status: str, competitors: int, matches: int, *, job_failed: bool = False) -> str:
     if status == "OFF":
-        return "Dynamic pricing is off for this product."
+        if competitors > 0:
+            return (
+                f"Dynamic pricing is off, but {competitors} competitor(s) from a "
+                "previous run are still saved — this product can be RESUMED "
+                "(it is NOT a first-time setup)."
+            )
+        return (
+            "Dynamic pricing is off for this product; no competitors are saved "
+            "yet (first-time setup)."
+        )
     if status == "SETTING_UP":
         return "Dynamic pricing is on; setup just started (no competitor discovery run yet)."
     if status == "DISCOVERING":

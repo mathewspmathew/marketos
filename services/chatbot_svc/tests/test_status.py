@@ -23,6 +23,25 @@ def _enable(pid):
 def test_status_off(seed_shop):
     st = get_dynamic_pricing_status(seed_shop, _product_id(seed_shop))
     assert st.status == "OFF"
+    assert "first-time setup" in st.detail.lower()
+
+
+def test_status_off_with_saved_competitors_says_resume(seed_shop):
+    import uuid
+    pid = _product_id(seed_shop)
+    with get_db() as s:
+        s.add(CompetitorCandidate(
+            id=str(uuid.uuid4()), shopDomain=seed_shop, shopifyProductId=pid,
+            url="https://x.test/p", domain="x.test", source="serper_search",
+            status="SCRAPED",
+        ))
+    st = get_dynamic_pricing_status(seed_shop, pid)
+    assert st.status == "OFF"
+    assert st.competitors_found == 1
+    # OFF + saved competitors must read as a resume, explicitly negating
+    # first-time setup so the agent picks the resume question.
+    assert "resumed" in st.detail.lower()
+    assert "not a first-time" in st.detail.lower()
 
 
 def test_status_setting_up(seed_shop):
