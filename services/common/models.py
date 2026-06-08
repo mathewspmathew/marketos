@@ -45,6 +45,12 @@ _discovery_status = PgEnum(
     create_type=False,
 )
 
+_match_confidence_tier = PgEnum(
+    "CONFIRMED", "LIKELY", "WEAK",
+    name="MatchConfidenceTier",
+    create_type=False,
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Multi-tenancy root — one row per installed Shopify store
@@ -318,6 +324,23 @@ class ProductMatch(Base):
     shopifyVariant    = relationship("ShopifyVariant", back_populates="productMatches")
     competitorVariant = relationship("ScrapedVariant", back_populates="productMatches")
     competitorProduct = relationship("ScrapedProduct", back_populates="productMatches")
+
+
+class ProductLevelMatch(Base):
+    __tablename__ = "ProductLevelMatch"
+    __table_args__ = (
+        UniqueConstraint(
+            "shopifyProductId", "scrapedProductId",
+            name="ProductLevelMatch_shopifyProductId_scrapedProductId_key",
+        ),
+    )
+
+    id               = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    shopDomain       = Column("shopDomain",       String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    shopifyProductId = Column("shopifyProductId", String, ForeignKey("ShopifyProduct.id", ondelete="CASCADE"), nullable=False)
+    scrapedProductId = Column("scrapedProductId", String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
+    confidenceTier   = Column("confidenceTier",   _match_confidence_tier, nullable=False)
+    rejectedByMerchant = Column("rejectedByMerchant", Boolean, nullable=False, default=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
