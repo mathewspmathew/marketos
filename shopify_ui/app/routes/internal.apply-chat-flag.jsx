@@ -63,7 +63,11 @@ export const action = async ({ request }) => {
     const allAlready = current.length > 0 && current.every(
       (p) => p.dynamicPricingEnabled === targetEnabled,
     );
-    if (allAlready) {
+    // Only no-op the ENABLE path. A disable preview must still run its
+    // teardown (pause/delete) even when the flag is already off, because
+    // "already disabled" says nothing about whether competitor data still
+    // needs deleting.
+    if (targetEnabled && allAlready) {
       await prisma.chatPreview.update({
         where: { id: preview_id },
         data: { appliedAt: new Date(), appliedBy: applied_by ?? null,
@@ -123,11 +127,13 @@ export const action = async ({ request }) => {
     // Resume cadence chosen on the card (paused-with-data). Null clears any
     // per-product override and falls back to ShopSettings cadence.
     if (body.frequencyInterval != null) {
+      const VALID_UNITS = ["never", "minute", "hour", "day"];
+      const unit = VALID_UNITS.includes(body.frequencyUnit) ? body.frequencyUnit : "day";
       await prisma.shopifyProduct.updateMany({
         where: { id: { in: productIds }, shopDomain },
         data: {
           frequencyInterval: parseInt(body.frequencyInterval, 10),
-          frequencyUnit: body.frequencyUnit || "daily",
+          frequencyUnit: unit,
         },
       });
     }

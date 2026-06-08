@@ -19,7 +19,7 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
   const [cap, setCap] = useState(String(change.listingExpansionCap ?? 5));
   // Resume cadence (paused-with-data only). "" / "nofreq" => no schedule change.
   const [freqInterval, setFreqInterval] = useState("");
-  const [freqUnit, setFreqUnit] = useState("daily");
+  const [freqUnit, setFreqUnit] = useState("day");
   // Disable-form local state. Default = pause (keep data).
   const [mode, setMode] = useState("pause");
 
@@ -120,9 +120,9 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
                   value={freqUnit}
                   onChange={(e) => setFreqUnit(e.currentTarget.value)}
                 >
-                  <s-option value="hourly">Hours</s-option>
-                  <s-option value="daily">Days</s-option>
-                  <s-option value="weekly">Weeks</s-option>
+                  <s-option value="minute">Minutes</s-option>
+                  <s-option value="hour">Hours</s-option>
+                  <s-option value="day">Days</s-option>
                 </s-select>
               </s-stack>
             )}
