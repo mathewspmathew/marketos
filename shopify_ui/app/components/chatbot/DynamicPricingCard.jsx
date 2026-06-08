@@ -17,11 +17,16 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
   const [rescrape, setRescrape] = useState(false);
   const [num, setNum] = useState(String(change.numResults ?? 10));
   const [cap, setCap] = useState(String(change.listingExpansionCap ?? 5));
+  // Resume cadence (paused-with-data only). "" / "nofreq" => no schedule change.
+  const [freqInterval, setFreqInterval] = useState("");
+  const [freqUnit, setFreqUnit] = useState("daily");
   // Disable-form local state. Default = pause (keep data).
   const [mode, setMode] = useState("pause");
 
   const count = summary.count ?? (preview.variantIds?.length ?? 0);
   const dc = summary.deleteCounts || {};
+  const ctx = summary.enableContext || {};
+  const paused = ctx.state === "PAUSED_WITH_DATA";
 
   // Search query the merchant can edit or pick via Query Studio (enable only).
   const [query, setQuery] = useState(change.query ?? "");
@@ -38,6 +43,8 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
         numResults: clamp(num, 1, 50, 10),
         listingExpansionCap: clamp(cap, 1, 50, 5),
         query: query.trim(),
+        frequencyInterval: freqInterval === "" ? null : clamp(freqInterval, 1, 365, 1),
+        frequencyUnit: freqInterval === "" ? null : freqUnit,
       });
     } else {
       onApply(preview, { enable: false, mode });
@@ -51,6 +58,22 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
           {enable ? "Turn on dynamic pricing" : "Turn off dynamic pricing"}
         </s-text>
         <s-text>{count} {count === 1 ? "product" : "products"}</s-text>
+
+        {paused && (
+          <s-banner tone="info">
+            <s-text>
+              {`Already set up: ${ctx.competitors_found ?? 0} competitor(s), `}
+              {`${ctx.live_matches ?? 0} matched`}
+              {ctx.last_discovery_at ? ` · last fetched ${new Date(ctx.last_discovery_at).toLocaleDateString()}` : ""}
+              {ctx.dead_links ? ` · ${ctx.dead_links} dead link(s)` : ""}
+            </s-text>
+            {ctx.query_drifted && (
+              <s-text tone="subdued">
+                {`Existing competitors were found with "${ctx.existing_query}". Your current query is "${ctx.current_query}". Resume keeps the old set; edit the query below to find a new one.`}
+              </s-text>
+            )}
+          </s-banner>
+        )}
 
         {enable ? (
           <s-stack direction="block" gap="base">
@@ -85,6 +108,24 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
               value={query}
               onInput={(e) => setQuery(e.currentTarget.value)}
             />
+            {paused && (
+              <s-stack direction="inline" gap="base" align="end">
+                <s-text-field
+                  label="Auto-refresh every (blank = no schedule)"
+                  type="number" value={freqInterval} min="1" max="365"
+                  onInput={(e) => setFreqInterval(e.currentTarget.value)}
+                />
+                <s-select
+                  label="Unit"
+                  value={freqUnit}
+                  onChange={(e) => setFreqUnit(e.currentTarget.value)}
+                >
+                  <s-option value="hourly">Hours</s-option>
+                  <s-option value="daily">Days</s-option>
+                  <s-option value="weekly">Weeks</s-option>
+                </s-select>
+              </s-stack>
+            )}
             <s-button onClick={() => setShowStudio((v) => !v)}>
               {showStudio ? "Hide Query Studio" : "Find a better query"}
             </s-button>
