@@ -14,8 +14,17 @@ Design:
   - Scope is the scraped product, not the shop. No HNSW, no per-domain
     threshold — the candidate set is tiny (N merchant variants × M scraped
     variants for one product pair).
-  - Hard filters (categoryTop, gender, price ratio, brand-if-both-present,
-    rejectedByMerchant guard) match the previous matcher.
+  - Hard filters: gender, rejectedByMerchant guard. Vector similarity +
+    threshold do the primary discriminating.
+  - Category and brand are intentionally NOT hard-gated. Both are free-form
+    strings (LLM-assigned category; scraped vendor), so the same product is
+    routinely labelled differently on the merchant vs. scraped side — e.g.
+    category "home" vs "household", or vendor "Fevicol" vs "Pidilite" vs
+    "PEDILITE" for the identical glue. An exact-equality hard gate silently
+    dropped valid matches, and structurally guaranteed zero matches for
+    private-label merchants (own brand never equals a competitor's brand).
+    Brand still feeds compute_confidence (bonus) and the CONFIRMED tier
+    requirement in scoring.py, so it survives as a soft signal.
   - One scraped product can have multiple CompetitorCandidate rows pointing
     at it (two merchant products independently discovered the same URL). We
     match against every non-rejected candidate's merchant product.
@@ -99,12 +108,10 @@ def _match_one_pair(
             '       pe."prodId"      AS competitor_prod_id, '
             '       sp_m.vendor      AS m_vendor, '
             '       sp_m."productType" AS m_type, '
-            '       sp_m."categoryTop" AS m_category, '
             '       sp_m."productGender" AS m_gender, '
             '       sv."currentPrice" AS m_price, '
             '       sp_c.vendor      AS c_vendor, '
             '       sp_c."productType" AS c_type, '
-            '       sp_c."categoryTop" AS c_category, '
             '       sp_c."productGender" AS c_gender, '
             '       scv."currentPrice" AS c_price, '
             '       ss.currency      AS shop_currency, '
@@ -125,12 +132,6 @@ def _match_one_pair(
             '  AND pe."variantId" IS NOT NULL '
             '  AND se."vectorText" IS NOT NULL '
             '  AND pe."vectorText" IS NOT NULL '
-            # Brand pre-filter — only fires when BOTH sides have a vendor.
-            '  AND ( sp_m.vendor IS NULL OR sp_c.vendor IS NULL '
-            '        OR LOWER(sp_m.vendor) = LOWER(sp_c.vendor) ) '
-            # Top-level category hard gate. Null on either side stays permissive.
-            '  AND ( sp_m."categoryTop" IS NULL OR sp_c."categoryTop" IS NULL '
-            '        OR sp_m."categoryTop" = sp_c."categoryTop" ) '
             # Gender hard gate.
             '  AND ( sp_m."productGender" IS NULL OR sp_c."productGender" IS NULL '
             '        OR sp_m."productGender" = sp_c."productGender" ) '
