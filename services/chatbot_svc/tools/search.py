@@ -131,23 +131,45 @@ def get_variant(shop_domain: str, variant_id: str) -> VariantSummary | None:
         )
 
 
-DEFAULT_SIM_THRESHOLD = 0.3
+STRONG_SIM = 0.5   # best word_similarity >= this -> confident match
+WEAK_FLOOR = 0.23  # below this -> not a match at all (drops nonsense trigram noise ~0.21)
+
+
+def _to_resolved(s, p, *, score: float, fuzzy: bool, weak: bool) -> ResolvedProduct:
+    vids = (
+        s.execute(select(ShopifyVariant.id).where(ShopifyVariant.productId == p.id))
+        .scalars()
+        .all()
+    )
+    return ResolvedProduct(
+        product_id=p.id,
+        title=p.title,
+        vendor=p.vendor,
+        variant_ids=list(vids),
+        dynamic_pricing_enabled=bool(p.dynamicPricingEnabled),
+        fuzzy=fuzzy,
+        score=round(float(score), 3),
+        weak=weak,
+    )
 
 
 def resolve_product(
     shop_domain: str,
     reference: str,
     limit: int = 10,
-    threshold: float = DEFAULT_SIM_THRESHOLD,
+    *,
+    strong_sim: float = STRONG_SIM,
+    weak_floor: float = WEAK_FLOOR,
 ) -> list[ResolvedProduct]:
     """Resolve a free-text product reference to real ShopifyProducts in this shop.
 
-    Exact (case-insensitive) title match wins and is returned as a non-fuzzy match.
-    Otherwise fall back to trigram word-similarity (pg_trgm), which tolerates typos,
-    dropped/reordered words, and partial names; those results are flagged fuzzy=True
-    and ranked by similarity. Empty list means no match above `threshold`.
+    Tiers by trigram word_similarity (the match's confidence `score`):
+      - exact (case-insensitive) title  -> score 1.0, weak=False, fuzzy=False
+      - best similarity >= strong_sim    -> confident matches (>= strong_sim), weak=False, fuzzy=True
+      - best in [weak_floor, strong_sim) -> low-confidence guesses (all >= weak_floor), weak=True, fuzzy=True
+      - nothing >= weak_floor            -> [] (not found)
 
-    Scoped to shop_domain so a reference can never resolve to another merchant's product.
+    Shop-scoped: a reference can never resolve to another merchant's product.
     """
     ref = (reference or "").strip()
     if not ref:
@@ -164,49 +186,37 @@ def resolve_product(
             .scalars()
             .all()
         )
-
-        is_fuzzy = not exact
         if exact:
-            products = exact
+            return [_to_resolved(s, p, score=1.0, fuzzy=False, weak=False) for p in exact]
+
+        sim_sql = sa_text(
+            """
+            SELECT id, word_similarity(lower(:ref), lower(title)) AS sim
+            FROM "ShopifyProduct"
+            WHERE "shopDomain" = :shop
+              AND word_similarity(lower(:ref), lower(title)) >= :floor
+            ORDER BY sim DESC
+            LIMIT :lim
+            """
+        )
+        rows = s.execute(
+            sim_sql,
+            {"ref": ref, "shop": shop_domain, "floor": weak_floor, "lim": limit},
+        ).all()
+        if not rows:
+            return []
+
+        best = rows[0][1]
+        if best >= strong_sim:
+            kept = [(pid, sim) for (pid, sim) in rows if sim >= strong_sim]
+            weak = False
         else:
-            sim_sql = sa_text(
-                """
-                SELECT id
-                FROM "ShopifyProduct"
-                WHERE "shopDomain" = :shop
-                  AND word_similarity(lower(:ref), lower(title)) >= :thr
-                ORDER BY word_similarity(lower(:ref), lower(title)) DESC
-                LIMIT :lim
-                """
-            )
-            ids = [
-                row[0]
-                for row in s.execute(
-                    sim_sql,
-                    {"shop": shop_domain, "ref": ref, "thr": threshold, "lim": limit},
-                ).all()
-            ]
-            # ids are already similarity-ranked; the comprehension keeps that order.
-            # Skip any product that vanished between the SELECT and the fetch.
-            products = [
-                p for p in (s.get(ShopifyProduct, pid) for pid in ids) if p is not None
-            ]
+            kept = [(pid, sim) for (pid, sim) in rows]
+            weak = True
 
         out: list[ResolvedProduct] = []
-        for p in products:
-            vids = (
-                s.execute(select(ShopifyVariant.id).where(ShopifyVariant.productId == p.id))
-                .scalars()
-                .all()
-            )
-            out.append(
-                ResolvedProduct(
-                    product_id=p.id,
-                    title=p.title,
-                    vendor=p.vendor,
-                    variant_ids=list(vids),
-                    dynamic_pricing_enabled=bool(p.dynamicPricingEnabled),
-                    fuzzy=is_fuzzy,
-                )
-            )
+        for pid, sim in kept:
+            p = s.get(ShopifyProduct, pid)
+            if p is not None:
+                out.append(_to_resolved(s, p, score=float(sim), fuzzy=True, weak=weak))
         return out

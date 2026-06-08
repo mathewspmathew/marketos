@@ -46,6 +46,8 @@ class ResolvedProduct(BaseModel):
     variant_ids: list[str]
     dynamic_pricing_enabled: bool
     fuzzy: bool = False  # True when matched by similarity (typo/partial), not exact title
+    score: float = 1.0  # match confidence: 1.0 exact, else trigram word_similarity
+    weak: bool = False  # True = only a loose/low-confidence name match; confirm before acting
 
 
 class DynamicPricingStatus(BaseModel):

@@ -120,3 +120,26 @@ def test_resolve_product_exact_sets_fuzzy_false(seed_shop):
     matches = resolve_product(seed_shop, "Boat Speaker White")
     assert len(matches) == 1
     assert matches[0].fuzzy is False
+
+
+def test_resolve_product_exact_score_one(seed_shop):
+    from services.chatbot_svc.tools.search import resolve_product
+    m = resolve_product(seed_shop, "Boat Speaker White")
+    assert m[0].score == 1.0
+    assert m[0].weak is False
+    assert m[0].fuzzy is False
+
+
+def test_resolve_product_strong_match_not_weak(seed_shop):
+    from services.chatbot_svc.tools.search import resolve_product
+    matches = resolve_product(seed_shop, "Boat White")  # word_similarity ~0.58 >= 0.5
+    assert matches and all(not m.weak for m in matches)
+    assert matches[0].score >= 0.5
+
+
+def test_resolve_product_weak_match_flagged(seed_shop):
+    from services.chatbot_svc.tools.search import resolve_product
+    # Force the strong bar high so the legit 'Boat White' match (~0.58) is treated as weak.
+    matches = resolve_product(seed_shop, "Boat White", strong_sim=0.99)
+    assert matches and all(m.weak for m in matches)
+    assert 0 < matches[0].score < 0.99
