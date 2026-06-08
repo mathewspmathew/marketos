@@ -1,9 +1,3 @@
-import ChatPanel from "../components/chatbot/ChatPanel";
+import { redirect } from "react-router";
 
-export default function ChatbotPage() {
-  return (
-    <s-page heading="Assistant">
-      <ChatPanel />
-    </s-page>
-  );
-}
+export const loader = () => redirect("/app");
