@@ -7,6 +7,7 @@ from services.chatbot_svc.schemas import (
     ScopeFilter, PriceChange, PreviewSummary,
 )
 from services.chatbot_svc.tools.search import structured_search
+from services.chatbot_svc.tools.enable_context import resolve_enable_context
 from services.chatbot_svc.tools.toggle_settings import (
     resolve_enable_settings, compute_disable_counts,
 )
@@ -101,6 +102,8 @@ def preview_dynamic_pricing_toggle(shop_domain: str, session_id: str,
 
     if enabled:
         settings = resolve_enable_settings(shop_domain, product_ids)
+        ctx = resolve_enable_context(shop_domain, product_ids[0]) if product_ids else None
+        ctx_dict = ctx.model_dump() if ctx else {"state": "FRESH"}
         change = {
             "enabled": True,
             "rescrape": False,
@@ -109,13 +112,24 @@ def preview_dynamic_pricing_toggle(shop_domain: str, session_id: str,
             "query": settings["query"],
         }
         summary_dict["enable"] = settings
-        human = (
-            f"I'll enable dynamic pricing on {len(product_ids)} product(s). "
-            f"The first competitor fetch will search ~{settings['numResults']} sites and "
-            f"up to {settings['listingExpansionCap']} products per listing page — you can "
-            f"edit those numbers below. It runs shortly in the background by default; "
-            f"choose 'Now' to start it immediately. Confirm below."
-        )
+        summary_dict["enableContext"] = ctx_dict
+
+        if ctx_dict["state"] == "PAUSED_WITH_DATA":
+            human = (
+                f"This product was set up before — you already have "
+                f"{ctx_dict['competitors_found']} competitor(s) "
+                f"({ctx_dict['live_matches']} matched). Resume with those for free, "
+                f"or spend a fresh fetch to find new ones or widen the search. "
+                f"Confirm below."
+            )
+        else:  # FRESH (ACTIVE products are handled by the agent via status, not here)
+            human = (
+                f"Setting up dynamic pricing for the first time on "
+                f"{len(product_ids)} product(s). The first competitor fetch will "
+                f"search ~{settings['numResults']} sites and up to "
+                f"{settings['listingExpansionCap']} products per listing page — "
+                f"editable below. Confirm to start."
+            )
     else:
         counts = (
             compute_disable_counts(shop_domain, product_ids[0])
