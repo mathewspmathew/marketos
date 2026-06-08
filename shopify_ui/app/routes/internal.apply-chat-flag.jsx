@@ -51,6 +51,28 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, reason: "wrong_kind" }, { status: 400 });
   }
 
+  // Apply-time re-check: the flag may have changed since the preview card was
+  // shown (the merchant could have toggled it elsewhere). If the DB already
+  // matches the requested target, report it rather than redo the work.
+  {
+    const targetEnabled = !!preview.change?.enabled;
+    const current = await prisma.shopifyProduct.findMany({
+      where: { id: { in: preview.variantIds }, shopDomain: preview.shopDomain },
+      select: { id: true, dynamicPricingEnabled: true },
+    });
+    const allAlready = current.length > 0 && current.every(
+      (p) => p.dynamicPricingEnabled === targetEnabled,
+    );
+    if (allAlready) {
+      await prisma.chatPreview.update({
+        where: { id: preview_id },
+        data: { appliedAt: new Date(), appliedBy: applied_by ?? null,
+                result: { noop: true, enabled: targetEnabled } },
+      });
+      return Response.json({ ok: true, preview_id, noop: true, enabled: targetEnabled });
+    }
+  }
+
   const enabled = !!preview.change?.enabled;
   const productIds = preview.variantIds; // overloaded — holds product ids for flag previews
   const shopDomain = preview.shopDomain;
@@ -96,6 +118,17 @@ export const action = async ({ request }) => {
       await prisma.shopifyProduct.updateMany({
         where: { id: { in: productIds }, shopDomain },
         data: { searchQueryOverride: body.query.trim() },
+      });
+    }
+    // Resume cadence chosen on the card (paused-with-data). Null clears any
+    // per-product override and falls back to ShopSettings cadence.
+    if (body.frequencyInterval != null) {
+      await prisma.shopifyProduct.updateMany({
+        where: { id: { in: productIds }, shopDomain },
+        data: {
+          frequencyInterval: parseInt(body.frequencyInterval, 10),
+          frequencyUnit: body.frequencyUnit || "daily",
+        },
       });
     }
     // "Rescrape now" gates the immediate, credit-spending discovery. When off,
