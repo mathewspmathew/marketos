@@ -111,9 +111,10 @@ def preview_dynamic_pricing_toggle(shop_domain: str, session_id: str,
         summary_dict["enable"] = settings
         human = (
             f"I'll enable dynamic pricing on {len(product_ids)} product(s). "
-            f"You can rescrape now (off by default) — I'd search ~{settings['numResults']} "
-            f"competitor sites and up to {settings['listingExpansionCap']} products per listing page. "
-            f"Confirm below."
+            f"The first competitor fetch will search ~{settings['numResults']} sites and "
+            f"up to {settings['listingExpansionCap']} products per listing page — you can "
+            f"edit those numbers below. It runs shortly in the background by default; "
+            f"choose 'Now' to start it immediately. Confirm below."
         )
     else:
         counts = (

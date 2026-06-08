@@ -54,28 +54,32 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
 
         {enable ? (
           <s-stack direction="block" gap="base">
+            <s-stack direction="inline" gap="base" align="end">
+              <s-text-field
+                label="Competitor sites to find"
+                type="number" value={num} min="1" max="50"
+                onInput={(e) => setNum(e.currentTarget.value)}
+              />
+              <s-text-field
+                label="Max products per listing page"
+                type="number" value={cap} min="1" max="50"
+                onInput={(e) => setCap(e.currentTarget.value)}
+              />
+            </s-stack>
             <s-select
-              label="Rescrape now?"
+              label="When to fetch competitor data"
               value={rescrape ? "yes" : "no"}
               onChange={(e) => setRescrape(e.currentTarget.value === "yes")}
             >
-              <s-option value="no">No rescrape (cadence picks it up)</s-option>
-              <s-option value="yes">Rescrape now</s-option>
+              <s-option value="no">Shortly, in the background</s-option>
+              <s-option value="yes">Now</s-option>
             </s-select>
-            {rescrape && (
-              <s-stack direction="inline" gap="base" align="end">
-                <s-text-field
-                  label="Competitor sites to find"
-                  type="number" value={num} min="1" max="50"
-                  onInput={(e) => setNum(e.currentTarget.value)}
-                />
-                <s-text-field
-                  label="Max products per listing page"
-                  type="number" value={cap} min="1" max="50"
-                  onInput={(e) => setCap(e.currentTarget.value)}
-                />
-              </s-stack>
-            )}
+            <s-text tone="subdued">
+              The numbers above set how wide this product&apos;s first
+              competitor fetch goes — they apply either way. Choose
+              &quot;Now&quot; to start immediately, or &quot;Shortly&quot; to
+              let the scheduler run it within a minute.
+            </s-text>
             <s-text-field
               label="Search query (used to find competitors)"
               value={query}

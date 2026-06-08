@@ -63,9 +63,19 @@ export const action = async ({ request }) => {
   // "pause" unless the merchant explicitly chose delete (disable branch only).
   const mode = body.mode === "delete" ? "delete" : "pause";
 
+  // Persist the merchant's chosen scrape breadth onto the product on enable, so
+  // the first competitor fetch uses these numbers whether it runs now (the
+  // "Rescrape now" DiscoveryJob below) or shortly (the beat's first-time
+  // discovery, which reads discoveryNumResults; the scrape resolves the cap
+  // via Product.listingExpansionCap — see scraper_svc/candidate.py).
+  const numResults = clamp(body.numResults, 1, 50, 10);
+  const listingExpansionCap = clamp(body.listingExpansionCap, 1, 50, 5);
+
   const upd = await prisma.shopifyProduct.updateMany({
     where: { id: { in: productIds }, shopDomain },
-    data: { dynamicPricingEnabled: enabled },
+    data: enabled
+      ? { dynamicPricingEnabled: true, discoveryNumResults: numResults, listingExpansionCap }
+      : { dynamicPricingEnabled: false },
   });
 
   if (enabled) {
@@ -88,10 +98,10 @@ export const action = async ({ request }) => {
         data: { searchQueryOverride: body.query.trim() },
       });
     }
-    // "Rescrape now" gates the credit-spending fresh discovery.
+    // "Rescrape now" gates the immediate, credit-spending discovery. When off,
+    // the beat's first-time discovery picks the product up shortly using the
+    // numbers persisted onto it above.
     if (body.rescrape) {
-      const numResults = clamp(body.numResults, 1, 50, 10);
-      const listingExpansionCap = clamp(body.listingExpansionCap, 1, 50, 5);
       for (const pid of productIds) {
         const product = await prisma.shopifyProduct.findFirst({
           where: { id: pid, shopDomain },
