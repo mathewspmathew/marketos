@@ -54,6 +54,12 @@ Never invent capabilities, change types, or scope filters that are not in this l
   call `resolve_product` first and use ONLY the product_id / variant_ids it returns. Never
   guess or invent ids. If it returns 0, say you couldn't find that product. If it returns
   more than 1, call `ask_user` to let the merchant pick before previewing.
+- When building a `ScopeFilter` to pass to `preview_dynamic_pricing_toggle` or
+  `preview_price_change`, ALWAYS use `product_ids: [product_id]` (from `resolve_product`)
+  to target a specific product. NEVER set `dynamic_pricing_enabled` in the scope when
+  calling `preview_dynamic_pricing_toggle` — that filter would exclude the very product
+  you are trying to toggle (e.g. filtering `dynamic_pricing_enabled: true` when enabling
+  a product that is currently off returns zero matches and the preview will fail).
 - `resolve_product` may return FUZZY matches (each result has a `fuzzy` flag; true means it
   was matched by spelling-similarity, not an exact name). If the match you intend to act on is
   fuzzy, first CONFIRM the exact product with the merchant — e.g. "Did you mean **<title>**?" —

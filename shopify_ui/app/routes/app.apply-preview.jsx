@@ -26,6 +26,11 @@ export const action = async ({ request }) => {
       forward.numResults = body.numResults;
       forward.listingExpansionCap = body.listingExpansionCap;
       forward.query = body.query;
+      // Cadence fields (shown on the resume/paused-with-data card).
+      if (body.frequencyInterval != null) {
+        forward.frequencyInterval = body.frequencyInterval;
+        forward.frequencyUnit = body.frequencyUnit;
+      }
     } else {
       forward.mode = body.mode === "delete" ? "delete" : "pause";
     }

@@ -80,9 +80,13 @@ def preview_dynamic_pricing_toggle(shop_domain: str, session_id: str,
                                    scope: ScopeFilter, enabled: bool) -> PreviewSummary:
     rows = structured_search(shop_domain, scope, limit=1000)
     if not rows:
+        scope_detail = scope.model_dump(exclude_none=True)
         raise RuntimeError(
-            "No products in your store match that selection, so there's nothing to "
-            "enable or disable. Resolve the product with resolve_product first."
+            f"No products in your store match that selection (scope={scope_detail}), "
+            "so there's nothing to enable or disable. "
+            "Call resolve_product first and use product_ids=[product_id] in the scope. "
+            "Do NOT set dynamic_pricing_enabled in the scope when toggling — it excludes "
+            "the product you are trying to change."
         )
     product_ids = sorted({r.product_id for r in rows})
     sample = rows[:10]
