@@ -90,6 +90,8 @@ const FREQ_UNITS = [
   { value: "day",    label: "Days"    },
 ];
 
+const SECTION_HELP_TEXT_STYLE = { fontSize: "0.9em", marginBottom: "8px", display: "block" };
+
 // ─── Action ───────────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -659,8 +661,7 @@ export default function HomePage() {
                             {rescrapeOn ? (
                               <>
                                 <s-badge tone="success">
-                                  {local.frequencyInterval || ""}
-                                  {local.frequencyUnit}
+                                  {`${local.frequencyInterval || ""} ${local.frequencyUnit}`}
                                 </s-badge>
                                 <s-button
                                   size="slim"
@@ -712,7 +713,7 @@ export default function HomePage() {
                         {/* === SECTION 1: Search Query === */}
                         <div>
                           <s-text emphasis="bold">Search Query</s-text>
-                          <s-text tone="subdued" style={{ fontSize: "0.9em", marginBottom: "8px", display: "block" }}>
+                          <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                             What competitors should we search for?
                           </s-text>
                           <s-text-field
@@ -740,7 +741,7 @@ export default function HomePage() {
                         {/* === SECTION 2: Discovery Settings === */}
                         <div>
                           <s-text emphasis="bold">Discovery Settings</s-text>
-                          <s-text tone="subdued" style={{ fontSize: "0.9em", marginBottom: "8px", display: "block" }}>
+                          <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                             How many competitor products and listings should we explore?
                           </s-text>
 
@@ -780,7 +781,7 @@ export default function HomePage() {
                           <s-text emphasis="bold">Pricing Rules</s-text>
 
                           <div style={{ marginBottom: "12px" }}>
-                            <s-text tone="subdued" style={{ fontSize: "0.9em", marginBottom: "8px", display: "block" }}>
+                            <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                               Which strategy should we use to price relative to competitors?
                             </s-text>
                             <s-stack direction="inline" gap="base" align="center">
@@ -800,7 +801,7 @@ export default function HomePage() {
                           </div>
 
                           <div>
-                            <s-text tone="subdued" style={{ fontSize: "0.9em", marginBottom: "8px", display: "block" }}>
+                            <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                               Hard price bounds (optional overrides)
                             </s-text>
                             {local.basePrice && (
@@ -837,7 +838,7 @@ export default function HomePage() {
                         {/* === SECTION 4: Sync to Shopify === */}
                         <div>
                           <s-text emphasis="bold">Sync to Shopify</s-text>
-                          <s-text tone="subdued" style={{ fontSize: "0.9em", marginBottom: "8px", display: "block" }}>
+                          <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                             Which product fields should we auto-update?
                           </s-text>
                           <s-stack direction="inline" gap="loose">
@@ -876,7 +877,7 @@ export default function HomePage() {
                         {/* === SECTION 5: Rescrape Frequency === */}
                         <div>
                           <s-text emphasis="bold">Rescrape Frequency</s-text>
-                          <s-text tone="subdued" style={{ fontSize: "0.9em", marginBottom: "8px", display: "block" }}>
+                          <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                             How often should we re-check for competitor price changes?
                           </s-text>
                           <s-stack direction="inline" gap="base">
