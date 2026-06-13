@@ -32,6 +32,7 @@ secrets/
 .vscode/
 .idea/
 .claude/
+.playwright-mcp
 
 # Logs
 *.log
@@ -73,3 +74,4 @@ shopify_ui/.shopify.lock
 shopify_ui/.react-router/
 
 CLAUDE.md
+docs/superpowers/

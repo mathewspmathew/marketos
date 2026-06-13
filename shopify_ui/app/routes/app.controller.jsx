@@ -88,7 +88,6 @@ export const action = async ({ request }) => {
     const prodIds = [...new Set(urlRows.map((r) => r.prodId))];
 
     await db.$transaction([
-      db.scrapingError.deleteMany({ where: { configId } }),
       db.scrapedProduct.deleteMany({ where: { id: { in: prodIds } } }),
       db.scrapingConfig.delete({ where: { id: configId } }),
     ]);

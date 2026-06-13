@@ -1,0 +1,4 @@
+[project]
+name = "discovery-svc"
+version = "0.1.0"
+dependencies = ["celery", "redis", "sqlalchemy", "psycopg[binary]", "python-dotenv", "httpx", "groq"]

@@ -1,8 +1,13 @@
+/* eslint-disable react/prop-types */
 import { useMemo, useState } from "react";
 import { useFetcher, useLoaderData, useRouteError } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
+
+// Content-only suggestion page (title + description). All pricing UI moved to
+// /app/pricing. The VariantPriceSuggestion model is being retired — this file
+// no longer reads it.
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
@@ -14,55 +19,32 @@ export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // Only products that have ≥1 variant with a VariantPriceSuggestion (i.e. a
-  // qualifying competitor match was found by the worker).
+  // Products with a ProductSuggestion row — created by suggestion_svc once
+  // qualifying matches exist for at least one variant.
   const products = await db.shopifyProduct.findMany({
     where: {
       shopDomain: shop,
-      variants: { some: { priceSuggestion: { isNot: null } } },
-      ...(showSkipped ? {} : { suggestion: { status: { not: "SKIPPED" } } }),
+      suggestion: showSkipped ? { isNot: null } : { status: { not: "SKIPPED" } },
     },
     include: {
       suggestion: true,
-      variants: {
-        where: { priceSuggestion: { isNot: null } },
-        include: { priceSuggestion: true },
-      },
+      variants: true,
     },
     orderBy: { updatedAt: "desc" },
   });
 
-  // Hide variants whose own price-suggestion is SKIPPED unless toggled.
-  // Also stringify all Decimal fields here — Prisma Decimal objects lose
-  // their prototype across the loader serialization boundary, so any
-  // Number(d) call in the component would return NaN.
   const dec = (d) => (d == null ? null : d.toString());
-  const cleaned = products
-    .map((p) => ({
-      ...p,
-      variants: (showSkipped
-        ? p.variants
-        : p.variants.filter((v) => v.priceSuggestion?.status !== "SKIPPED")
-      ).map((v) => ({
-        ...v,
-        currentPrice: dec(v.currentPrice),
-        compareAtPrice: dec(v.compareAtPrice),
-        priceSuggestion: v.priceSuggestion
-          ? {
-              ...v.priceSuggestion,
-              competitorMin: dec(v.priceSuggestion.competitorMin),
-              competitorMedian: dec(v.priceSuggestion.competitorMedian),
-              competitorMax: dec(v.priceSuggestion.competitorMax),
-              chosenPrice: dec(v.priceSuggestion.chosenPrice),
-              appliedPrice: dec(v.priceSuggestion.appliedPrice),
-            }
-          : null,
-      })),
-      suggestion: p.suggestion
-        ? { ...p.suggestion, avgMatchScore: dec(p.suggestion.avgMatchScore) }
-        : null,
-    }))
-    .filter((p) => p.variants.length > 0);
+  const cleaned = products.map((p) => ({
+    ...p,
+    variants: p.variants.map((v) => ({
+      ...v,
+      currentPrice:   dec(v.currentPrice),
+      compareAtPrice: dec(v.compareAtPrice),
+    })),
+    suggestion: p.suggestion
+      ? { ...p.suggestion, avgMatchScore: dec(p.suggestion.avgMatchScore) }
+      : null,
+  }));
 
   // Backfill missing handles from Shopify so the storefront link works.
   const missingHandle = cleaned.filter((p) => !p.handle).map((p) => p.id);
@@ -115,13 +97,17 @@ export const action = async ({ request }) => {
     return { ok: true, queued: true };
   }
 
-  if (intent === "regenerateProduct") {
-    const productId = formData.get("productId");
-    const owned = await db.shopifyProduct.findFirst({
+  const assertProductInShop = async (productId) => {
+    const row = await db.shopifyProduct.findFirst({
       where: { id: productId, shopDomain: shop },
       select: { id: true },
     });
-    if (!owned) {
+    return row?.id ?? null;
+  };
+
+  if (intent === "regenerateProduct") {
+    const productId = formData.get("productId");
+    if (!(await assertProductInShop(productId))) {
       return { ok: false, error: "Forbidden" };
     }
     try {
@@ -134,23 +120,6 @@ export const action = async ({ request }) => {
     }
     return { ok: true };
   }
-
-  // Tenant-scoped helpers: ensure the product/variant belongs to this shop
-  // before any mutation. Returns null if not owned.
-  const assertProductInShop = async (productId) => {
-    const row = await db.shopifyProduct.findFirst({
-      where: { id: productId, shopDomain: shop },
-      select: { id: true },
-    });
-    return row?.id ?? null;
-  };
-  const assertVariantInShop = async (variantId) => {
-    const row = await db.shopifyVariant.findFirst({
-      where: { id: variantId, product: { shopDomain: shop } },
-      select: { id: true },
-    });
-    return row?.id ?? null;
-  };
 
   if (intent === "saveProductEdits") {
     const productId = formData.get("productId");
@@ -169,27 +138,6 @@ export const action = async ({ request }) => {
       data: {
         editedTitle,
         editedDescriptionHtml,
-        // Preserve APPLIED; otherwise mark SHOWED on edit
-        status: existing?.status === "APPLIED" ? "APPLIED" : "SHOWED",
-      },
-    });
-    return { ok: true };
-  }
-
-  if (intent === "saveVariantPrice") {
-    const variantId = formData.get("variantId");
-    if (!(await assertVariantInShop(variantId))) {
-      return { ok: false, error: "Forbidden" };
-    }
-    const chosenPrice = formData.get("chosenPrice");
-    const existing = await db.variantPriceSuggestion.findUnique({
-      where: { shopifyVariantId: variantId },
-      select: { status: true },
-    });
-    await db.variantPriceSuggestion.update({
-      where: { shopifyVariantId: variantId },
-      data: {
-        chosenPrice: chosenPrice ? chosenPrice : null,
         status: existing?.status === "APPLIED" ? "APPLIED" : "SHOWED",
       },
     });
@@ -208,27 +156,14 @@ export const action = async ({ request }) => {
     return { ok: true };
   }
 
-  if (intent === "skipVariant") {
-    const variantId = formData.get("variantId");
-    if (!(await assertVariantInShop(variantId))) {
-      return { ok: false, error: "Forbidden" };
-    }
-    await db.variantPriceSuggestion.update({
-      where: { shopifyVariantId: variantId },
-      data: { status: "SKIPPED" },
-    });
-    return { ok: true };
-  }
-
-  // ── APPLY: persist latest edits, then write to Shopify + mirror to our DB ──
+  // Apply title + description to Shopify. Price application has moved to the
+  // pricing engine (rule-driven) + revert button in /app/pricing/$variantId.
   if (intent === "applyProduct") {
     const productId = formData.get("productId");
     if (!(await assertProductInShop(productId))) {
       return { ok: false, error: "Forbidden" };
     }
 
-    // Persist any final edits the form is carrying so the source of truth
-    // for what we apply is the DB row (not the JS form state).
     const editedTitle = formData.get("editedTitle");
     const editedDescriptionHtml = formData.get("editedDescriptionHtml");
     if (editedTitle != null || editedDescriptionHtml != null) {
@@ -243,49 +178,17 @@ export const action = async ({ request }) => {
       });
     }
 
-    // Persist all variant prices carried by the form before reading them back.
-    // Form field naming convention: variantPrice__<variantId> = "<price>"
-    for (const [key, value] of formData.entries()) {
-      if (!key.startsWith("variantPrice__")) continue;
-      const variantId = key.slice("variantPrice__".length);
-      if (!(await assertVariantInShop(variantId))) continue;
-      const trimmed = String(value ?? "").trim();
-      if (!trimmed) continue;
-      await db.variantPriceSuggestion.update({
-        where: { shopifyVariantId: variantId },
-        data: { chosenPrice: trimmed },
-      });
-    }
-
     const ps = await db.productSuggestion.findUnique({
       where: { shopifyProductId: productId },
     });
-    const variants = await db.shopifyVariant.findMany({
-      where: { productId, priceSuggestion: { isNot: null } },
-      include: { priceSuggestion: true },
-    });
 
-    const finalTitle =
-      ps?.editedTitle ?? ps?.suggestedTitle ?? null;
-    const finalDescHtml =
-      ps?.editedDescriptionHtml ?? ps?.suggestedDescriptionHtml ?? null;
-
-    const variantUpdates = variants
-      .filter(
-        (v) =>
-          v.priceSuggestion?.chosenPrice != null &&
-          v.priceSuggestion?.status !== "SKIPPED",
-      )
-      .map((v) => ({
-        id: v.id,
-        price: String(v.priceSuggestion.chosenPrice),
-      }));
+    const finalTitle    = ps?.editedTitle ?? ps?.suggestedTitle ?? null;
+    const finalDescHtml = ps?.editedDescriptionHtml ?? ps?.suggestedDescriptionHtml ?? null;
 
     const errors = [];
     let appliedTitle = null;
     let appliedDescHtml = null;
 
-    // 1. productUpdate (title + descriptionHtml) — only if either changed
     if (finalTitle != null || finalDescHtml != null) {
       const productInput = { id: productId };
       if (finalTitle != null) productInput.title = finalTitle;
@@ -306,42 +209,11 @@ export const action = async ({ request }) => {
       if (userErrors.length) {
         errors.push(`product: ${userErrors.map((e) => e.message).join("; ")}`);
       } else {
-        appliedTitle = data?.data?.productUpdate?.product?.title ?? null;
-        appliedDescHtml =
-          data?.data?.productUpdate?.product?.descriptionHtml ?? null;
+        appliedTitle    = data?.data?.productUpdate?.product?.title ?? null;
+        appliedDescHtml = data?.data?.productUpdate?.product?.descriptionHtml ?? null;
       }
     }
 
-    // 2. productVariantsBulkUpdate (prices)
-    let appliedVariantPrices = [];
-    if (variantUpdates.length > 0) {
-      const resp = await admin.graphql(
-        `#graphql
-        mutation VariantsApply($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-            productVariants { id price }
-            userErrors { field message }
-          }
-        }`,
-        {
-          variables: {
-            productId,
-            variants: variantUpdates,
-          },
-        },
-      );
-      const data = await resp.json();
-      const userErrors =
-        data?.data?.productVariantsBulkUpdate?.userErrors ?? [];
-      if (userErrors.length) {
-        errors.push(`variants: ${userErrors.map((e) => e.message).join("; ")}`);
-      } else {
-        appliedVariantPrices =
-          data?.data?.productVariantsBulkUpdate?.productVariants ?? [];
-      }
-    }
-
-    // 3. Mirror to DB — record what actually got applied
     const now = new Date();
     if (ps && (appliedTitle || appliedDescHtml) && errors.length === 0) {
       await db.productSuggestion.update({
@@ -353,7 +225,6 @@ export const action = async ({ request }) => {
           appliedAt: now,
         },
       });
-      // Update the canonical ShopifyProduct row too so loader reflects new state
       await db.shopifyProduct.update({
         where: { id: productId },
         data: {
@@ -362,23 +233,6 @@ export const action = async ({ request }) => {
           syncedAt: now,
         },
       });
-    }
-
-    if (appliedVariantPrices.length > 0 && errors.length === 0) {
-      for (const vp of appliedVariantPrices) {
-        await db.variantPriceSuggestion.update({
-          where: { shopifyVariantId: vp.id },
-          data: {
-            appliedPrice: vp.price,
-            status: "APPLIED",
-            appliedAt: now,
-          },
-        });
-        await db.shopifyVariant.update({
-          where: { id: vp.id },
-          data: { currentPrice: vp.price },
-        });
-      }
     }
 
     if (errors.length > 0) {
@@ -396,7 +250,6 @@ function formatINR(n) {
   return `₹${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
-// Storefront URL for the product page
 function productStoreUrl(shop, handle) {
   if (!shop || !handle) return null;
   return `https://${shop}/products/${handle}`;
@@ -409,9 +262,7 @@ function priceRange(variants) {
   if (prices.length === 0) return null;
   const min = Math.min(...prices);
   const max = Math.max(...prices);
-  return min === max
-    ? formatINR(min)
-    : `${formatINR(min)} – ${formatINR(max)}`;
+  return min === max ? formatINR(min) : `${formatINR(min)} – ${formatINR(max)}`;
 }
 
 function statusTone(s) {
@@ -447,7 +298,7 @@ export default function SuggestionsPage() {
   return (
     <s-page
       heading="Product Suggestions"
-      subheading="LLM-generated title & description plus competitor price ranges. Edit, then Apply to push back to Shopify."
+      subheading="LLM-generated title & description from competitor data. Pricing is fully automatic — see each product's Stats page for change history."
     >
       <s-stack direction="block" gap="loose">
         <s-section>
@@ -517,33 +368,6 @@ function ProductCard({ product, fetcher, shop }) {
   const [title, setTitle] = useState(initialTitle);
   const [desc, setDesc] = useState(initialDesc);
 
-  // Variant prices live here (lifted) so Apply can gather them all in one shot.
-  const [variantPrices, setVariantPrices] = useState(() => {
-    const m = {};
-    for (const v of product.variants) {
-      const sug = v.priceSuggestion;
-      const seed =
-        sug?.chosenPrice != null
-          ? Number(sug.chosenPrice)
-          : sug?.competitorMedian != null
-            ? Number(sug.competitorMedian)
-            : Number(v.currentPrice);
-      m[v.id] = String(seed);
-    }
-    return m;
-  });
-  const setVariantPrice = (variantId, value) =>
-    setVariantPrices((prev) => ({ ...prev, [variantId]: value }));
-
-  // Per-variant "pick counter" — bumping it remounts the input so a Min/Median/
-  // Max pick reliably overwrites the web-component's internal value.
-  const [pickCounters, setPickCounters] = useState({});
-  const bumpPick = (variantId) =>
-    setPickCounters((prev) => ({
-      ...prev,
-      [variantId]: (prev[variantId] ?? 0) + 1,
-    }));
-
   const isBusyOnThis =
     fetcher.state === "submitting" &&
     fetcher.formData?.get("productId") === product.id;
@@ -562,25 +386,18 @@ function ProductCard({ product, fetcher, shop }) {
     );
   };
 
-  const applyAll = () => {
-    if (
-      !confirm(
-        "Push these edits to your Shopify store? This will update the live product.",
-      )
-    )
+  const applyToShopify = () => {
+    if (!confirm("Push these edits to your Shopify store? This will update the live product."))
       return;
-    // Collect all variant prices in the form so the server persists then
-    // applies them in one shot.
-    const fd = {
-      intent: "applyProduct",
-      productId: product.id,
-      editedTitle: title,
-      editedDescriptionHtml: desc,
-    };
-    for (const [vid, price] of Object.entries(variantPrices)) {
-      fd[`variantPrice__${vid}`] = price ?? "";
-    }
-    fetcher.submit(fd, { method: "POST" });
+    fetcher.submit(
+      {
+        intent: "applyProduct",
+        productId: product.id,
+        editedTitle: title,
+        editedDescriptionHtml: desc,
+      },
+      { method: "POST" },
+    );
   };
 
   const storeUrl = productStoreUrl(shop, product.handle);
@@ -608,9 +425,7 @@ function ProductCard({ product, fetcher, shop }) {
               ) : null}
             </s-stack>
             <s-stack direction="inline" gap="tight" align="center">
-              {ps ? (
-                <s-badge tone={statusTone(ps.status)}>{ps.status}</s-badge>
-              ) : null}
+              {ps ? <s-badge tone={statusTone(ps.status)}>{ps.status}</s-badge> : null}
               <s-text tone="subdued">
                 {product.variants.length} variant
                 {product.variants.length === 1 ? "" : "s"} ·{" "}
@@ -652,12 +467,10 @@ function ProductCard({ product, fetcher, shop }) {
 
         <s-divider />
 
-        {/* ── Current product (read-only) ─────────────────────────── */}
         <CurrentPanel product={product} />
 
         <s-divider />
 
-        {/* ── Content edits ───────────────────────────────────────── */}
         {ps?.suggestedTitle || ps?.suggestedDescriptionHtml ? (
           <s-stack direction="block" gap="tight">
             <s-text emphasis="bold">Suggested title & description</s-text>
@@ -680,13 +493,23 @@ function ProductCard({ product, fetcher, shop }) {
             {ps?.contentRationale ? (
               <s-text tone="subdued">Why: {ps.contentRationale}</s-text>
             ) : null}
-            <s-button
-              variant="secondary"
-              onClick={saveContent}
-              disabled={intentBusy === "saveProductEdits"}
-            >
-              {intentBusy === "saveProductEdits" ? "Saving…" : "Save edits"}
-            </s-button>
+            <s-stack direction="inline" gap="base" align="center">
+              <s-button
+                variant="secondary"
+                onClick={saveContent}
+                disabled={intentBusy === "saveProductEdits"}
+              >
+                {intentBusy === "saveProductEdits" ? "Saving…" : "Save edits"}
+              </s-button>
+              <s-spacer />
+              <s-button
+                variant="primary"
+                onClick={applyToShopify}
+                disabled={intentBusy === "applyProduct"}
+              >
+                {intentBusy === "applyProduct" ? "Applying…" : "Apply to Shopify"}
+              </s-button>
+            </s-stack>
           </s-stack>
         ) : (
           <s-paragraph tone="subdued">
@@ -696,41 +519,11 @@ function ProductCard({ product, fetcher, shop }) {
 
         <s-divider />
 
-        {/* ── Per-variant prices ──────────────────────────────────── */}
-        <s-text emphasis="bold">Variant prices</s-text>
-        <s-stack direction="block" gap="tight">
-          {product.variants.map((v) => (
-            <VariantRow
-              key={v.id}
-              variant={v}
-              fetcher={fetcher}
-              chosen={variantPrices[v.id] ?? ""}
-              setChosen={(value) => setVariantPrice(v.id, value)}
-              pickCounter={pickCounters[v.id] ?? 0}
-              onPick={(value) => {
-                setVariantPrice(v.id, value);
-                bumpPick(v.id);
-              }}
-              isBusyOnThis={
-                fetcher.state === "submitting" &&
-                fetcher.formData?.get("variantId") === v.id
-              }
-            />
-          ))}
-        </s-stack>
-
-        <s-divider />
-
-        <s-stack direction="inline" gap="base" align="center">
-          <s-spacer />
-          <s-button
-            variant="primary"
-            onClick={applyAll}
-            disabled={intentBusy === "applyProduct"}
-          >
-            {intentBusy === "applyProduct" ? "Applying…" : "Apply to Shopify"}
-          </s-button>
-        </s-stack>
+        <s-paragraph tone="subdued">
+          Looking for pricing? It lives in the{" "}
+          <s-link href="/app/pricing">Pricing Catalog</s-link> now —
+          rule-driven and audited per variant.
+        </s-paragraph>
       </s-stack>
     </s-section>
   );
@@ -767,116 +560,6 @@ function CurrentPanel({ product }) {
         ) : (
           <s-text tone="subdued">No description set.</s-text>
         )}
-      </s-stack>
-    </s-box>
-  );
-}
-
-// ─── Variant Row ─────────────────────────────────────────────────────────────
-function VariantRow({
-  variant,
-  fetcher,
-  chosen,
-  setChosen,
-  pickCounter,
-  onPick,
-  isBusyOnThis,
-}) {
-  const sug = variant.priceSuggestion;
-  const current = Number(variant.currentPrice);
-  const intentBusy = isBusyOnThis ? fetcher.formData.get("intent") : null;
-
-  const save = () => {
-    fetcher.submit(
-      {
-        intent: "saveVariantPrice",
-        variantId: variant.id,
-        chosenPrice: chosen,
-      },
-      { method: "POST" },
-    );
-  };
-
-  return (
-    <s-box padding="base" borderWidth="base" borderRadius="base">
-      <s-stack direction="block" gap="tight">
-        <s-stack direction="inline" gap="base" align="center">
-          <s-text emphasis="bold">{variant.title}</s-text>
-          {sug ? (
-            <s-badge tone={statusTone(sug.status)}>{sug.status}</s-badge>
-          ) : null}
-          <s-spacer />
-          <s-text tone="subdued">Current</s-text>
-          <s-text emphasis="bold">{formatINR(current)}</s-text>
-        </s-stack>
-
-        {sug && sug.competitorCount > 0 ? (
-          <s-stack direction="inline" gap="base" align="center">
-            <s-button
-              variant="plain"
-              onClick={() => onPick(String(sug.competitorMin))}
-            >
-              Min {formatINR(sug.competitorMin)}
-            </s-button>
-            <s-button
-              variant="plain"
-              onClick={() => onPick(String(sug.competitorMedian))}
-            >
-              Median {formatINR(sug.competitorMedian)}
-            </s-button>
-            <s-button
-              variant="plain"
-              onClick={() => onPick(String(sug.competitorMax))}
-            >
-              Max {formatINR(sug.competitorMax)}
-            </s-button>
-            <s-text tone="subdued">
-              from {sug.competitorCount} competitor
-              {sug.competitorCount === 1 ? "" : "s"}
-            </s-text>
-          </s-stack>
-        ) : (
-          <s-paragraph tone="subdued">
-            No usable competitor prices for this variant.
-          </s-paragraph>
-        )}
-
-        <s-stack direction="inline" gap="base" align="center">
-          {/* key forces a fresh mount whenever a pick happens, so the web
-              component picks up the new default value. Typing doesn't bump the
-              key, so focus is preserved while typing. */}
-          <s-text-field
-            key={`${variant.id}-${pickCounter}`}
-            label="Your new price (₹)"
-            type="number"
-            defaultValue={chosen}
-            onInput={(e) => setChosen(e.currentTarget.value)}
-          />
-          <s-button
-            variant="secondary"
-            onClick={save}
-            disabled={intentBusy === "saveVariantPrice"}
-          >
-            {intentBusy === "saveVariantPrice" ? "Saving…" : "Save"}
-          </s-button>
-          <s-button
-            variant="plain"
-            tone="critical"
-            onClick={() =>
-              fetcher.submit(
-                { intent: "skipVariant", variantId: variant.id },
-                { method: "POST" },
-              )
-            }
-            disabled={intentBusy === "skipVariant"}
-          >
-            Skip
-          </s-button>
-        </s-stack>
-
-        {sug?.priceRationale ? (
-          <s-text tone="subdued">Why: {sug.priceRationale}</s-text>
-        ) : null}
       </s-stack>
     </s-box>
   );

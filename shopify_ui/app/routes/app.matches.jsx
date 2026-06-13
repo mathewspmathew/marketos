@@ -1,253 +1,172 @@
-import { useMemo, useState } from "react";
-import { useLoaderData, useRouteError } from "react-router";
-import { authenticate } from "../shopify.server";
+import { useFetcher, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import db from "../db.server";
 
-// ─── Loader ──────────────────────────────────────────────────────────────────
+import db from "../db.server";
+import { authenticate } from "../shopify.server";
+
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const shop = session.shop;
+  const shopDomain  = session.shop;
 
-  const matches = await db.productMatch.findMany({
-    where: { shopDomain: shop },
-    orderBy: [{ matchScore: "desc" }],
+  const matches = await db.productLevelMatch.findMany({
+    // WEAK matches stay in the DB (matcher uses them as scaffolding) but
+    // never surface here — they're too noisy to ask a merchant about.
+    where: {
+      shopDomain,
+      rejectedByMerchant: false,
+      confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
+    },
     include: {
-      shopifyVariant: {
-        include: { product: true },
+      shopifyProduct: {
+        include: { variants: { take: 1 } },
       },
-      competitorVariant: true,
-      competitorProduct: {
-        include: { urls: { take: 1 } },
+      scrapedProduct: {
+        include: {
+          variants: {
+            orderBy: { updatedAt: "desc" },
+            take: 1,
+          },
+        },
       },
     },
+    orderBy: [{ shopifyProductId: "asc" }, { confidence: "desc" }],
   });
 
-  // Group: ShopifyProduct → list of competitor matches
+  // Group by Shopify product.
   const byProduct = new Map();
   for (const m of matches) {
-    const sv = m.shopifyVariant;
-    if (!sv || !sv.product) continue;
-    const sp = sv.product;
+    const sp = m.shopifyProduct;
+    if (!sp) continue;
     if (!byProduct.has(sp.id)) {
       byProduct.set(sp.id, {
-        id:          sp.id,
-        title:       sp.title,
-        imageUrl:    sp.imageUrl,
-        productType: sp.productType,
-        handle:      sp.handle,
-        storeUrl:    sp.handle ? `https://${shop}/products/${sp.handle}` : null,
-        matches:     [],
+        id: sp.id,
+        title: sp.title,
+        imageUrl: sp.imageUrl,
+        merchantPrice: sp.variants[0]?.currentPrice?.toString() ?? null,
+        matches: [],
       });
     }
+    const scraped = m.scrapedProduct;
+    const variant = scraped?.variants[0];
     byProduct.get(sp.id).matches.push({
-      id:                m.id,
-      shopifyVariantId:  sv.id,
-      shopifyVariantTitle: sv.title,
-      shopifyPrice:      Number(sv.currentPrice),
-      competitorTitle:   m.competitorProduct?.title || "(unknown)",
-      competitorDomain:  m.competitorProduct?.domain || "",
-      competitorUrl:     m.competitorProduct?.urls?.[0]?.url || null,
-      competitorPrice:   m.competitorVariant ? Number(m.competitorVariant.currentPrice) : null,
-      competitorVariantTitle: m.competitorVariant?.title || null,
-      matchScore:        Number(m.matchScore),
-      matchedAt:         m.matchedAt,
+      id: m.id,
+      confidence:     Number(m.confidence),
+      confidenceTier: m.confidenceTier,
+      source:         m.source,
+      confirmedByMerchant: m.confirmedByMerchant,
+      scrapedTitle:   scraped?.title ?? "(missing)",
+      scrapedDomain:  scraped?.domain ?? "",
+      scrapedImageUrl: scraped?.imageUrl ?? null,
+      competitorPrice: variant?.currentPrice?.toString() ?? null,
+      competitorUrl:   null,  // ProductUrl lookup below
+      scrapedProductId: scraped?.id,
     });
   }
 
-  const products = Array.from(byProduct.values()).sort(
-    (a, b) => b.matches.length - a.matches.length,
-  );
-
-  return { products, totalMatches: matches.length, shop };
-};
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function priceDelta(yours, competitor) {
-  if (competitor == null || !yours) return null;
-  const diff = competitor - yours;
-  const pct = (diff / yours) * 100;
-  return { diff, pct };
-}
-
-function scoreTone(score) {
-  if (score >= 85) return "success";
-  if (score >= 70) return "info";
-  return "subdued";
-}
-
-// ─── UI ──────────────────────────────────────────────────────────────────────
-export default function MatchesPage() {
-  const { products, totalMatches } = useLoaderData();
-  const [query, setQuery] = useState("");
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return products;
-    return products.filter((p) => p.title.toLowerCase().includes(q));
-  }, [products, query]);
-
-  if (totalMatches === 0) {
-    return (
-      <s-page heading="Matched Products">
-        <s-section>
-          <s-stack direction="block" gap="base" align="center">
-            <s-heading>No matches yet</s-heading>
-            <s-paragraph>
-              Add a competitor in Controller and wait for the next scrape and
-              match cycle to finish.
-            </s-paragraph>
-          </s-stack>
-        </s-section>
-      </s-page>
-    );
+  // Pull the canonical ProductUrl per scraped product for "Open competitor" link.
+  const scrapedIds = matches.map((m) => m.scrapedProductId);
+  if (scrapedIds.length) {
+    const urls = await db.productUrl.findMany({
+      where: { prodId: { in: scrapedIds } },
+      select: { prodId: true, url: true },
+    });
+    const urlByScraped = new Map(urls.map((u) => [u.prodId, u.url]));
+    for (const grp of byProduct.values()) {
+      for (const m of grp.matches) {
+        m.competitorUrl = urlByScraped.get(m.scrapedProductId) ?? null;
+      }
+    }
   }
 
+  return { groups: [...byProduct.values()] };
+};
+
+export const action = async ({ request }) => {
+  await authenticate.admin(request);
+  const formData = await request.formData();
+  const matchId = formData.get("matchId");
+  const intent  = formData.get("intent");
+
+  if (intent === "confirm") {
+    await db.productLevelMatch.update({
+      where: { id: matchId },
+      data: { confirmedByMerchant: true, rejectedByMerchant: false, reviewedAt: new Date() },
+    });
+  } else if (intent === "reject") {
+    await db.productLevelMatch.update({
+      where: { id: matchId },
+      data: { confirmedByMerchant: false, rejectedByMerchant: true, reviewedAt: new Date() },
+    });
+  }
+  return null;
+};
+
+export default function MatchesPage() {
+  const { groups } = useLoaderData();
+  const fetcher = useFetcher();
+
+  const act = (matchId, intent) =>
+    fetcher.submit({ intent, matchId }, { method: "POST" });
+
   return (
-    <s-page
-      heading="Matched Products"
-      subheading={`${totalMatches} match${totalMatches === 1 ? "" : "es"} across ${products.length} product${products.length === 1 ? "" : "s"}`}
-    >
-      <s-stack direction="block" gap="loose">
+    <s-page heading="Matched competitors" subheading={`${groups.length} product${groups.length === 1 ? "" : "s"} with matches`}>
+      {groups.length === 0 ? (
         <s-section>
-          <s-text-field
-            label="Search your products"
-            placeholder="Search by product name…"
-            value={query}
-            onInput={(e) => setQuery(e.currentTarget.value)}
-            clearButton
-            onClearButtonClick={() => setQuery("")}
-          />
+          <s-stack direction="block" gap="tight" align="center">
+            <s-text emphasis="bold">No matches yet</s-text>
+            <s-text tone="subdued">
+              Enable Dynamic Pricing on a product to start discovering competitors.
+            </s-text>
+          </s-stack>
         </s-section>
-
-        {filtered.length === 0 ? (
-          <s-section>
-            <s-paragraph tone="subdued">
-              No products match “{query}”.
-            </s-paragraph>
-          </s-section>
-        ) : null}
-
-        {filtered.map((p) => (
-          <s-section key={p.id}>
-            <s-stack direction="block" gap="base">
-              {/* Product header */}
-              <s-stack direction="inline" gap="base" align="center">
-                {p.imageUrl ? (
-                  <img
-                    src={p.imageUrl}
-                    alt={p.title}
-                    width="56"
-                    height="56"
-                    style={{ objectFit: "cover", borderRadius: "8px" }}
-                  />
-                ) : null}
-                <s-stack direction="block" gap="none">
-                  <s-text emphasis="bold">{p.title}</s-text>
-                  <s-stack direction="inline" gap="tight" align="center">
-                    {p.productType ? (
-                      <s-badge>{p.productType}</s-badge>
-                    ) : null}
-                    <s-text tone="subdued">
-                      {p.matches.length} competitor
-                      {p.matches.length === 1 ? "" : "s"}
-                    </s-text>
-                  </s-stack>
-                </s-stack>
-                <s-spacer />
-                {p.storeUrl ? (
-                  <s-link href={p.storeUrl} target="_blank">
-                    View in store
-                  </s-link>
-                ) : null}
-              </s-stack>
-
-              <s-divider />
-
-              {/* Competitor matches */}
-              <s-stack direction="block" gap="tight">
-                {p.matches.map((m) => {
-                  const delta = priceDelta(m.shopifyPrice, m.competitorPrice);
-                  return (
-                    <s-box
-                      key={m.id}
-                      padding="base"
-                      borderWidth="base"
-                      borderRadius="base"
-                    >
-                      <s-stack direction="inline" gap="base" align="center">
-                        <s-badge tone={scoreTone(m.matchScore)}>
-                          {m.matchScore.toFixed(0)}%
-                        </s-badge>
-
-                        <s-stack direction="block" gap="none">
-                          <s-text emphasis="bold">{m.competitorTitle}</s-text>
-                          <s-text tone="subdued">
-                            {m.competitorDomain}
-                            {m.competitorVariantTitle &&
-                            m.competitorVariantTitle !== "Default Title"
-                              ? ` · ${m.competitorVariantTitle}`
-                              : ""}
-                          </s-text>
-                        </s-stack>
-
-                        <s-spacer />
-
-                        <s-stack direction="block" gap="none" align="end">
-                          <s-text tone="subdued">Yours</s-text>
-                          <s-text emphasis="bold">
-                            ${m.shopifyPrice.toFixed(2)}
-                          </s-text>
-                        </s-stack>
-
-                        <s-stack direction="block" gap="none" align="end">
-                          <s-text tone="subdued">Competitor</s-text>
-                          <s-text emphasis="bold">
-                            {m.competitorPrice != null
-                              ? `$${m.competitorPrice.toFixed(2)}`
-                              : "—"}
-                          </s-text>
-                        </s-stack>
-
-                        {delta ? (
-                          <s-badge
-                            tone={
-                              delta.diff > 0
-                                ? "success"
-                                : delta.diff < 0
-                                ? "critical"
-                                : "subdued"
-                            }
-                          >
-                            {delta.diff > 0 ? "+" : ""}
-                            {delta.pct.toFixed(1)}%
-                          </s-badge>
-                        ) : null}
-
-                        {m.competitorUrl ? (
-                          <s-link href={m.competitorUrl} target="_blank">
-                            View
-                          </s-link>
-                        ) : null}
-                      </s-stack>
-                    </s-box>
-                  );
-                })}
-              </s-stack>
+      ) : (
+        groups.map((g) => (
+          <s-section key={g.id} heading={g.title}>
+            <s-stack direction="inline" gap="base" align="center">
+              {g.imageUrl && (
+                <img src={g.imageUrl} alt={g.title} width="48" height="48" style={{ objectFit: "cover", borderRadius: 4 }} />
+              )}
+              {g.merchantPrice && <s-text>Your price: ${g.merchantPrice}</s-text>}
+              <s-link href={`/app/history/${encodeURIComponent(g.id)}`}>Price history</s-link>
+              <s-link href={`/app/discover/${encodeURIComponent(g.id)}`}>Find competitors</s-link>
             </s-stack>
+
+            <s-resource-list>
+              {g.matches.map((m) => (
+                <s-resource-item key={m.id} id={m.id}>
+                  {m.scrapedImageUrl && (
+                    <img slot="media" src={m.scrapedImageUrl} alt={m.scrapedTitle} width="50" height="50" style={{ objectFit: "cover", borderRadius: 4 }} />
+                  )}
+                  <s-stack direction="block" gap="tight">
+                    <s-stack direction="inline" gap="base" align="center">
+                      <s-text emphasis="bold">{m.scrapedTitle}</s-text>
+                      <s-badge>{m.scrapedDomain}</s-badge>
+                      <s-badge tone={m.confidenceTier === "CONFIRMED" ? "success" : "info"}>
+                        {m.confidenceTier} ({(m.confidence * 100).toFixed(0)}%)
+                      </s-badge>
+                      {m.confirmedByMerchant && <s-badge tone="success">Confirmed</s-badge>}
+                    </s-stack>
+                    <s-stack direction="inline" gap="loose" align="center">
+                      {m.competitorPrice && <s-text>Their price: ${m.competitorPrice}</s-text>}
+                      {m.competitorUrl && (
+                        <s-link href={m.competitorUrl} target="_blank">Open</s-link>
+                      )}
+                      <s-button size="slim" onClick={() => act(m.id, "confirm")} disabled={m.confirmedByMerchant || undefined}>
+                        Confirm
+                      </s-button>
+                      <s-button size="slim" variant="plain" onClick={() => act(m.id, "reject")}>
+                        Reject
+                      </s-button>
+                    </s-stack>
+                  </s-stack>
+                </s-resource-item>
+              ))}
+            </s-resource-list>
           </s-section>
-        ))}
-      </s-stack>
+        ))
+      )}
     </s-page>
   );
 }
 
-export function ErrorBoundary() {
-  const error = useRouteError();
-  console.error("[Matches ErrorBoundary]", error);
-  return boundary.error(error);
-}
-
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};
+export const headers = (h) => boundary.headers(h);

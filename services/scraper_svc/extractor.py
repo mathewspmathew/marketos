@@ -3,7 +3,7 @@ services/scraper_svc/extractor.py
 
 Task 2 — extract_product (extraction_queue)
   Download .md from GCS → Groq extraction → upsert via ProductUrl.
-  On permanent failure: log to ScrapingError table (DLQ).
+  On permanent failure: log via helpers.log_error (stderr).
   Queue generate_variant_semantics.
 """
 
@@ -15,20 +15,27 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from groq import Groq, RateLimitError as GroqRateLimitError
-from sqlalchemy import update as sa_update
+from groq import RateLimitError as GroqRateLimitError
+
+from services.common.groq_client import make_groq_client
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from services.common.celery_app import app
 from services.common.db import get_db
 from services.common.gcs_utils import download_markdown_from_gcs, upload_image_to_gcs
-from services.common.models import ProductUrl, ScrapedProduct, ScrapedVariant
+from services.common.models import (
+    CompetitorPriceObservation,
+    ProductUrl,
+    ScrapedProduct,
+    ScrapedVariant,
+)
 from services.common.schemas import ProductSchema
 from services.scraper_svc.helpers import log_error, mark_task_done, set_next_scrap_at
 
 load_dotenv()
 
-_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
+_groq_client = make_groq_client()
 
 GROQ_EXTRACT_PROMPT = """You are a professional e-commerce data extractor.
 Extract structured product data from the markdown of this product page: {url}
@@ -100,6 +107,101 @@ def extract_with_groq(markdown: str, url: str) -> ProductSchema | None:
         raw_preview = locals().get("raw", "")[:300]
         print(f"[!] Groq extraction error for {url}: {e}\n    Raw: {raw_preview}")
         return None
+
+
+GROQ_LISTING_PROMPT = """You are a professional e-commerce link extractor.
+The markdown below is from a listing / search / category page at: {url}
+
+Extract the individual product cards visible on the page. Return ONLY a JSON
+object with a single "cards" key holding an array. Each card has:
+  url:   str   (absolute http(s) URL of the product detail page)
+  title: str | null   (the card's product title as shown on the listing)
+
+RULES:
+- Include ONLY links that lead to an individual product's detail page.
+- EXCLUDE navigation, filters, pagination, breadcrumbs, ads, "view all" links,
+  category/brand listing links, account/help/cart links.
+- Prefer the canonical/absolute URL when both relative and absolute appear.
+- Do NOT include the listing page URL itself.
+- Return ONLY raw JSON. No markdown. No commentary."""
+
+
+def extract_listing_with_groq(markdown: str, url: str) -> list[dict] | None:
+    """Extract individual product-card URLs from a listing-page markdown.
+
+    Returns a list of {"url": str, "title": str|None} dicts, or None on
+    permanent extraction failure. Raises GroqRateLimitError so the caller
+    can apply retry/backoff.
+    """
+    try:
+        response = _groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "Output JSON only."},
+                {"role": "user",   "content": GROQ_LISTING_PROMPT.format(url=url) + f"\n\nMarkdown:\n{_clean_markdown(markdown)}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+        raw  = response.choices[0].message.content
+        data = json.loads(raw)
+        cards = data.get("cards") if isinstance(data, dict) else data
+        if not isinstance(cards, list):
+            return None
+        out: list[dict] = []
+        for c in cards:
+            if not isinstance(c, dict):
+                continue
+            u = c.get("url")
+            if not isinstance(u, str) or not u.startswith(("http://", "https://")):
+                continue
+            t = c.get("title") if isinstance(c.get("title"), str) else None
+            out.append({"url": u, "title": t})
+        return out
+    except GroqRateLimitError:
+        raise
+    except Exception as e:
+        raw_preview = locals().get("raw", "")[:300]
+        print(f"[!] Groq listing extraction error for {url}: {e}\n    Raw: {raw_preview}")
+        return None
+
+
+def _record_observations(
+    session,
+    shop_domain: str,
+    rows: list[dict],
+) -> None:
+    """Append CompetitorPriceObservation rows. `rows` is a list of
+    {competitorVariantId, price, currency, isInStock}.
+
+    Also queues a stats fan-out task per competitor variant so any matched
+    merchant variant gets its VariantCompetitorStats recomputed. Safe no-op
+    when no matches exist yet (e.g. first-time scrape before matcher runs).
+    """
+    if not rows:
+        return
+    now = datetime.now(timezone.utc)
+    session.execute(
+        pg_insert(CompetitorPriceObservation),
+        [
+            {
+                "id":                  str(uuid.uuid4()),
+                "shopDomain":          shop_domain,
+                "competitorVariantId": r["competitorVariantId"],
+                "price":               r["price"],
+                "currency":            r.get("currency", "INR"),
+                "isInStock":           r.get("isInStock", True),
+                "observedAt":          now,
+            }
+            for r in rows
+        ],
+    )
+    for r in rows:
+        app.send_task(
+            "stats.recompute_after_observation",
+            args=[shop_domain, r["competitorVariantId"]],
+            queue="stats_queue",
+        )
 
 
 def upsert_to_db(
@@ -194,23 +296,34 @@ def upsert_to_db(
             if len(variants) == 1:
                 variants[0].title = product.title
 
-            session.execute(
-                pg_insert(ScrapedVariant),
+            variant_rows = [
+                {
+                    "id":            str(uuid.uuid4()),
+                    "productId":     product_id,
+                    "sku":           str(v.sku or ""),
+                    "barcode":       v.barcode,
+                    "title":         v.title,
+                    "options":       v.options,
+                    "currentPrice":  float(v.current_price or 0),
+                    "originalPrice": float(v.original_price) if v.original_price else None,
+                    "isInStock":     bool(v.is_in_stock),
+                    "stockQuantity": v.stock_quantity,
+                    "updatedAt":     now,
+                }
+                for v in variants
+            ]
+            session.execute(pg_insert(ScrapedVariant), variant_rows)
+
+            _record_observations(
+                session, shop_domain,
                 [
                     {
-                        "id":            str(uuid.uuid4()),
-                        "productId":     product_id,
-                        "sku":           str(v.sku or ""),
-                        "barcode":       v.barcode,
-                        "title":         v.title,
-                        "options":       v.options,
-                        "currentPrice":  float(v.current_price or 0),
-                        "originalPrice": float(v.original_price) if v.original_price else None,
-                        "isInStock":     bool(v.is_in_stock),
-                        "stockQuantity": v.stock_quantity,
-                        "updatedAt":     now,
+                        "competitorVariantId": row["id"],
+                        "price":               row["currentPrice"],
+                        "isInStock":           row["isInStock"],
                     }
-                    for v in variants
+                    for row in variant_rows
+                    if row["currentPrice"] and row["currentPrice"] > 0
                 ],
             )
             print(f"    [✓] DB saved: {product.title[:40]} | {len(variants)} variant(s)")
@@ -252,14 +365,16 @@ def update_prices_in_db(
                 print(f"    [!] No existing variants for product {prod_id} — cannot update prices")
                 return False
 
+            observation_rows: list[dict] = []
             updated = 0
             if len(existing) == 1:
                 v_ex = extracted[0]
+                new_price = float(v_ex.current_price or 0)
                 session.execute(
                     sa_update(ScrapedVariant)
                     .where(ScrapedVariant.id == existing[0].id)
                     .values(
-                        currentPrice  = float(v_ex.current_price or 0),
+                        currentPrice  = new_price,
                         originalPrice = float(v_ex.original_price) if v_ex.original_price else None,
                         isInStock     = bool(v_ex.is_in_stock),
                         stockQuantity = v_ex.stock_quantity,
@@ -267,6 +382,12 @@ def update_prices_in_db(
                     )
                 )
                 updated = 1
+                if new_price > 0:
+                    observation_rows.append({
+                        "competitorVariantId": existing[0].id,
+                        "price":               new_price,
+                        "isInStock":           bool(v_ex.is_in_stock),
+                    })
             else:
                 by_title = {v.title.strip().lower(): v for v in existing}
                 for v_ex in extracted:
@@ -274,11 +395,12 @@ def update_prices_in_db(
                     v_db = by_title.get(key)
                     if not v_db:
                         continue
+                    new_price = float(v_ex.current_price or 0)
                     session.execute(
                         sa_update(ScrapedVariant)
                         .where(ScrapedVariant.id == v_db.id)
                         .values(
-                            currentPrice  = float(v_ex.current_price or 0),
+                            currentPrice  = new_price,
                             originalPrice = float(v_ex.original_price) if v_ex.original_price else None,
                             isInStock     = bool(v_ex.is_in_stock),
                             stockQuantity = v_ex.stock_quantity,
@@ -286,12 +408,28 @@ def update_prices_in_db(
                         )
                     )
                     updated += 1
+                    if new_price > 0:
+                        observation_rows.append({
+                            "competitorVariantId": v_db.id,
+                            "price":               new_price,
+                            "isInStock":           bool(v_ex.is_in_stock),
+                        })
 
             session.execute(
                 sa_update(ProductUrl)
                 .where(ProductUrl.url == product_url)
                 .values(lastScrapedAt=now)
             )
+
+            if observation_rows:
+                # Look up shopDomain + domain via the ScrapedProduct row.
+                meta = session.execute(
+                    select(ScrapedProduct.shopDomain, ScrapedProduct.domain)
+                    .where(ScrapedProduct.id == prod_id)
+                ).first()
+                if meta:
+                    shop_domain, _domain = meta
+                    _record_observations(session, shop_domain, observation_rows)
 
             print(f"    [✓] Price/stock updated: {updated}/{len(existing)} variant(s) for {product_url[:60]}")
             return updated > 0

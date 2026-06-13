@@ -37,10 +37,17 @@ if (host === "localhost") {
 
 export default defineConfig({
   server: {
-    allowedHosts: [host],
+    // Allow docker bridge hostname so the pricing-worker container can call
+    // the /internal/apply-price route via host.docker.internal:3000.
+    allowedHosts: [host, "host.docker.internal"],
     cors: {
       preflightContinue: true,
     },
+    // Bind to all interfaces so the Python pricing-worker (running in
+    // Docker) can reach the React Router proxy at host.docker.internal:3000.
+    // The port itself comes from PORT env — the npm dev script pins it to
+    // 3000 so both Shopify CLI's proxy and Vite agree.
+    host: true,
     port: Number(process.env.PORT || 3000),
     hmr: hmrConfig,
     fs: {

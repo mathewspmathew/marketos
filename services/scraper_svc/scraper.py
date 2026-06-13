@@ -121,7 +121,7 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
 
     if not _use_stealth:
         try:
-            map_result = _firecrawl_client.map_url(listing_url, params={"limit": num_products * 20})
+            map_result = _firecrawl_client.map_url(listing_url, limit=num_products * 20)
             raw_links  = (
                 map_result.get('links') if isinstance(map_result, dict)
                 else getattr(map_result, 'links', None)
@@ -198,8 +198,8 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
         try:
             crawl_result = _firecrawl_client.crawl_url(
                 listing_url,
-                params={"limit": num_products * 5, "maxDepth": 1},
-                wait_until_done=True,
+                limit=num_products * 5,
+                max_depth=1,
                 poll_interval=3,
             )
             data = (

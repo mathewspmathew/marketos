@@ -1,44 +1,39 @@
 """
 services/suggestion_svc/main.py
 
+Content-only suggestion service. Pricing was moved to pricing_svc; this file
+no longer writes VariantPriceSuggestion. The pricing path (rules + stats +
+shopify_writer) is the single source of truth for prices.
+
 Tasks (suggestion_queue):
   suggestion.suggest_for_shop(shop_domain, scope='all'|'first_time_and_showed')
-    Find every ShopifyProduct in this shop that has at least one variant with
-    a ProductMatch row scoring >= MATCH_THRESHOLD, and fan out per-product
-    suggestion tasks. Skips products whose ProductSuggestion is APPLIED unless
-    scope='all'.
+    Find every ShopifyProduct with at least one qualifying ProductMatch and
+    fan out per-product suggestion tasks.
 
   suggestion.suggest_for_product(shop_domain, shopify_product_id)
     For one merchant product:
-      1. Pull its variants.
-      2. For each variant, gather competitor ScrapedVariants linked via
-         ProductMatch with matchScore >= MATCH_THRESHOLD.
-      3. Filter prices to INR-only / non-outlier (IQR fence).
-      4. Compute competitor min/median/max per variant -> upsert
-         VariantPriceSuggestion.
-      5. Aggregate competitor titles+descriptions across all qualifying
-         variants -> single Groq call -> upsert ProductSuggestion (title +
+      1. Pull competitor titles + descriptions across all qualifying variants.
+      2. Single Groq call -> upsert ProductSuggestion (title +
          descriptionHtml + rationale).
-    Edited fields (editedTitle / editedDescriptionHtml / chosenPrice) are
-    preserved across regenerations: we only overwrite suggested* values.
 
 Read paths: ShopifyProduct, ShopifyVariant, ProductMatch, ScrapedVariant.
-Write paths: ProductSuggestion, VariantPriceSuggestion (UPSERT).
+Write paths: ProductSuggestion (UPSERT).
 
 Shopify write-back is NOT done here — the UI route applies user-approved
-values via the merchant's session token.
+title/description via the merchant's session token.
 """
 from __future__ import annotations
 
 import json
 import os
-import statistics
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
 from dotenv import load_dotenv
-from groq import Groq, RateLimitError as GroqRateLimitError
+from groq import RateLimitError as GroqRateLimitError
+
+from services.common.groq_client import make_groq_client
 from sqlalchemy import text
 
 from services.common.celery_app import app
@@ -51,36 +46,8 @@ load_dotenv()
 # ─────────────────────────────────────────────────────────────────────────────
 MATCH_THRESHOLD = Decimal("65.00")     # ProductMatch.matchScore cutoff
 LLM_MAX_COMPETITORS = 30               # cap competitor inputs into Groq prompt
-INR_MIN, INR_MAX = Decimal("1"), Decimal("10000000")  # sanity bounds, INR
 
-_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", "not-set"))
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Pricing helpers
-# ─────────────────────────────────────────────────────────────────────────────
-def _filter_inr_prices(prices: list[Decimal]) -> list[Decimal]:
-    """Drop sentinels and outliers. Currency check is best-effort: we accept
-    anything inside a plausible INR range. Refine once ScrapedVariant carries
-    explicit currency."""
-    cleaned = [p for p in prices if p is not None and INR_MIN <= p <= INR_MAX]
-    if len(cleaned) < 4:
-        return cleaned
-    cleaned_sorted = sorted(cleaned)
-    n = len(cleaned_sorted)
-    q1 = cleaned_sorted[n // 4]
-    q3 = cleaned_sorted[(3 * n) // 4]
-    iqr = q3 - q1
-    lo, hi = q1 - Decimal("1.5") * iqr, q3 + Decimal("1.5") * iqr
-    return [p for p in cleaned_sorted if lo <= p <= hi]
-
-
-def _price_aggregates(prices: list[Decimal]) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
-    if not prices:
-        return None, None, None
-    ordered = sorted(prices)
-    median = Decimal(str(statistics.median([float(p) for p in ordered]))).quantize(Decimal("0.01"))
-    return ordered[0], median, ordered[-1]
+_groq_client = make_groq_client()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +99,7 @@ def suggest_for_shop(shop_domain: str, scope: str = "first_time_and_showed") -> 
                 LEFT JOIN "ProductSuggestion" ps ON ps."shopifyProductId" = sv."productId"
                 WHERE pm."shopDomain" = :shop
                   AND pm."matchScore" >= :threshold
+                  AND pm."dismissedAt" IS NULL
                   AND (
                     :scope = 'all'
                     OR ps."status" IS NULL
@@ -150,12 +118,12 @@ def suggest_for_shop(shop_domain: str, scope: str = "first_time_and_showed") -> 
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Per-product worker
+# Per-product worker — content only (title + description)
 # ─────────────────────────────────────────────────────────────────────────────
 @app.task(name='suggestion.suggest_for_product', bind=True, max_retries=3, default_retry_delay=30, rate_limit='3/m')
 def suggest_for_product(self, shop_domain: str, shopify_product_id: str) -> dict:
     now = datetime.now(timezone.utc)
-    written = {"variants": 0, "product": False}
+    written = {"product": False}
 
     with get_db() as session:
         product = session.execute(
@@ -170,106 +138,52 @@ def suggest_for_product(self, shop_domain: str, shopify_product_id: str) -> dict
             print(f"[suggestion] product {shopify_product_id} not found for {shop_domain}", flush=True)
             return written
 
-        variants = session.execute(
-            text("""SELECT id, "currentPrice", title FROM "ShopifyVariant" WHERE "productId" = :pid"""),
-            {"pid": shopify_product_id},
+        # Pull qualifying competitor context across every variant of the
+        # product in one shot — we only need the LLM context, not per-variant
+        # price aggregates anymore.
+        comp_rows = session.execute(
+            text("""
+                SELECT sv2."currentPrice" AS price,
+                       sv2."title"        AS title,
+                       sp."description"   AS description,
+                       sp."vendor"        AS vendor,
+                       pm."matchScore"    AS score
+                FROM "ProductMatch" pm
+                JOIN "ShopifyVariant" sv  ON sv.id  = pm."shopifyVariantId"
+                JOIN "ScrapedVariant" sv2 ON sv2.id = pm."competitorVariantId"
+                JOIN "ScrapedProduct" sp  ON sp.id  = sv2."productId"
+                WHERE sv."productId"   = :pid
+                  AND pm."shopDomain"  = :shop
+                  AND pm."matchScore"  >= :threshold
+                  AND pm."dismissedAt" IS NULL
+                ORDER BY pm."matchScore" DESC
+                LIMIT :cap
+            """),
+            {"pid": shopify_product_id, "shop": shop_domain,
+             "threshold": MATCH_THRESHOLD, "cap": LLM_MAX_COMPETITORS * 3},
         ).fetchall()
 
-        # ── 1. Per-variant price aggregates ──────────────────────────────
-        all_competitor_ctx: list[dict] = []
-        all_match_scores: list[Decimal] = []
-
-        for v in variants:
-            comp_rows = session.execute(
-                text("""
-                    SELECT sv."currentPrice" AS price,
-                           sv."title"        AS title,
-                           sp."description"  AS description,
-                           sp."vendor"       AS vendor,
-                           pm."matchScore"   AS score
-                    FROM "ProductMatch" pm
-                    JOIN "ScrapedVariant" sv ON sv."id" = pm."competitorVariantId"
-                    JOIN "ScrapedProduct" sp ON sp."id" = sv."productId"
-                    WHERE pm."shopifyVariantId" = :vid
-                      AND pm."matchScore" >= :threshold
-                    ORDER BY pm."matchScore" DESC
-                """),
-                {"vid": v.id, "threshold": MATCH_THRESHOLD},
-            ).fetchall()
-
-            if not comp_rows:
-                continue
-
-            prices_filtered = _filter_inr_prices([r.price for r in comp_rows])
-            cmin, cmed, cmax = _price_aggregates(prices_filtered)
-
-            rationale = (
-                f"From {len(prices_filtered)} INR competitors (of {len(comp_rows)} matches >= {MATCH_THRESHOLD})."
-                if prices_filtered else
-                "No usable INR competitor prices."
-            )
-
-            session.execute(
-                text("""
-                    INSERT INTO "VariantPriceSuggestion"
-                      (id, "shopDomain", "shopifyVariantId",
-                       "competitorMin", "competitorMedian", "competitorMax",
-                       "competitorCount", "priceRationale",
-                       "status", "generatedAt", "updatedAt")
-                    VALUES
-                      (:id, :shop, :vid, :cmin, :cmed, :cmax, :ccount, :rationale,
-                       'FIRST_TIME'::"SuggestionStatus", :now, :now)
-                    ON CONFLICT ("shopifyVariantId") DO UPDATE SET
-                      "competitorMin"    = EXCLUDED."competitorMin",
-                      "competitorMedian" = EXCLUDED."competitorMedian",
-                      "competitorMax"    = EXCLUDED."competitorMax",
-                      "competitorCount"  = EXCLUDED."competitorCount",
-                      "priceRationale"   = EXCLUDED."priceRationale",
-                      "generatedAt"      = EXCLUDED."generatedAt",
-                      "updatedAt"        = EXCLUDED."updatedAt",
-                      "status"           = CASE
-                        WHEN "VariantPriceSuggestion"."status" = 'APPLIED'::"SuggestionStatus"
-                          THEN 'APPLIED'::"SuggestionStatus"
-                        ELSE 'SHOWED'::"SuggestionStatus"
-                      END
-                """),
-                {
-                    "id": str(uuid.uuid4()),
-                    "shop": shop_domain,
-                    "vid": v.id,
-                    "cmin": cmin, "cmed": cmed, "cmax": cmax,
-                    "ccount": len(prices_filtered),
-                    "rationale": rationale,
-                    "now": now,
-                },
-            )
-            written["variants"] += 1
-
-            # collect for product-level LLM context
-            for r in comp_rows[:LLM_MAX_COMPETITORS]:
-                all_competitor_ctx.append({
-                    "title": r.title,
-                    "description": (r.description or "")[:500],
-                    "vendor": r.vendor,
-                    "price_inr": float(r.price) if r.price is not None else None,
-                    "match_score": float(r.score),
-                })
-                all_match_scores.append(r.score)
-
-        # ── 2. Product-level LLM content ────────────────────────────────
-        if not all_competitor_ctx:
+        if not comp_rows:
             print(f"[suggestion] no qualifying competitors for product {shopify_product_id}", flush=True)
             return written
 
-        # dedupe + cap
+        # dedupe by (title, vendor) and cap to LLM_MAX_COMPETITORS
         seen = set()
         deduped: list[dict] = []
-        for c in sorted(all_competitor_ctx, key=lambda x: -x["match_score"]):
-            key = (c["title"], c["vendor"])
+        all_match_scores: list[Decimal] = []
+        for r in comp_rows:
+            key = (r.title, r.vendor)
             if key in seen:
                 continue
             seen.add(key)
-            deduped.append(c)
+            deduped.append({
+                "title":       r.title,
+                "description": (r.description or "")[:500],
+                "vendor":      r.vendor,
+                "price_inr":   float(r.price) if r.price is not None else None,
+                "match_score": float(r.score),
+            })
+            all_match_scores.append(r.score)
             if len(deduped) >= LLM_MAX_COMPETITORS:
                 break
 
@@ -336,5 +250,5 @@ def suggest_for_product(self, shop_domain: str, shopify_product_id: str) -> dict
         )
         written["product"] = True
 
-    print(f"[suggestion] {shopify_product_id}: variants={written['variants']} product={written['product']}", flush=True)
+    print(f"[suggestion] {shopify_product_id}: product={written['product']}", flush=True)
     return written
