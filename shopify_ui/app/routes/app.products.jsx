@@ -424,6 +424,10 @@ export default function HomePage() {
 
   const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedCategory]);
+
   const getLocal = (id) =>
     localState[id] ?? {
       dynamicPricingEnabled: false,
