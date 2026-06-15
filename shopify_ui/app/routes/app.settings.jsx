@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
@@ -173,27 +173,48 @@ function InfoButton({ children }) {
 export default function SettingsPage() {
   const { settings } = useLoaderData();
   const fetcher = useFetcher();
-  const saved = fetcher.data?.ok && fetcher.state === "idle";
 
-  const [form, setForm] = useState({
+  // Convert decimal percentages (0.05) to user-friendly percentage (5) for display
+  const toPercentageDisplay = (decimal) => {
+    if (decimal == null) return "";
+    const num = Number(decimal);
+    return num > 1 ? String(num) : String(num * 100);
+  };
+
+  const initialFormState = {
     serperLocation: settings.serperLocation,
     serperGl: settings.serperGl,
     serperHl: settings.serperHl,
     maxCompetitorsPerProduct: String(settings.maxCompetitorsPerProduct),
     listingExpansionCap: String(settings.listingExpansionCap),
     marketplaceBlocklist: (settings.marketplaceBlocklist ?? []).join("\n"),
-    markupPct: String(settings.markupPct),
-    budgetUndercut: String(settings.budgetUndercut),
-    premiumUplift: String(settings.premiumUplift),
+    markupPct: toPercentageDisplay(settings.markupPct),
+    budgetUndercut: toPercentageDisplay(settings.budgetUndercut),
+    premiumUplift: toPercentageDisplay(settings.premiumUplift),
     minCompetitorsToPrice: String(settings.minCompetitorsToPrice),
     topKCompetitors: String(settings.topKCompetitors),
-    maxAutoApplyChangePct: String(settings.maxAutoApplyChangePct),
-    lifetimeCapPct: String(settings.lifetimeCapPct),
+    maxAutoApplyChangePct: toPercentageDisplay(settings.maxAutoApplyChangePct),
+    lifetimeCapPct: toPercentageDisplay(settings.lifetimeCapPct),
     frequencyInterval: String(settings.frequencyInterval),
     frequencyUnit: settings.frequencyUnit,
     autoRescrapeEnabled: settings.autoRescrapeEnabled,
     includeOosInPricing: settings.includeOosInPricing,
-  });
+  };
+
+  const [form, setForm] = useState(initialFormState);
+  const [showSavedMessage, setShowSavedMessage] = useState(false);
+
+  // Check if form has unsaved changes
+  const isDirty = JSON.stringify(form) !== JSON.stringify(initialFormState);
+
+  // Auto-dismiss "Saved" message after 3 seconds
+  useEffect(() => {
+    if (fetcher.data?.ok && fetcher.state === "idle") {
+      setShowSavedMessage(true);
+      const timer = setTimeout(() => setShowSavedMessage(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [fetcher.data?.ok, fetcher.state]);
 
   const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
 
@@ -291,19 +312,13 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div style={{ position: "relative" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Exclude these marketplaces</label>
-              <span title="Domains to skip during discovery. E.g., amazon.in, ebay.com (one per line)." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <s-textarea
-              rows={5}
-              value={form.marketplaceBlocklist}
-              onInput={(e) => setField("marketplaceBlocklist", e.currentTarget.value)}
-              helpText="One per line. E.g., amazon.in, ebay.com"
-              style={{ marginTop: "8px" }}
-            />
-          </div>
+          <s-textarea
+            label="Exclude these marketplaces"
+            rows={5}
+            value={form.marketplaceBlocklist}
+            onInput={(e) => setField("marketplaceBlocklist", e.currentTarget.value)}
+            helpText="Domains to exclude from competitor discovery (e.g. amazon.in, ebay.com). One per line."
+          />
         </s-stack>
       </s-section>
 
@@ -318,11 +333,17 @@ export default function SettingsPage() {
               <label style={{ fontWeight: "500" }}>Discount off median competitor price</label>
               <span title="Suggested price = median × (1 - discount). E.g., 5% means sell 5% cheaper than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
-            <s-text-field
-              value={form.markupPct}
-              onInput={(e) => setField("markupPct", e.currentTarget.value)}
-              helpText="E.g., 0.02 or 2%. 0% = match average, higher = bigger discount."
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <s-text-field
+                type="number"
+                value={form.markupPct}
+                onInput={(e) => setField("markupPct", e.currentTarget.value)}
+                placeholder="5"
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
+            </div>
+            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 15</s-text>
           </div>
 
           <div>
@@ -330,11 +351,17 @@ export default function SettingsPage() {
               <label style={{ fontWeight: "500" }}>Budget tier discount</label>
               <span title="For Budget products, additional undercut below median. E.g., 5% = offer 5% cheaper than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
-            <s-text-field
-              value={form.budgetUndercut}
-              onInput={(e) => setField("budgetUndercut", e.currentTarget.value)}
-              helpText="E.g., 0.05 or 5%"
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <s-text-field
+                type="number"
+                value={form.budgetUndercut}
+                onInput={(e) => setField("budgetUndercut", e.currentTarget.value)}
+                placeholder="5"
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
+            </div>
+            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 15</s-text>
           </div>
 
           <div>
@@ -342,11 +369,17 @@ export default function SettingsPage() {
               <label style={{ fontWeight: "500" }}>Premium tier markup</label>
               <span title="For Premium products, additional markup above median. E.g., 5% = charge 5% more than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
-            <s-text-field
-              value={form.premiumUplift}
-              onInput={(e) => setField("premiumUplift", e.currentTarget.value)}
-              helpText="E.g., 0.05 or 5%"
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <s-text-field
+                type="number"
+                value={form.premiumUplift}
+                onInput={(e) => setField("premiumUplift", e.currentTarget.value)}
+                placeholder="5"
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
+            </div>
+            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 15</s-text>
           </div>
         </s-stack>
       </s-section>
@@ -359,25 +392,27 @@ export default function SettingsPage() {
         <s-stack direction="block" gap="base">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Matched competitors needed before pricing</label>
-              <span title="Don't update price until at least this many competitors match your product. Matched = semantically similar." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+              <label style={{ fontWeight: "500" }}>Minimum competitors to price</label>
+              <span title="Safety gate: don't calculate price until we have at least this many matched (semantically similar) competitor products. Higher = more confident but slower." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               type="number"
               value={form.minCompetitorsToPrice}
               onInput={(e) => setField("minCompetitorsToPrice", e.currentTarget.value)}
+              helpText="E.g., 4. Ensures enough signal before pricing activates."
             />
           </div>
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Use most similar N competitors</label>
-              <span title="Weight only K most-similar competitors in pricing. Avoids noise from distant matches. Top 4 = focus on true competitors." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+              <label style={{ fontWeight: "500" }}>Focus on top N most-similar</label>
+              <span title="Quality filter: among all matched competitors, use only the K most-confident for price calculation. Avoids noise from distant matches. E.g., top 3 = use the 3 strongest matches." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               type="number"
               value={form.topKCompetitors}
               onInput={(e) => setField("topKCompetitors", e.currentTarget.value)}
+              helpText="E.g., 3 or 4. Used for weighted average calculation."
             />
           </div>
 
@@ -386,11 +421,17 @@ export default function SettingsPage() {
               <label style={{ fontWeight: "500" }}>Max price change per update</label>
               <span title="Hard limit on price movement in one cycle. Prevents sudden big jumps. E.g., 5% = won't jump more than ±5%." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
-            <s-text-field
-              value={form.maxAutoApplyChangePct}
-              onInput={(e) => setField("maxAutoApplyChangePct", e.currentTarget.value)}
-              helpText="E.g., 0.05 or 5%"
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <s-text-field
+                type="number"
+                value={form.maxAutoApplyChangePct}
+                onInput={(e) => setField("maxAutoApplyChangePct", e.currentTarget.value)}
+                placeholder="5"
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
+            </div>
+            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 15</s-text>
           </div>
 
           <div>
@@ -398,11 +439,17 @@ export default function SettingsPage() {
               <label style={{ fontWeight: "500" }}>Don't drift more than (lifetime)</label>
               <span title="Price can't stray this far from base price. E.g., $100 base with 25% cap = stay between $75–$125." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
-            <s-text-field
-              value={form.lifetimeCapPct}
-              onInput={(e) => setField("lifetimeCapPct", e.currentTarget.value)}
-              helpText="E.g., 0.25 or 25%"
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <s-text-field
+                type="number"
+                value={form.lifetimeCapPct}
+                onInput={(e) => setField("lifetimeCapPct", e.currentTarget.value)}
+                placeholder="25"
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
+            </div>
+            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 25</s-text>
           </div>
         </s-stack>
       </s-section>
@@ -476,7 +523,8 @@ export default function SettingsPage() {
 
       <s-stack direction="inline" gap="base" align="center">
         <s-button variant="primary" onClick={submit}>Save settings</s-button>
-        {saved && <s-text tone="success">Saved.</s-text>}
+        {isDirty && <s-text tone="warning">Not saved</s-text>}
+        {showSavedMessage && <s-text tone="success">Saved!</s-text>}
       </s-stack>
     </s-page>
   );
