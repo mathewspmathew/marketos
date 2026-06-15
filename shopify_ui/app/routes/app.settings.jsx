@@ -233,12 +233,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Search location</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  <strong>Market location for competitor search.</strong> More precise = more relevant results. E.g., "Kochi, Kerala" vs. "India".
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               value={form.serperLocation}
@@ -251,12 +245,6 @@ export default function SettingsPage() {
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
                 <label style={{ fontWeight: "500", fontSize: "14px" }}>Country code</label>
-                <s-popover preferredPosition="above">
-                  <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "14px" }}>ⓘ</button>
-                  <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                    2-letter country code (e.g., in, us, gb, ae). Falls back to this if location is vague.
-                  </div>
-                </s-popover>
               </div>
               <s-text-field
                 value={form.serperGl}
@@ -267,12 +255,6 @@ export default function SettingsPage() {
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
                 <label style={{ fontWeight: "500", fontSize: "14px" }}>Language</label>
-                <s-popover preferredPosition="above">
-                  <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "14px" }}>ⓘ</button>
-                  <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                    2-letter language code (e.g., en, hi, ar, de). Filters results by language.
-                  </div>
-                </s-popover>
               </div>
               <s-text-field
                 value={form.serperHl}
@@ -285,12 +267,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Track up to N competitors per product</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  Maximum number to monitor per product. More = broader coverage but slower scraping. Balance coverage vs. cost.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               type="number"
@@ -302,12 +278,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Products per search result page</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  When we find a category page, extract this many product cards. Higher = broader but slower.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               type="number"
@@ -319,12 +289,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Exclude these marketplaces</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  Domains to skip during discovery. E.g., amazon.in, ebay.com (one per line).
-                </div>
-              </s-popover>
             </div>
             <s-textarea
               rows={5}
@@ -345,12 +309,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Discount off median competitor price</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  <strong>Formula:</strong> Suggested = median × (1 − discount). E.g., 5% means sell 5% cheaper than average.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               value={form.markupPct}
@@ -362,12 +320,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Budget tier discount</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  For Budget products, additional undercut below median. E.g., 5% = offer 5% cheaper than average.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               value={form.budgetUndercut}
@@ -379,12 +331,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Premium tier markup</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  For Premium products, additional markup above median. E.g., 5% = charge 5% more than average.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               value={form.premiumUplift}
@@ -404,12 +350,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Matched competitors needed before pricing</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  Don't update price until at least this many competitors match your product. "Matched" = semantically similar.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               type="number"
@@ -421,12 +361,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Use most similar N competitors</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  Weight only K most-similar competitors in pricing. Avoids noise from distant matches. Top 4 = focus on true competitors.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               type="number"
@@ -438,12 +372,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Max price change per update</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  Hard limit on price movement in one cycle. Prevents sudden big jumps. E.g., 5% = won't jump more than ±5%.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               value={form.maxAutoApplyChangePct}
@@ -455,12 +383,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Don't drift more than (lifetime)</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  Price can't stray this far from base price. E.g., $100 base with 25% cap = stay between $75–$125.
-                </div>
-              </s-popover>
             </div>
             <s-text-field
               value={form.lifetimeCapPct}
@@ -490,12 +412,6 @@ export default function SettingsPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Unit</label>
-              <s-popover preferredPosition="above">
-                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "14px" }}>ⓘ</button>
-                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
-                  More frequent = better accuracy but higher cost. "Never" = one-time discovery only.
-                </div>
-              </s-popover>
             </div>
             <s-select
               value={form.frequencyUnit}
@@ -524,12 +440,6 @@ export default function SettingsPage() {
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
                   <span style={{ fontWeight: "600", margin: 0 }}>Auto rescrape</span>
-                  <s-popover preferredPosition="above">
-                    <button slot="button" aria-label="More info" style={{ padding: "2px 6px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "4px", cursor: "help", color: "#0066cc", fontSize: "12px", fontWeight: "bold", width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center" }}>ⓘ</button>
-                    <div style={{ padding: "10px", fontSize: "12px", maxWidth: "240px", lineHeight: "1.5" }}>
-                      Master on/off for all competitor checks. Turn OFF to pause (e.g., testing or emergency).
-                    </div>
-                  </s-popover>
                 </div>
                 <s-text tone="subdued" style={{ fontSize: "12px" }}>Master switch for refreshing competitor prices.</s-text>
               </div>
@@ -545,12 +455,6 @@ export default function SettingsPage() {
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
                   <span style={{ fontWeight: "600" }}>Include out-of-stock</span>
-                  <s-popover preferredPosition="above">
-                    <button slot="button" aria-label="More info" style={{ padding: "2px 6px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "4px", cursor: "help", color: "#0066cc", fontSize: "12px", fontWeight: "bold", width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center" }}>ⓘ</button>
-                    <div style={{ padding: "10px", fontSize: "12px", maxWidth: "240px", lineHeight: "1.5" }}>
-                      When ON, out-of-stock competitor prices count in calculations. Turn ON if stock detection is unreliable.
-                    </div>
-                  </s-popover>
                 </div>
                 <s-text tone="subdued" style={{ fontSize: "12px" }}>Include OOS competitor prices in pricing.</s-text>
               </div>
