@@ -291,7 +291,7 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div>
+          <div style={{ position: "relative" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Exclude these marketplaces</label>
               <span title="Domains to skip during discovery. E.g., amazon.in, ebay.com (one per line)." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
@@ -301,6 +301,7 @@ export default function SettingsPage() {
               value={form.marketplaceBlocklist}
               onInput={(e) => setField("marketplaceBlocklist", e.currentTarget.value)}
               helpText="One per line. E.g., amazon.in, ebay.com"
+              style={{ marginTop: "8px" }}
             />
           </div>
         </s-stack>
@@ -445,34 +446,30 @@ export default function SettingsPage() {
           Master switches for the system.
         </s-text>
         <s-stack direction="block" gap="base">
-          <div style={{ padding: "12px", background: "#fafafa", borderRadius: "4px", borderLeft: "3px solid #f0f0f0" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
-              <s-toggle
-                checked={form.autoRescrapeEnabled || undefined}
-                onChange={(e) => setField("autoRescrapeEnabled", e.currentTarget.checked)}
-              />
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                  <span style={{ fontWeight: "600", margin: 0 }}>Auto rescrape</span>
-                </div>
-                <s-text tone="subdued" style={{ fontSize: "12px" }}>Master switch for refreshing competitor prices.</s-text>
-              </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "600" }}>Auto rescrape</label>
+              <span title="Master on/off for all competitor checks. Turn OFF to pause (e.g., testing or emergency)." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
+            <s-checkbox
+              id="auto-rescrape"
+              checked={form.autoRescrapeEnabled || undefined}
+              onChange={() => setField("autoRescrapeEnabled", !form.autoRescrapeEnabled)}
+              helpText="Master switch for refreshing competitor prices."
+            />
           </div>
 
-          <div style={{ padding: "12px", background: "#fafafa", borderRadius: "4px", borderLeft: "3px solid #f0f0f0" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
-              <s-toggle
-                checked={form.includeOosInPricing || undefined}
-                onChange={(e) => setField("includeOosInPricing", e.currentTarget.checked)}
-              />
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                  <span style={{ fontWeight: "600" }}>Include out-of-stock</span>
-                </div>
-                <s-text tone="subdued" style={{ fontSize: "12px" }}>Include OOS competitor prices in pricing.</s-text>
-              </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "600" }}>Include out-of-stock</label>
+              <span title="When ON, OOS competitor prices count in calculations. Turn ON if stock detection is unreliable." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
+            <s-checkbox
+              id="include-oos"
+              checked={form.includeOosInPricing || undefined}
+              onChange={() => setField("includeOosInPricing", !form.includeOosInPricing)}
+              helpText="Include OOS competitor prices in pricing calculations."
+            />
           </div>
         </s-stack>
       </s-section>
