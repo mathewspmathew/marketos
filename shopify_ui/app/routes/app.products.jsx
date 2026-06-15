@@ -517,7 +517,7 @@ export default function HomePage() {
           </s-badge>
         ) : (
           <s-badge tone="success">
-            {productSyncedAt ? `Synced ✓ ${new Date(productSyncedAt).toLocaleTimeString()}` : "Synced ✓"}
+            {productSyncedAt ? `Synced ✓ ${new Date(productSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}` : "Synced ✓"}
           </s-badge>
         )}
         <syncFetcher.Form method="post">
@@ -545,7 +545,7 @@ export default function HomePage() {
             clearButton
             onClearButtonClick={() => setSearchQuery("")}
           />
-          <s-select
+          {/* <s-select
             label="Tag"
             value={selectedTag}
             onChange={(e) => setSelectedTag(e.currentTarget.value)}
@@ -554,7 +554,7 @@ export default function HomePage() {
             {allTags.map((tag) => (
               <s-option key={tag} value={tag}>{tag}</s-option>
             ))}
-          </s-select>
+          </s-select> */}
           <s-select
             label="Category"
             value={selectedCategory}
