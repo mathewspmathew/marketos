@@ -474,6 +474,11 @@ export default function HomePage() {
     }
   };
 
+  const getCurrentDefaults = () => {
+    // Prefer freshly fetched defaults, fall back to cached
+    return fetchedDefaults || shopDefaults;
+  };
+
   const setOverrideField = (productId, field, value) => {
     setLocalState((prev) => ({
       ...prev,
