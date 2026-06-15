@@ -613,7 +613,6 @@ model ShopSettings {
   shopDomain               String      @id
   shop                     ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
   markupPct                Decimal     @default(0.02) @db.Decimal(5, 4)
-  minCompetitorsRequired   Int         @default(2)
   maxCompetitorsPerProduct Int         @default(8)
   // Auto-pricing knobs (defaults documented in services/pricing_svc/decide.py).
   minCompetitorsToPrice    Int         @default(4)
@@ -629,11 +628,9 @@ model ShopSettings {
   listingExpansionCap      Int?
 
   marketplaceBlocklist String[] @default([])
-  killSwitch           Boolean  @default(false)
-  // Global pause for all rescrape work in this shop. Distinct from killSwitch
-  // (which gates PriceDecision writes). When false, beat skips rescrape
-  // dispatch for every ProductUrl belonging to this shop, regardless of
-  // per-product frequency.
+  // Global pause for all rescrape work in this shop. When false, beat skips
+  // rescrape dispatch for every ProductUrl belonging to this shop, regardless
+  // of per-product frequency.
   autoRescrapeEnabled  Boolean  @default(true)
   // When false (default), competitor observations marked isInStock=false are
   // dropped from the pricing reference. Flip to true if the scraper's stock

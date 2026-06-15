@@ -16,13 +16,11 @@ const ALLOWED_UNITS = new Set(FREQ_UNITS.map((u) => u.value));
 
 const DEFAULTS = {
   markupPct: 0.02,
-  minCompetitorsRequired: 2,
   maxCompetitorsPerProduct: 8,
   frequencyInterval: 1,
   frequencyUnit: "day",
   listingExpansionCap: 5,
   marketplaceBlocklist: [],
-  killSwitch: false,
   autoRescrapeEnabled: true,
   includeOosInPricing: false,
   // Auto-pricing knobs (per-product overrides live on ShopifyProduct).
@@ -55,13 +53,11 @@ export const loader = async ({ request }) => {
   return {
     settings: {
       markupPct:                Number(s.markupPct),
-      minCompetitorsRequired:   s.minCompetitorsRequired,
       maxCompetitorsPerProduct: s.maxCompetitorsPerProduct,
       frequencyInterval:        s.frequencyInterval,
       frequencyUnit:            s.frequencyUnit,
       listingExpansionCap:      s.listingExpansionCap ?? DEFAULTS.listingExpansionCap,
       marketplaceBlocklist:     s.marketplaceBlocklist ?? [],
-      killSwitch:               s.killSwitch,
       autoRescrapeEnabled:      s.autoRescrapeEnabled ?? true,
       includeOosInPricing:      s.includeOosInPricing ?? false,
       minCompetitorsToPrice:    s.minCompetitorsToPrice ?? DEFAULTS.minCompetitorsToPrice,
@@ -107,13 +103,11 @@ export const action = async ({ request }) => {
 
   const data = {
     markupPct: parsePctish(formData.get("markupPct")) ?? DEFAULTS.markupPct,
-    minCompetitorsRequired:   parsePositiveInt(formData.get("minCompetitorsRequired"),   DEFAULTS.minCompetitorsRequired),
     maxCompetitorsPerProduct: parsePositiveInt(formData.get("maxCompetitorsPerProduct"), DEFAULTS.maxCompetitorsPerProduct),
     frequencyInterval:        parsePositiveInt(formData.get("frequencyInterval"),        DEFAULTS.frequencyInterval),
     frequencyUnit:            unit,
     listingExpansionCap:      parsePositiveInt(formData.get("listingExpansionCap"),      DEFAULTS.listingExpansionCap),
     marketplaceBlocklist:     { set: blocklist },
-    killSwitch:               formData.get("killSwitch") === "true",
     autoRescrapeEnabled:      formData.get("autoRescrapeEnabled") === "true",
     includeOosInPricing:      formData.get("includeOosInPricing") === "true",
     minCompetitorsToPrice:    parsePositiveInt(formData.get("minCompetitorsToPrice"), DEFAULTS.minCompetitorsToPrice),
@@ -162,31 +156,43 @@ export const action = async ({ request }) => {
   return { ok: true };
 };
 
+const INFO_BUTTON_STYLE = { display: "inline-flex", alignItems: "center", marginLeft: "4px", cursor: "help" };
+const TOOLTIP_STYLE = { fontSize: "0.75em", color: "#666", display: "block", marginTop: "4px" };
+
+function InfoButton({ children }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span style={INFO_BUTTON_STYLE} onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      <s-icon-button kind="secondary" size="small" icon="help">
+        {show && <div style={TOOLTIP_STYLE}>{children}</div>}
+      </s-icon-button>
+    </span>
+  );
+}
+
 export default function SettingsPage() {
   const { settings } = useLoaderData();
   const fetcher = useFetcher();
   const saved = fetcher.data?.ok && fetcher.state === "idle";
 
   const [form, setForm] = useState({
-    markupPct: String(settings.markupPct),
-    minCompetitorsRequired: String(settings.minCompetitorsRequired),
+    serperLocation: settings.serperLocation,
+    serperGl: settings.serperGl,
+    serperHl: settings.serperHl,
     maxCompetitorsPerProduct: String(settings.maxCompetitorsPerProduct),
-    frequencyInterval: String(settings.frequencyInterval),
-    frequencyUnit: settings.frequencyUnit,
     listingExpansionCap: String(settings.listingExpansionCap),
     marketplaceBlocklist: (settings.marketplaceBlocklist ?? []).join("\n"),
-    killSwitch: settings.killSwitch,
+    markupPct: String(settings.markupPct),
+    budgetUndercut: String(settings.budgetUndercut),
+    premiumUplift: String(settings.premiumUplift),
+    minCompetitorsToPrice: String(settings.minCompetitorsToPrice),
+    topKCompetitors: String(settings.topKCompetitors),
+    maxAutoApplyChangePct: String(settings.maxAutoApplyChangePct),
+    lifetimeCapPct: String(settings.lifetimeCapPct),
+    frequencyInterval: String(settings.frequencyInterval),
+    frequencyUnit: settings.frequencyUnit,
     autoRescrapeEnabled: settings.autoRescrapeEnabled,
     includeOosInPricing: settings.includeOosInPricing,
-    minCompetitorsToPrice: String(settings.minCompetitorsToPrice),
-    topKCompetitors:       String(settings.topKCompetitors),
-    maxAutoApplyChangePct: String(settings.maxAutoApplyChangePct),
-    lifetimeCapPct:        String(settings.lifetimeCapPct),
-    budgetUndercut:        String(settings.budgetUndercut),
-    premiumUplift:         String(settings.premiumUplift),
-    serperGl:       settings.serperGl,
-    serperHl:       settings.serperHl,
-    serperLocation: settings.serperLocation,
   });
 
   const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
@@ -194,25 +200,23 @@ export default function SettingsPage() {
   const submit = () => {
     fetcher.submit(
       {
-        markupPct:                form.markupPct,
-        minCompetitorsRequired:   form.minCompetitorsRequired,
+        markupPct: form.markupPct,
         maxCompetitorsPerProduct: form.maxCompetitorsPerProduct,
-        frequencyInterval:        form.frequencyInterval,
-        frequencyUnit:            form.frequencyUnit,
-        listingExpansionCap:      form.listingExpansionCap,
-        marketplaceBlocklist:     form.marketplaceBlocklist,
-        killSwitch:               String(form.killSwitch),
-        autoRescrapeEnabled:      String(form.autoRescrapeEnabled),
-        includeOosInPricing:      String(form.includeOosInPricing),
-        minCompetitorsToPrice:    form.minCompetitorsToPrice,
-        topKCompetitors:          form.topKCompetitors,
-        maxAutoApplyChangePct:    form.maxAutoApplyChangePct,
-        lifetimeCapPct:           form.lifetimeCapPct,
-        budgetUndercut:           form.budgetUndercut,
-        premiumUplift:            form.premiumUplift,
-        serperGl:                 form.serperGl,
-        serperHl:                 form.serperHl,
-        serperLocation:           form.serperLocation,
+        frequencyInterval: form.frequencyInterval,
+        frequencyUnit: form.frequencyUnit,
+        listingExpansionCap: form.listingExpansionCap,
+        marketplaceBlocklist: form.marketplaceBlocklist,
+        autoRescrapeEnabled: String(form.autoRescrapeEnabled),
+        includeOosInPricing: String(form.includeOosInPricing),
+        minCompetitorsToPrice: form.minCompetitorsToPrice,
+        topKCompetitors: form.topKCompetitors,
+        maxAutoApplyChangePct: form.maxAutoApplyChangePct,
+        lifetimeCapPct: form.lifetimeCapPct,
+        budgetUndercut: form.budgetUndercut,
+        premiumUplift: form.premiumUplift,
+        serperGl: form.serperGl,
+        serperHl: form.serperHl,
+        serperLocation: form.serperLocation,
       },
       { method: "POST" },
     );
@@ -220,186 +224,338 @@ export default function SettingsPage() {
 
   return (
     <s-page heading="Shop settings">
-      <s-section heading="Pricing formula">
-        <s-stack direction="block" gap="base">
-          <s-text-field
-            label="Markup below median (e.g. 0.02 or 2%)"
-            value={form.markupPct}
-            onInput={(e) => setField("markupPct", e.currentTarget.value)}
-            helpText="Suggested price = median(competitors) × (1 − markup). Higher means more discount."
-          />
-          <s-text-field
-            label="Minimum competitors required"
-            type="number"
-            value={form.minCompetitorsRequired}
-            onInput={(e) => setField("minCompetitorsRequired", e.currentTarget.value)}
-            helpText="Don't suggest a price until at least this many competitor observations exist."
-          />
-        </s-stack>
-      </s-section>
-
-      <s-section heading="Discovery">
-        <s-stack direction="block" gap="base">
-          <s-text-field
-            label="Max competitors to track per product"
-            type="number"
-            value={form.maxCompetitorsPerProduct}
-            onInput={(e) => setField("maxCompetitorsPerProduct", e.currentTarget.value)}
-          />
-          <s-text-field
-            label="Default max products from a listing page"
-            type="number"
-            value={form.listingExpansionCap}
-            onInput={(e) => setField("listingExpansionCap", e.currentTarget.value)}
-            helpText="When a discovered URL is a search/category page, expand this many product cards out of it. Per-product and per-discovery overrides win over this."
-          />
-          <s-textarea
-            label="Marketplace blocklist (one per line)"
-            rows={5}
-            value={form.marketplaceBlocklist}
-            onInput={(e) => setField("marketplaceBlocklist", e.currentTarget.value)}
-            helpText="Domains to exclude from competitor discovery (e.g. amazon.in, ebay.com)."
-          />
-        </s-stack>
-      </s-section>
-
-      <s-section heading="Search targeting (Serper)">
-        <s-text tone="subdued">
-          Localizes competitor discovery results. Location takes precedence over country.
+      {/* 1. How to Find Competitors */}
+      <s-section heading="🔍 How to Find Competitors">
+        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
+          Controls where we search for competitors and how many we track.
         </s-text>
         <s-stack direction="block" gap="base">
-          <s-text-field
-            label="Location (free text, most precise)"
-            value={form.serperLocation}
-            onInput={(e) => setField("serperLocation", e.currentTarget.value)}
-            helpText='E.g. "Kochi, Kerala" or "Mumbai, Maharashtra, India".'
-          />
-          <s-stack direction="inline" gap="base">
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Search location</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  <strong>Market location for competitor search.</strong> More precise = more relevant results. E.g., "Kochi, Kerala" vs. "India".
+                </div>
+              </s-popover>
+            </div>
             <s-text-field
-              label="Country code (gl)"
-              value={form.serperGl}
-              onInput={(e) => setField("serperGl", e.currentTarget.value)}
-              helpText="2-letter country, e.g. in, us, gb, ae."
+              value={form.serperLocation}
+              onInput={(e) => setField("serperLocation", e.currentTarget.value)}
+              helpText="Most precise: city, state, country. E.g., Kochi, Kerala or Mumbai, India."
             />
+          </div>
+
+          <div style={{ display: "flex", gap: "12px" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+                <label style={{ fontWeight: "500", fontSize: "14px" }}>Country code</label>
+                <s-popover preferredPosition="above">
+                  <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "14px" }}>ⓘ</button>
+                  <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                    2-letter country code (e.g., in, us, gb, ae). Falls back to this if location is vague.
+                  </div>
+                </s-popover>
+              </div>
+              <s-text-field
+                value={form.serperGl}
+                onInput={(e) => setField("serperGl", e.currentTarget.value)}
+                helpText="E.g., in, us, gb, ae"
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+                <label style={{ fontWeight: "500", fontSize: "14px" }}>Language</label>
+                <s-popover preferredPosition="above">
+                  <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "14px" }}>ⓘ</button>
+                  <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                    2-letter language code (e.g., en, hi, ar, de). Filters results by language.
+                  </div>
+                </s-popover>
+              </div>
+              <s-text-field
+                value={form.serperHl}
+                onInput={(e) => setField("serperHl", e.currentTarget.value)}
+                helpText="E.g., en, hi, ar, de"
+              />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Track up to N competitors per product</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  Maximum number to monitor per product. More = broader coverage but slower scraping. Balance coverage vs. cost.
+                </div>
+              </s-popover>
+            </div>
             <s-text-field
-              label="Language code (hl)"
-              value={form.serperHl}
-              onInput={(e) => setField("serperHl", e.currentTarget.value)}
-              helpText="Language, e.g. en, hi, ar, de."
+              type="number"
+              value={form.maxCompetitorsPerProduct}
+              onInput={(e) => setField("maxCompetitorsPerProduct", e.currentTarget.value)}
             />
-          </s-stack>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Products per search result page</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  When we find a category page, extract this many product cards. Higher = broader but slower.
+                </div>
+              </s-popover>
+            </div>
+            <s-text-field
+              type="number"
+              value={form.listingExpansionCap}
+              onInput={(e) => setField("listingExpansionCap", e.currentTarget.value)}
+            />
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Exclude these marketplaces</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  Domains to skip during discovery. E.g., amazon.in, ebay.com (one per line).
+                </div>
+              </s-popover>
+            </div>
+            <s-textarea
+              rows={5}
+              value={form.marketplaceBlocklist}
+              onInput={(e) => setField("marketplaceBlocklist", e.currentTarget.value)}
+              helpText="One per line. E.g., amazon.in, ebay.com"
+            />
+          </div>
         </s-stack>
       </s-section>
 
-      <s-section heading="Auto-pricing">
-        <s-text tone="subdued">
-          Controls how the system moves a product's price in response to fresh
-          competitor observations. Each product can override the per-round
-          and lifetime caps independently.
+      {/* 2. Pricing Strategy */}
+      <s-section heading="💰 Pricing Strategy">
+        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
+          Define how your prices relate to competitors.
         </s-text>
         <s-stack direction="block" gap="base">
-          <s-stack direction="inline" gap="base">
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Discount off median competitor price</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  <strong>Formula:</strong> Suggested = median × (1 − discount). E.g., 5% means sell 5% cheaper than average.
+                </div>
+              </s-popover>
+            </div>
             <s-text-field
-              label="Minimum competitors to price"
+              value={form.markupPct}
+              onInput={(e) => setField("markupPct", e.currentTarget.value)}
+              helpText="E.g., 0.02 or 2%. 0% = match average, higher = bigger discount."
+            />
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Budget tier discount</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  For Budget products, additional undercut below median. E.g., 5% = offer 5% cheaper than average.
+                </div>
+              </s-popover>
+            </div>
+            <s-text-field
+              value={form.budgetUndercut}
+              onInput={(e) => setField("budgetUndercut", e.currentTarget.value)}
+              helpText="E.g., 0.05 or 5%"
+            />
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Premium tier markup</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  For Premium products, additional markup above median. E.g., 5% = charge 5% more than average.
+                </div>
+              </s-popover>
+            </div>
+            <s-text-field
+              value={form.premiumUplift}
+              onInput={(e) => setField("premiumUplift", e.currentTarget.value)}
+              helpText="E.g., 0.05 or 5%"
+            />
+          </div>
+        </s-stack>
+      </s-section>
+
+      {/* 3. Price Change Rules */}
+      <s-section heading="🛡️ Price Change Rules">
+        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
+          Safety limits on automatic price updates.
+        </s-text>
+        <s-stack direction="block" gap="base">
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Matched competitors needed before pricing</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  Don't update price until at least this many competitors match your product. "Matched" = semantically similar.
+                </div>
+              </s-popover>
+            </div>
+            <s-text-field
               type="number"
               value={form.minCompetitorsToPrice}
               onInput={(e) => setField("minCompetitorsToPrice", e.currentTarget.value)}
-              helpText="No price change runs until this many MATCHED competitor products have fresh observations."
             />
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Use most similar N competitors</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  Weight only K most-similar competitors in pricing. Avoids noise from distant matches. Top 4 = focus on true competitors.
+                </div>
+              </s-popover>
+            </div>
             <s-text-field
-              label="Top-K competitors to weight"
               type="number"
               value={form.topKCompetitors}
               onInput={(e) => setField("topKCompetitors", e.currentTarget.value)}
-              helpText="Only the K most-similar competitors influence the reference price (weighted by similarity)."
             />
-          </s-stack>
-          <s-stack direction="inline" gap="base">
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Max price change per update</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  Hard limit on price movement in one cycle. Prevents sudden big jumps. E.g., 5% = won't jump more than ±5%.
+                </div>
+              </s-popover>
+            </div>
             <s-text-field
-              label="Max change per round (e.g. 0.05 or 5%)"
               value={form.maxAutoApplyChangePct}
               onInput={(e) => setField("maxAutoApplyChangePct", e.currentTarget.value)}
-              helpText="Hard cap on |new − current| / current in one auto-apply cycle."
+              helpText="E.g., 0.05 or 5%"
             />
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Don't drift more than (lifetime)</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "16px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  Price can't stray this far from base price. E.g., $100 base with 25% cap = stay between $75–$125.
+                </div>
+              </s-popover>
+            </div>
             <s-text-field
-              label="Lifetime cap from base price (e.g. 0.25 or 25%)"
               value={form.lifetimeCapPct}
               onInput={(e) => setField("lifetimeCapPct", e.currentTarget.value)}
-              helpText="Price can never drift more than this from the base price snapshot, unless explicit min/max are set."
+              helpText="E.g., 0.25 or 25%"
             />
-          </s-stack>
-          <s-stack direction="inline" gap="base">
-            <s-text-field
-              label="Budget tier undercut"
-              value={form.budgetUndercut}
-              onInput={(e) => setField("budgetUndercut", e.currentTarget.value)}
-              helpText="Budget-tier products target ref × (1 − this)."
-            />
-            <s-text-field
-              label="Premium tier uplift"
-              value={form.premiumUplift}
-              onInput={(e) => setField("premiumUplift", e.currentTarget.value)}
-              helpText="Premium-tier products target ref × (1 + this)."
-            />
-          </s-stack>
+          </div>
         </s-stack>
       </s-section>
 
-      <s-section heading="Default rescrape frequency">
-        <s-text tone="subdued">
-          Used when a product doesn't have its own frequency set on the home page.
+      {/* 4. Update Frequency */}
+      <s-section heading="⏱️ Update Frequency">
+        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
+          How often to check for competitor price changes.
         </s-text>
         <s-stack direction="inline" gap="base">
-          <s-text-field
-            label="Every"
-            type="number"
-            value={form.frequencyInterval}
-            onInput={(e) => setField("frequencyInterval", e.currentTarget.value)}
-          />
-          <s-select
-            label="Unit"
-            value={form.frequencyUnit}
-            onChange={(e) => setField("frequencyUnit", e.currentTarget.value)}
-          >
-            {FREQ_UNITS.map((u) => (
-              <s-option key={u.value} value={u.value}>{u.label}</s-option>
-            ))}
-          </s-select>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Every</label>
+            </div>
+            <s-text-field
+              type="number"
+              value={form.frequencyInterval}
+              onInput={(e) => setField("frequencyInterval", e.currentTarget.value)}
+            />
+          </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Unit</label>
+              <s-popover preferredPosition="above">
+                <button aria-label="More info" slot="button" style={{ padding: "4px", background: "none", border: "none", cursor: "help", color: "#0066cc", fontSize: "14px" }}>ⓘ</button>
+                <div style={{ padding: "12px", fontSize: "12px", maxWidth: "250px", lineHeight: "1.4" }}>
+                  More frequent = better accuracy but higher cost. "Never" = one-time discovery only.
+                </div>
+              </s-popover>
+            </div>
+            <s-select
+              value={form.frequencyUnit}
+              onChange={(e) => setField("frequencyUnit", e.currentTarget.value)}
+            >
+              {FREQ_UNITS.map((u) => (
+                <s-option key={u.value} value={u.value}>{u.label}</s-option>
+              ))}
+            </s-select>
+          </div>
         </s-stack>
       </s-section>
 
-      <s-section heading="Safety">
+      {/* 5. Controls */}
+      <s-section heading="⚙️ Controls">
+        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
+          Master switches for the system.
+        </s-text>
         <s-stack direction="block" gap="base">
-          <s-stack direction="inline" gap="base" align="center">
-            <s-toggle
-              checked={form.autoRescrapeEnabled || undefined}
-              onClick={() => setField("autoRescrapeEnabled", !form.autoRescrapeEnabled)}
-            />
-            <s-text emphasis="bold">Auto rescrape</s-text>
-            <s-text tone="subdued">
-              Master switch for refreshing competitor prices. When off, no
-              ProductUrl is rescraped — per-product frequency is preserved.
-            </s-text>
-          </s-stack>
-          <s-stack direction="inline" gap="base" align="center">
-            <s-toggle
-              checked={form.includeOosInPricing || undefined}
-              onClick={() => setField("includeOosInPricing", !form.includeOosInPricing)}
-            />
-            <s-text emphasis="bold">Include out-of-stock competitors</s-text>
-            <s-text tone="subdued">
-              When off, observations marked OOS are dropped from the pricing
-              reference. Turn on if your scraper's stock signal is unreliable.
-            </s-text>
-          </s-stack>
-          <s-stack direction="inline" gap="base" align="center">
-            <s-toggle
-              checked={form.killSwitch || undefined}
-              onClick={() => setField("killSwitch", !form.killSwitch)}
-            />
-            <s-text emphasis="bold">Kill switch</s-text>
-            <s-text tone="subdued">When on, no new PriceDecisions are written.</s-text>
-          </s-stack>
+          <div style={{ padding: "12px", background: "#fafafa", borderRadius: "4px", borderLeft: "3px solid #f0f0f0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
+              <s-toggle
+                checked={form.autoRescrapeEnabled || undefined}
+                onChange={(e) => setField("autoRescrapeEnabled", e.currentTarget.checked)}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                  <span style={{ fontWeight: "600", margin: 0 }}>Auto rescrape</span>
+                  <s-popover preferredPosition="above">
+                    <button slot="button" aria-label="More info" style={{ padding: "2px 6px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "4px", cursor: "help", color: "#0066cc", fontSize: "12px", fontWeight: "bold", width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center" }}>ⓘ</button>
+                    <div style={{ padding: "10px", fontSize: "12px", maxWidth: "240px", lineHeight: "1.5" }}>
+                      Master on/off for all competitor checks. Turn OFF to pause (e.g., testing or emergency).
+                    </div>
+                  </s-popover>
+                </div>
+                <s-text tone="subdued" style={{ fontSize: "12px" }}>Master switch for refreshing competitor prices.</s-text>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ padding: "12px", background: "#fafafa", borderRadius: "4px", borderLeft: "3px solid #f0f0f0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
+              <s-toggle
+                checked={form.includeOosInPricing || undefined}
+                onChange={(e) => setField("includeOosInPricing", e.currentTarget.checked)}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                  <span style={{ fontWeight: "600" }}>Include out-of-stock</span>
+                  <s-popover preferredPosition="above">
+                    <button slot="button" aria-label="More info" style={{ padding: "2px 6px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "4px", cursor: "help", color: "#0066cc", fontSize: "12px", fontWeight: "bold", width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center" }}>ⓘ</button>
+                    <div style={{ padding: "10px", fontSize: "12px", maxWidth: "240px", lineHeight: "1.5" }}>
+                      When ON, out-of-stock competitor prices count in calculations. Turn ON if stock detection is unreliable.
+                    </div>
+                  </s-popover>
+                </div>
+                <s-text tone="subdued" style={{ fontSize: "12px" }}>Include OOS competitor prices in pricing.</s-text>
+              </div>
+            </div>
+          </div>
         </s-stack>
       </s-section>
 

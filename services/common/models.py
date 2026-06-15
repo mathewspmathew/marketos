@@ -406,13 +406,11 @@ class ShopSettings(Base):
 
     shopDomain               = Column("shopDomain", String, ForeignKey("ShopifyUser.shopDomain"), primary_key=True)
     markupPct                = Column("markupPct",  Numeric(5, 4), nullable=False, default=0.02)
-    minCompetitorsRequired   = Column("minCompetitorsRequired",   Integer, nullable=False, default=2)
     maxCompetitorsPerProduct = Column("maxCompetitorsPerProduct", Integer, nullable=False, default=8)
     frequencyInterval        = Column("frequencyInterval", Integer, nullable=False, default=1)
     frequencyUnit            = Column("frequencyUnit",     String,  nullable=False, default="daily")
     listingExpansionCap      = Column("listingExpansionCap", Integer, nullable=True)
     marketplaceBlocklist     = Column("marketplaceBlocklist", ARRAY(String), nullable=False, default=list)
-    killSwitch               = Column("killSwitch", Boolean, nullable=False, default=False)
     autoRescrapeEnabled      = Column("autoRescrapeEnabled", Boolean, nullable=False, default=True)
     serperGl                 = Column("serperGl",       String, nullable=False, default="in")
     serperHl                 = Column("serperHl",       String, nullable=False, default="en")

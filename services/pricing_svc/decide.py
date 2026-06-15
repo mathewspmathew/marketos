@@ -12,7 +12,6 @@ Pipeline
    and return; no Shopify call):
      - dynamicPricingEnabled = TRUE
      - syncPrice             = TRUE
-     - ShopSettings.killSwitch = FALSE
      - debounce: now - lastDecisionAt >= rescrape interval
      - ≥ minCompetitorsToPrice matched competitor PRODUCTS with:
          * MatchConfidenceTier in (CONFIRMED, LIKELY)  (WEAK excluded)
@@ -161,7 +160,7 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
 
         settings = session.execute(
             text("""
-                SELECT "markupPct", "killSwitch", "currency",
+                SELECT "markupPct", "currency",
                        "minCompetitorsToPrice", "topKCompetitors",
                        "maxAutoApplyChangePct", "lifetimeCapPct",
                        "budgetUndercut", "premiumUplift",
@@ -171,8 +170,6 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
             """),
             {"sd": shop_domain},
         ).first()
-        if settings and settings.killSwitch:
-            return {"ok": False, "reason": "kill_switch"}
 
         markup       = Decimal(str(settings.markupPct))             if settings else Decimal("0.02")
         min_comps    = settings.minCompetitorsToPrice                if settings else 4
