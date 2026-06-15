@@ -713,9 +713,11 @@ export default function HomePage() {
                         {/* === SECTION 1: Search Query === */}
                         <div>
                           <s-text emphasis="bold">Search Query</s-text>
+                          <div>
                           <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                             What competitors should we search for?
                           </s-text>
+                          </div>
                           <s-text-field
                             label="Search query"
                             placeholder={product.searchQuery || "e.g. nike air max 90 blue mens"}
@@ -741,9 +743,11 @@ export default function HomePage() {
                         {/* === SECTION 2: Discovery Settings === */}
                         <div>
                           <s-text emphasis="bold">Discovery Settings</s-text>
+                          <div>
                           <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                             How many competitor products and listings should we explore?
                           </s-text>
+                          </div>
 
                           <div style={{ marginBottom: "12px" }}>
                             <s-text-field
