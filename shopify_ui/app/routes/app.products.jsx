@@ -571,7 +571,16 @@ export default function HomePage() {
     );
   };
 
-  const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
+  const toggleExpand = (id) => {
+    setExpandedId((prev) => {
+      const newId = prev === id ? null : id;
+      // Fetch fresh defaults when expanding a product
+      if (newId === id) {
+        fetchFreshDefaults();
+      }
+      return newId;
+    });
+  };
 
   // Auto-pricing only fails permanently when there's no offline session at
   // all (install never completed). Per-token expiry is handled by the
