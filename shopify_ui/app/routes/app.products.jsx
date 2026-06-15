@@ -450,6 +450,24 @@ export default function HomePage() {
       listingExpansionCap: "",
     };
 
+  const fetchFreshDefaults = async () => {
+    setLoadingDefaults(true);
+    setDefaultsError(null);
+    try {
+      const response = await fetch("/api/shop-defaults");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      setFetchedDefaults(data);
+    } catch (error) {
+      console.error("Failed to fetch defaults:", error);
+      setDefaultsError("Couldn't refresh defaults — using cached values");
+    } finally {
+      setLoadingDefaults(false);
+    }
+  };
+
   const setOverrideField = (productId, field, value) => {
     setLocalState((prev) => ({
       ...prev,
