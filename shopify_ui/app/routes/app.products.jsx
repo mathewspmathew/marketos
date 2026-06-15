@@ -785,6 +785,11 @@ export default function HomePage() {
                               <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                                 How many competitor products and listings should we explore?
                               </s-text>
+                              {defaultsError && (
+                                <s-text tone="subdued" style={{ fontSize: "0.85em", color: "#d32f2f", marginBottom: "8px" }}>
+                                  ⚠ {defaultsError}
+                                </s-text>
+                              )}
                             </div>
 
                             <div style={{ marginBottom: "12px" }}>
@@ -795,7 +800,7 @@ export default function HomePage() {
                                 max="50"
                                 value={String(local.discoveryNumResults ?? "")}
                                 placeholder={String(shopDefaults.discoveryNumResults)}
-                                helpText={`1–50 products per discovery run. Shop default: ${shopDefaults.discoveryNumResults}`}
+                                helpText={`1–50 products per discovery run. Shop default: ${getCurrentDefaults().discoveryNumResults}`}
                                 onInput={(e) =>
                                   setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
                                 }
@@ -809,7 +814,7 @@ export default function HomePage() {
                                 min="1"
                                 max="50"
                                 value={String(local.listingExpansionCap ?? "")}
-                                helpText={`When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${shopDefaults.listingExpansionCap}`}
+                                helpText={`When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${getCurrentDefaults().listingExpansionCap}`}
                                 onInput={(e) =>
                                   setOverrideField(product.id, "listingExpansionCap", e.currentTarget.value)
                                 }
