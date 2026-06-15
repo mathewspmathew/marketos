@@ -435,10 +435,10 @@ export default function HomePage() {
   }, [searchQuery, selectedCategory, selectedTag]);
 
   useEffect(() => {
-    if (expandedId !== null) {
+    if (expandedId !== null && !hasFetched) {
       fetchFreshDefaults();
     }
-  }, [expandedId]);
+  }, [expandedId, hasFetched]);
 
   const getLocal = (id) =>
     localState[id] ?? {
