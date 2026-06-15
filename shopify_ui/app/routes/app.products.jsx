@@ -431,6 +431,12 @@ export default function HomePage() {
     setCurrentPage(1);
   }, [searchQuery, selectedCategory, selectedTag]);
 
+  useEffect(() => {
+    if (expandedId !== null) {
+      fetchFreshDefaults();
+    }
+  }, [expandedId]);
+
   const getLocal = (id) =>
     localState[id] ?? {
       dynamicPricingEnabled: false,
@@ -572,14 +578,7 @@ export default function HomePage() {
   };
 
   const toggleExpand = (id) => {
-    setExpandedId((prev) => {
-      const newId = prev === id ? null : id;
-      // Fetch fresh defaults when expanding a product
-      if (newId === id) {
-        fetchFreshDefaults();
-      }
-      return newId;
-    });
+    setExpandedId((prev) => (prev === id ? null : id));
   };
 
   // Auto-pricing only fails permanently when there's no offline session at
