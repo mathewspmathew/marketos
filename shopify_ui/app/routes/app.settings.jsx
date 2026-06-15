@@ -231,8 +231,9 @@ export default function SettingsPage() {
         </s-text>
         <s-stack direction="block" gap="base">
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Search location</label>
+              <span title="Your market location for competitor search. More precise = more relevant results. E.g., Kochi, Kerala vs. India." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               value={form.serperLocation}
@@ -243,8 +244,9 @@ export default function SettingsPage() {
 
           <div style={{ display: "flex", gap: "12px" }}>
             <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
                 <label style={{ fontWeight: "500", fontSize: "14px" }}>Country code</label>
+                <span title="2-letter country code (e.g., in, us, gb, ae). Falls back to this if location is vague." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
               </div>
               <s-text-field
                 value={form.serperGl}
@@ -253,8 +255,9 @@ export default function SettingsPage() {
               />
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
                 <label style={{ fontWeight: "500", fontSize: "14px" }}>Language</label>
+                <span title="2-letter language code (e.g., en, hi, ar, de). Filters results by language." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
               </div>
               <s-text-field
                 value={form.serperHl}
@@ -265,8 +268,9 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Track up to N competitors per product</label>
+              <span title="Maximum number to monitor per product. More = broader coverage but slower scraping. Balance coverage vs. cost." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               type="number"
@@ -276,8 +280,9 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Products per search result page</label>
+              <span title="When we find a category page, extract this many product cards. Higher = broader but slower." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               type="number"
@@ -287,8 +292,9 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Exclude these marketplaces</label>
+              <span title="Domains to skip during discovery. E.g., amazon.in, ebay.com (one per line)." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-textarea
               rows={5}
@@ -307,8 +313,9 @@ export default function SettingsPage() {
         </s-text>
         <s-stack direction="block" gap="base">
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Discount off median competitor price</label>
+              <span title="Suggested price = median × (1 - discount). E.g., 5% means sell 5% cheaper than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               value={form.markupPct}
@@ -318,8 +325,9 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Budget tier discount</label>
+              <span title="For Budget products, additional undercut below median. E.g., 5% = offer 5% cheaper than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               value={form.budgetUndercut}
@@ -329,8 +337,9 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Premium tier markup</label>
+              <span title="For Premium products, additional markup above median. E.g., 5% = charge 5% more than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               value={form.premiumUplift}
@@ -348,8 +357,9 @@ export default function SettingsPage() {
         </s-text>
         <s-stack direction="block" gap="base">
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Matched competitors needed before pricing</label>
+              <span title="Don't update price until at least this many competitors match your product. Matched = semantically similar." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               type="number"
@@ -359,8 +369,9 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Use most similar N competitors</label>
+              <span title="Weight only K most-similar competitors in pricing. Avoids noise from distant matches. Top 4 = focus on true competitors." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               type="number"
@@ -370,8 +381,9 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Max price change per update</label>
+              <span title="Hard limit on price movement in one cycle. Prevents sudden big jumps. E.g., 5% = won't jump more than ±5%." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               value={form.maxAutoApplyChangePct}
@@ -381,8 +393,9 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Don't drift more than (lifetime)</label>
+              <span title="Price can't stray this far from base price. E.g., $100 base with 25% cap = stay between $75–$125." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               value={form.lifetimeCapPct}
@@ -400,8 +413,9 @@ export default function SettingsPage() {
         </s-text>
         <s-stack direction="inline" gap="base">
           <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Every</label>
+              <span title="Default rescrape interval. More frequent = better accuracy but higher cost. Never = one-time discovery only." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
               type="number"
