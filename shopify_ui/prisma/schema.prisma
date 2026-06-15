@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
@@ -9,7 +6,324 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [vector, timescaledb, pg_trgm]
+  extensions = [pg_trgm, timescaledb, vector]
+}
+
+model ChatMessage {
+  id          String      @id
+  sessionId   String
+  role        ChatRole
+  content     Json
+  createdAt   DateTime    @default(now())
+  tokenCount  Int?
+  pinned      Boolean     @default(false)
+  ChatSession ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+}
+
+model ChatPreview {
+  id          String      @id
+  sessionId   String
+  shopDomain  String
+  kind        PreviewKind
+  scopeFilter Json
+  change      Json
+  variantIds  String[]
+  summary     Json
+  expiresAt   DateTime
+  appliedAt   DateTime?
+  appliedBy   String?
+  result      Json?
+  createdAt   DateTime    @default(now())
+  ChatSession ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain, expiresAt])
+}
+
+model ChatSession {
+  id             String        @id
+  shopDomain     String
+  userId         String?
+  title          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime
+  runningSummary String?
+  ChatMessage    ChatMessage[]
+  ChatPreview    ChatPreview[]
+  ShopifyUser    ShopifyUser   @relation(fields: [shopDomain], references: [shopDomain])
+
+  @@index([shopDomain, updatedAt])
+}
+
+model CompetitorCandidate {
+  id               String          @id
+  shopDomain       String
+  shopifyProductId String
+  discoveryJobId   String?
+  url              String
+  domain           String
+  source           String
+  serpTitle        String?
+  serpSnippet      String?
+  serpPrice        Decimal?        @db.Decimal(10, 2)
+  rerankScore      Decimal?        @db.Decimal(4, 3)
+  rerankReason     String?
+  status           CandidateStatus @default(PENDING)
+  rejectReason     String?
+  scrapedProductId String?
+  discoveredAt     DateTime        @default(now())
+  scrapedAt        DateTime?
+  verifiedAt       DateTime?
+  embedScore       Decimal?        @db.Decimal(5, 4)
+  DiscoveryJob     DiscoveryJob?   @relation(fields: [discoveryJobId], references: [id])
+  ScrapedProduct   ScrapedProduct? @relation(fields: [scrapedProductId], references: [id])
+  ShopifyUser      ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyProduct   ShopifyProduct  @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+
+  @@unique([shopifyProductId, url])
+  @@index([shopDomain, status])
+}
+
+model CompetitorPriceObservation {
+  id                  String
+  shopDomain          String
+  competitorVariantId String
+  price               Decimal        @db.Decimal(10, 2)
+  currency            String         @default("INR") @db.VarChar(3)
+  isInStock           Boolean        @default(true)
+  observedAt          DateTime       @default(now())
+  ScrapedVariant      ScrapedVariant @relation(fields: [competitorVariantId], references: [id], onDelete: Cascade)
+  ShopifyUser         ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
+
+  @@id([id, observedAt])
+  @@index([competitorVariantId, observedAt(sort: Desc)])
+  @@index([shopDomain, observedAt(sort: Desc)])
+}
+
+model DiscoveryJob {
+  id                  String                @id
+  shopDomain          String
+  shopifyProductId    String
+  status              DiscoveryStatus       @default(QUEUED)
+  candidateCount      Int                   @default(0)
+  error               String?
+  requestedAt         DateTime              @default(now())
+  completedAt         DateTime?
+  query               String?
+  numResults          Int                   @default(10)
+  listingExpansionCap Int?
+  CompetitorCandidate CompetitorCandidate[]
+  ShopifyUser         ShopifyUser           @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyProduct      ShopifyProduct        @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain, status])
+  @@index([shopifyProductId, requestedAt(sort: Desc)])
+}
+
+model PriceDecision {
+  id               String         @id
+  shopDomain       String
+  shopifyVariantId String
+  oldPrice         Decimal        @db.Decimal(10, 2)
+  newPrice         Decimal        @db.Decimal(10, 2)
+  reason           String
+  decidedAt        DateTime       @default(now())
+  appliedAt        DateTime?
+  shopifyResponse  Json?
+  changePct        Float?
+  refPrice         Decimal?       @db.Decimal(10, 2)
+  formulaTarget    Decimal?       @db.Decimal(10, 2)
+  competitorsUsed  Int            @default(0)
+  topMatchesJson   Json?
+  tierAtDecision   PricingTier?
+  skipReason       String?
+  autoApplied      Boolean        @default(false)
+  applyError       String?
+  oosObservations  Int            @default(0)
+  currencyDrops    Int            @default(0)
+  ShopifyUser      ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyVariant   ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain, appliedAt])
+  @@index([shopDomain, decidedAt(sort: Desc)])
+  @@index([shopifyVariantId, decidedAt(sort: Desc)])
+}
+
+model ProductEmbedding {
+  id             String                 @id
+  prodId         String
+  variantId      String?
+  vectorText     Unsupported("vector")?
+  vectorImg      Unsupported("vector")?
+  vectorizedAt   DateTime               @default(now())
+  shopDomain     String
+  matchedAt      DateTime?
+  ScrapedProduct ScrapedProduct         @relation(fields: [prodId], references: [id], onDelete: Cascade)
+  ShopifyUser    ShopifyUser            @relation(fields: [shopDomain], references: [shopDomain])
+  ScrapedVariant ScrapedVariant?        @relation(fields: [variantId], references: [id])
+}
+
+model ProductLevelMatch {
+  id                  String              @id
+  shopDomain          String
+  shopifyProductId    String
+  scrapedProductId    String
+  confidence          Decimal             @db.Decimal(4, 3)
+  confidenceTier      MatchConfidenceTier
+  source              String              @default("DISCOVERY")
+  confirmedByMerchant Boolean             @default(false)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime
+  rejectedByMerchant  Boolean             @default(false)
+  reviewedAt          DateTime?
+  ScrapedProduct      ScrapedProduct      @relation(fields: [scrapedProductId], references: [id], onDelete: Cascade)
+  ShopifyUser         ShopifyUser         @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyProduct      ShopifyProduct      @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+  ProductMatch        ProductMatch[]
+
+  @@unique([shopifyProductId, scrapedProductId])
+  @@index([shopDomain, confidenceTier])
+  @@index([shopDomain, reviewedAt])
+}
+
+model ProductMatch {
+  id                  String               @id
+  shopDomain          String
+  shopifyVariantId    String
+  competitorVariantId String?
+  competitorProdId    String
+  matchScore          Decimal              @db.Decimal(5, 2)
+  matchType           String               @default("semantic")
+  vectorDistance      Decimal              @db.Decimal(10, 6)
+  thresholdUsed       Decimal              @db.Decimal(5, 4)
+  matchedAt           DateTime             @default(now())
+  updatedAt           DateTime
+  textScore           Decimal?             @db.Decimal(5, 2)
+  imageScore          Decimal?             @db.Decimal(5, 2)
+  confidence          Decimal?             @db.Decimal(4, 3)
+  confidenceTier      MatchConfidenceTier?
+  dismissedAt         DateTime?
+  productMatchId      String?
+  currencyMismatch    Boolean              @default(false)
+  ScrapedProduct      ScrapedProduct       @relation(fields: [competitorProdId], references: [id], onDelete: Cascade)
+  ScrapedVariant      ScrapedVariant?      @relation(fields: [competitorVariantId], references: [id])
+  ProductLevelMatch   ProductLevelMatch?   @relation(fields: [productMatchId], references: [id])
+  ShopifyUser         ShopifyUser          @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyVariant      ShopifyVariant       @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
+
+  @@unique([shopifyVariantId, competitorVariantId])
+  @@index([competitorVariantId], map: "idx_pm_competitor")
+  @@index([shopDomain, dismissedAt], map: "idx_pm_shop_dismissed")
+  @@index([shopDomain, matchScore(sort: Desc)], map: "idx_pm_shop_domain")
+  @@index([shopifyVariantId, matchScore(sort: Desc)], map: "idx_pm_shopify")
+}
+
+model ProductSuggestion {
+  id                       String           @id
+  shopDomain               String
+  shopifyProductId         String           @unique
+  suggestedTitle           String?
+  suggestedDescriptionHtml String?
+  contentRationale         String?
+  editedTitle              String?
+  editedDescriptionHtml    String?
+  appliedTitle             String?
+  appliedDescriptionHtml   String?
+  matchCount               Int              @default(0)
+  avgMatchScore            Decimal?         @db.Decimal(5, 2)
+  status                   SuggestionStatus @default(FIRST_TIME)
+  generatedAt              DateTime         @default(now())
+  updatedAt                DateTime
+  appliedAt                DateTime?
+  ShopifyProduct           ShopifyProduct   @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain, status])
+}
+
+model ProductUrl {
+  id                String          @id
+  configId          String?
+  prodId            String
+  url               String          @unique
+  status            UrlStatus       @default(ACTIVE)
+  failCount         Int             @default(0)
+  lastScrapedAt     DateTime?
+  createdAt         DateTime        @default(now())
+  shopDomain        String
+  frequencyInterval Int?
+  frequencyUnit     String?         @default("daily")
+  nextRunAt         DateTime?
+  shopifyProductId  String?
+  ScrapingConfig    ScrapingConfig? @relation(fields: [configId], references: [id])
+  ScrapedProduct    ScrapedProduct  @relation(fields: [prodId], references: [id], onDelete: Cascade)
+  ShopifyUser       ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyProduct    ShopifyProduct? @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain, status, nextRunAt])
+  @@index([shopifyProductId])
+}
+
+model ScrapedProduct {
+  id                  String                @id
+  domain              String
+  title               String
+  description         String?
+  vendor              String?
+  productType         String?
+  tags                Json                  @default("[]")
+  imageUrl            String?
+  specifications      Json?
+  updatedAt           DateTime
+  createdAt           DateTime              @default(now())
+  shopDomain          String
+  categoryTop         String?
+  productGender       String?
+  CompetitorCandidate CompetitorCandidate[]
+  ProductEmbedding    ProductEmbedding[]
+  ProductLevelMatch   ProductLevelMatch[]
+  ProductMatch        ProductMatch[]
+  ProductUrl          ProductUrl[]
+  ShopifyUser         ShopifyUser           @relation(fields: [shopDomain], references: [shopDomain])
+  ScrapedVariant      ScrapedVariant[]
+}
+
+model ScrapedVariant {
+  id                         String                       @id
+  productId                  String
+  sku                        String?
+  barcode                    String?
+  title                      String                       @default("Default Title")
+  options                    Json?
+  currentPrice               Decimal                      @db.Decimal(10, 2)
+  originalPrice              Decimal?                     @db.Decimal(10, 2)
+  isInStock                  Boolean                      @default(true)
+  stockQuantity              Int?
+  updatedAt                  DateTime
+  createdAt                  DateTime                     @default(now())
+  semanticText               String?
+  currency                   String                       @default("INR") @db.VarChar(3)
+  CompetitorPriceObservation CompetitorPriceObservation[]
+  ProductEmbedding           ProductEmbedding[]
+  ProductMatch               ProductMatch[]
+  ScrapedProduct             ScrapedProduct               @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model ScrapingConfig {
+  id                String       @id
+  competitorUrl     String
+  includeImages     Boolean      @default(true)
+  productLimit      Int?
+  frequencyInterval Int?
+  nextRunAt         DateTime?
+  isActive          Boolean      @default(true)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime
+  status            ScrapeStatus @default(IDLE)
+  shopDomain        String
+  frequencyUnit     String?      @default("nofreq")
+  ProductUrl        ProductUrl[]
+  ShopifyUser       ShopifyUser  @relation(fields: [shopDomain], references: [shopDomain])
 }
 
 model Session {
@@ -32,312 +346,169 @@ model Session {
   refreshTokenExpires DateTime?
 }
 
-// ─────────────────────────────────────────
-// Multi-Tenancy (keyed by Shopify shop domain)
-// ─────────────────────────────────────────
-model ShopifyUser {
-  shopDomain    String   @id
-  shopifyUserId BigInt?
-  email         String?
-  firstName     String?
-  installedAt   DateTime @default(now())
-  productSyncState     String    @default("IDLE") // IDLE | SYNCING | SYNCED | ERROR
-  productSyncStartedAt DateTime?
-  productSyncedAt      DateTime?
-  productSyncError     String?
-
-  products          ShopifyProduct[]
-  scrapedProducts   ScrapedProduct[]
-  scrapingConfigs   ScrapingConfig[]
-  productUrls       ProductUrl[]
-  productEmbeddings ProductEmbedding[]
-  productMatches    ProductMatch[]
-
-  competitorObservations CompetitorPriceObservation[]
-  productLevelMatches    ProductLevelMatch[]
-  priceDecisions         PriceDecision[]
-  shopSettings           ShopSettings?
-  competitorCandidates   CompetitorCandidate[]
-  discoveryJobs          DiscoveryJob[]
-  chatSessions           ChatSession[]
-}
-
-// ─────────────────────────────────────────
-// INTERNAL: Shopify Store Data
-// ─────────────────────────────────────────
-model ShopifyProduct {
-  id         String      @id // Shopify GID
-  shopDomain String
-  shop       ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
-
-  title       String
-  description String  @default("")
-  vendor      String?
-  productType String  @default("")
-  tags        Json    @default("[]")
-  imageUrl    String?
-  handle      String?
-  status      String  @default("ACTIVE")
-  semanticStatus        String    @default("PENDING") // PENDING | QUEUED | DONE | FAILED
-  semanticClaimedAt     DateTime?
-  semanticVersion       Int       @default(0)
-  semanticAttempts      Int       @default(0)
-  semanticFailureReason String?
-
-  // Parsed from the structured semanticText fingerprint. Used by the matcher
-  // SQL pre-filter as a hard gate before HNSW similarity is computed.
-  categoryTop   String? // e.g. "clothing", "electronics", "kitchenware"
-  productGender String? // men / women / unisex / kids / not-applicable
-
-  // Compact 5-7 keyword phrase generated by Groq alongside semanticText.
-  // Used as the query string for competitor discovery via Serper.
-  searchQuery           String?
-  // Per-product override of the LLM-generated searchQuery. UI surfaces this on
-  // the per-product detail panel; null means "use the generated one".
-  searchQueryOverride   String?
-  // Master toggle: turning this on triggers discovery → scrape → match → price.
-  // Replaces the previous competitorTrackingEnabled split.
-  dynamicPricingEnabled Boolean   @default(false)
-  // Product-level price bounds. Applied to every variant when the v1 formula
-  // writes a new price (one price across all variants).
-  floorPrice            Decimal?  @db.Decimal(10, 2)
-  ceilingPrice          Decimal?  @db.Decimal(10, 2)
-  // Per-product override of ShopSettings rescrape cadence.
-  frequencyInterval     Int?
-  frequencyUnit         String?
-  syncPrice             Boolean   @default(true)
-  syncDescription       Boolean   @default(false)
-  syncTitle             Boolean   @default(false)
-  syncedAt              DateTime?
-  lastDiscoveryAt       DateTime?
-
-  // Auto-pricing knobs. Tier biases the formula; basePrice anchors the
-  // lifetime cap. minPriceOverride / maxPriceOverride are hard merchant
-  // floors/ceilings — when set, they win over the basePrice × lifetimeCapPct
-  // fallback. lastDecisionAt debounces decide_for_product to at most one
-  // run per rescrape cycle.
-  pricingTier                   PricingTier @default(COMPETITIVE)
-  basePrice                     Decimal?    @db.Decimal(10, 2)
-  minPriceOverride              Decimal?    @db.Decimal(10, 2)
-  maxPriceOverride              Decimal?    @db.Decimal(10, 2)
-  maxAutoApplyChangePctOverride Float?
-  lifetimeCapPctOverride        Float?
-  lastDecisionAt                DateTime?
-  // How many competitor product links to fetch per discovery run.
-  discoveryNumResults           Int         @default(10)
-  // If a discovered URL is a listing/search page, expand into this many
-  // individual product cards. Null → fall back to ShopSettings, then hard-default 5.
-  listingExpansionCap           Int?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  variants             ShopifyVariant[]
-  suggestion           ProductSuggestion?
-  productLevelMatches  ProductLevelMatch[]
-  productUrls          ProductUrl[]
-  competitorCandidates CompetitorCandidate[]
-  discoveryJobs        DiscoveryJob[]
-}
-
-model ShopifyVariant {
-  id        String         @id
-  productId String
-  product   ShopifyProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  sku      String?
-  barcode  String?
-  title    String  @default("Default Title")
-  options  Json?
-  imageUrl String?
-
-  currentPrice      Decimal  @db.Decimal(10, 2)
-  // Per-variant anchor for the lifetime cap. Snapshot at first dynamic-pricing
-  // enable; preserved across toggle off→on so the cap stays meaningful.
-  basePrice         Decimal? @db.Decimal(10, 2)
-  compareAtPrice    Decimal? @db.Decimal(10, 2)
-  cost              Decimal? @db.Decimal(10, 2)
-  isInStock         Boolean  @default(true)
-  stockQuantity     Int?
-  inventoryQuantity Int?
-  semanticText      String?
-
-  updatedAt DateTime @updatedAt
-
-  embedding       ShopifyEmbedding?
-  productMatches  ProductMatch[]
-  competitorStats VariantCompetitorStats?
-  priceDecisions  PriceDecision[]
+model ShopSettings {
+  shopDomain               String      @id
+  markupPct                Decimal     @default(0.02) @db.Decimal(5, 4)
+  marketplaceBlocklist     String[]    @default([])
+  updatedAt                DateTime
+  frequencyInterval        Int         @default(1)
+  frequencyUnit            String      @default("daily")
+  maxCompetitorsPerProduct Int         @default(8)
+  listingExpansionCap      Int?
+  serperGl                 String      @default("in")
+  serperHl                 String      @default("en")
+  serperLocation           String      @default("Kochi, Kerala")
+  currency                 String?
+  autoRescrapeEnabled      Boolean     @default(true)
+  minCompetitorsToPrice    Int         @default(4)
+  topKCompetitors          Int         @default(4)
+  maxAutoApplyChangePct    Float       @default(0.05)
+  lifetimeCapPct           Float       @default(0.25)
+  budgetUndercut           Float       @default(0.05)
+  premiumUplift            Float       @default(0.05)
+  includeOosInPricing      Boolean     @default(false)
+  discoveryNumResults      Int         @default(10)
+  ShopifyUser              ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
 }
 
 model ShopifyEmbedding {
-  id         String         @id @default(uuid())
-  variantId  String         @unique
-  variant    ShopifyVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  shopDomain String
-
-  vectorText Unsupported("vector(768)")?
-  vectorImg  Unsupported("vector(1408)")?
-
-  embeddedAt DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  matchedAt  DateTime?
+  id             String                 @id
+  variantId      String                 @unique
+  vectorText     Unsupported("vector")?
+  vectorImg      Unsupported("vector")?
+  embeddedAt     DateTime               @default(now())
+  updatedAt      DateTime
+  shopDomain     String
+  matchedAt      DateTime?
+  ShopifyVariant ShopifyVariant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([shopDomain])
 }
 
-// ─────────────────────────────────────────
-// COMPETITOR: Scraped External Data
-// ─────────────────────────────────────────
-model ScrapedProduct {
-  id         String      @id @default(uuid())
-  shopDomain String
-  shop       ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
-  domain     String
-
-  title          String
-  description    String?
-  vendor         String?
-  productType    String?
-  tags           Json    @default("[]")
-  imageUrl       String?
-  specifications Json?
-
-  // Parsed from the structured semanticText fingerprint. Used by the matcher
-  // SQL pre-filter as a hard gate before HNSW similarity is computed.
-  categoryTop   String? // e.g. "clothing", "electronics", "kitchenware"
-  productGender String? // men / women / unisex / kids / not-applicable
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  variants             ScrapedVariant[]
-  urls                 ProductUrl[]
-  embeddings           ProductEmbedding[]
-  productMatches       ProductMatch[]
-  productLevelMatches  ProductLevelMatch[]
-  competitorCandidates CompetitorCandidate[]
+model ShopifyProduct {
+  id                            String                @id
+  title                         String
+  description                   String                @default("")
+  vendor                        String?
+  productType                   String                @default("")
+  tags                          Json                  @default("[]")
+  imageUrl                      String?
+  status                        String                @default("ACTIVE")
+  createdAt                     DateTime              @default(now())
+  updatedAt                     DateTime
+  dynamicPricingEnabled         Boolean               @default(false)
+  handle                        String?
+  shopDomain                    String
+  syncDescription               Boolean               @default(false)
+  syncPrice                     Boolean               @default(true)
+  syncTitle                     Boolean               @default(false)
+  syncedAt                      DateTime?
+  categoryTop                   String?
+  productGender                 String?
+  lastDiscoveryAt               DateTime?
+  searchQuery                   String?
+  ceilingPrice                  Decimal?              @db.Decimal(10, 2)
+  floorPrice                    Decimal?              @db.Decimal(10, 2)
+  frequencyInterval             Int?
+  frequencyUnit                 String?
+  searchQueryOverride           String?
+  discoveryNumResults           Int?
+  listingExpansionCap           Int?
+  pricingTier                   PricingTier           @default(COMPETITIVE)
+  basePrice                     Decimal?              @db.Decimal(10, 2)
+  minPriceOverride              Decimal?              @db.Decimal(10, 2)
+  maxPriceOverride              Decimal?              @db.Decimal(10, 2)
+  maxAutoApplyChangePctOverride Float?
+  lifetimeCapPctOverride        Float?
+  lastDecisionAt                DateTime?
+  semanticStatus                String                @default("PENDING")
+  semanticClaimedAt             DateTime?
+  semanticVersion               Int                   @default(0)
+  semanticAttempts              Int                   @default(0)
+  semanticFailureReason         String?
+  CompetitorCandidate           CompetitorCandidate[]
+  DiscoveryJob                  DiscoveryJob[]
+  ProductLevelMatch             ProductLevelMatch[]
+  ProductSuggestion             ProductSuggestion?
+  ProductUrl                    ProductUrl[]
+  ShopifyUser                   ShopifyUser           @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyVariant                ShopifyVariant[]
 }
 
-model ScrapedVariant {
-  id        String         @id @default(uuid())
-  productId String
-  product   ScrapedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  sku           String?
-  barcode       String?
-  title         String   @default("Default Title")
-  options       Json?
-  currentPrice  Decimal  @db.Decimal(10, 2)
-  originalPrice Decimal? @db.Decimal(10, 2)
-  currency      String   @default("INR") @db.VarChar(3)
-  isInStock     Boolean  @default(true)
-  stockQuantity Int?
-  semanticText  String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  embeddings     ProductEmbedding[]
-  productMatches ProductMatch[]
-  observations   CompetitorPriceObservation[]
+model ShopifyUser {
+  shopDomain                 String                       @id
+  shopifyUserId              BigInt?
+  email                      String?
+  firstName                  String?
+  installedAt                DateTime                     @default(now())
+  productSyncState           String                       @default("IDLE")
+  productSyncStartedAt       DateTime?
+  productSyncedAt            DateTime?
+  productSyncError           String?
+  ChatSession                ChatSession[]
+  CompetitorCandidate        CompetitorCandidate[]
+  CompetitorPriceObservation CompetitorPriceObservation[]
+  DiscoveryJob               DiscoveryJob[]
+  PriceDecision              PriceDecision[]
+  ProductEmbedding           ProductEmbedding[]
+  ProductLevelMatch          ProductLevelMatch[]
+  ProductMatch               ProductMatch[]
+  ProductUrl                 ProductUrl[]
+  ScrapedProduct             ScrapedProduct[]
+  ScrapingConfig             ScrapingConfig[]
+  ShopSettings               ShopSettings?
+  ShopifyProduct             ShopifyProduct[]
 }
 
-// ─────────────────────────────────────────
-// URL TRACKING — now product-rooted, not config-rooted
-// ─────────────────────────────────────────
-enum UrlStatus {
-  ACTIVE
-  DEAD
-  PAUSED
+model ShopifyVariant {
+  id                     String                  @id
+  productId              String
+  sku                    String?
+  barcode                String?
+  title                  String                  @default("Default Title")
+  options                Json?
+  currentPrice           Decimal                 @db.Decimal(10, 2)
+  isInStock              Boolean                 @default(true)
+  stockQuantity          Int?
+  updatedAt              DateTime
+  compareAtPrice         Decimal?                @db.Decimal(10, 2)
+  imageUrl               String?
+  semanticText           String?
+  cost                   Decimal?                @db.Decimal(10, 2)
+  inventoryQuantity      Int?
+  basePrice              Decimal?                @db.Decimal(10, 2)
+  PriceDecision          PriceDecision[]
+  ProductMatch           ProductMatch[]
+  ShopifyEmbedding       ShopifyEmbedding?
+  ShopifyProduct         ShopifyProduct          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  VariantCompetitorStats VariantCompetitorStats?
 }
 
-model ProductUrl {
-  id         String      @id @default(uuid())
-  shopDomain String
-  shop       ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
+model VariantCompetitorStats {
+  shopifyVariantId String         @id
+  shopDomain       String
+  competitorCount  Int            @default(0)
+  minPrice         Decimal?       @db.Decimal(10, 2)
+  median           Decimal?       @db.Decimal(10, 2)
+  maxPrice         Decimal?       @db.Decimal(10, 2)
+  lastUpdatedAt    DateTime       @default(now())
+  ShopifyVariant   ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
 
-  // The merchant's product this URL is being tracked for.
-  shopifyProductId String?
-  shopifyProduct   ShopifyProduct? @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
-
-  // The scraped product behind the URL (filled after first scrape).
-  prodId  String
-  product ScrapedProduct @relation(fields: [prodId], references: [id], onDelete: Cascade)
-
-  // Optional link back to the legacy site-rooted config (nullable during migration).
-  configId String?
-  config   ScrapingConfig? @relation(fields: [configId], references: [id])
-
-  url               String    @unique
-  status            UrlStatus @default(ACTIVE)
-  failCount         Int       @default(0)
-  frequencyInterval Int?
-  frequencyUnit     String?   @default("daily")
-  lastScrapedAt     DateTime?
-  nextRunAt         DateTime?
-  createdAt         DateTime  @default(now())
-
-  @@index([shopDomain, status, nextRunAt])
-  @@index([shopifyProductId])
+  @@index([shopDomain])
 }
 
-// ─────────────────────────────────────────
-// EMBEDDINGS
-// ─────────────────────────────────────────
-model ProductEmbedding {
-  id         String  @id @default(uuid())
-  shopDomain String
-  prodId     String
-  variantId  String?
-
-  vectorText   Unsupported("vector(768)")?
-  vectorImg    Unsupported("vector(1408)")?
-  vectorizedAt DateTime                     @default(now())
-  matchedAt    DateTime?
-
-  shop    ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
-  product ScrapedProduct  @relation(fields: [prodId], references: [id], onDelete: Cascade)
-  variant ScrapedVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
-}
-
-// ─────────────────────────────────────────
-// SCRAPER CONFIGS (legacy — kept nullable; new flow uses ProductUrl directly)
-// ─────────────────────────────────────────
-enum ScrapeStatus {
-  IDLE
-  QUEUED
-  RUNNING
-  SCRAPED_FIRST
-}
-
-model ScrapingConfig {
-  id                String       @id @default(uuid())
-  shopDomain        String
-  shop              ShopifyUser  @relation(fields: [shopDomain], references: [shopDomain])
-  competitorUrl     String
-  includeImages     Boolean      @default(true)
-  productLimit      Int?
-  frequencyInterval Int?
-  frequencyUnit     String?      @default("nofreq")
-  nextRunAt         DateTime?
-  isActive          Boolean      @default(true)
-  status            ScrapeStatus @default(IDLE)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-
-  productUrls ProductUrl[]
-}
-
-// ─────────────────────────────────────────
-// COMPETITOR DISCOVERY (new flow)
-// ─────────────────────────────────────────
 enum CandidateStatus {
   PENDING
   SCRAPED
   VERIFIED
   REJECTED
   DEAD
+}
+
+enum ChatRole {
+  user
+  assistant
+  tool
 }
 
 enum DiscoveryStatus {
@@ -347,318 +518,10 @@ enum DiscoveryStatus {
   FAILED
 }
 
-model DiscoveryJob {
-  id                  String          @id @default(uuid())
-  shopDomain          String
-  shop                ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
-  shopifyProductId    String
-  shopifyProduct      ShopifyProduct  @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
-  status              DiscoveryStatus @default(QUEUED)
-  query               String?
-  numResults          Int             @default(10)
-  // Per-job cap for listing-page expansion (overrides ShopifyProduct + ShopSettings).
-  listingExpansionCap Int?
-  candidateCount      Int             @default(0)
-  error               String?
-  requestedAt         DateTime        @default(now())
-  completedAt         DateTime?
-
-  candidates CompetitorCandidate[]
-
-  @@index([shopDomain, status])
-  @@index([shopifyProductId, requestedAt(sort: Desc)])
-}
-
-model CompetitorCandidate {
-  id               String         @id @default(uuid())
-  shopDomain       String
-  shop             ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
-  shopifyProductId String
-  shopifyProduct   ShopifyProduct @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
-  discoveryJobId   String?
-  discoveryJob     DiscoveryJob?  @relation(fields: [discoveryJobId], references: [id], onDelete: SetNull)
-
-  url    String
-  domain String
-  source String // "serper_search" | "serper_shopping" | "manual"
-
-  // SERP / rerank metadata
-  serpTitle    String?
-  serpSnippet  String?
-  serpPrice    Decimal? @db.Decimal(10, 2) // present for shopping results
-  // Hybrid rerank: embedScore is the cheap deterministic filter (every candidate);
-  // rerankScore (LLM) is filled only for candidates in the ambiguous middle band.
-  embedScore   Decimal? @db.Decimal(5, 4)
-  rerankScore  Decimal? @db.Decimal(4, 3)
-  rerankReason String?
-
-  status       CandidateStatus @default(PENDING)
-  rejectReason String?
-
-  // Filled once the candidate is scraped + verified.
-  scrapedProductId String?
-  scrapedProduct   ScrapedProduct? @relation(fields: [scrapedProductId], references: [id], onDelete: SetNull)
-
-  discoveredAt DateTime  @default(now())
-  scrapedAt    DateTime?
-  verifiedAt   DateTime?
-
-  @@unique([shopifyProductId, url])
-  @@index([shopDomain, status])
-}
-
-// ─────────────────────────────────────────
-// SIMILARITY MATCHES (merchant variant ↔ competitor variant)
-// ─────────────────────────────────────────
-// variant level matching
-model ProductMatch {
-  id                  String          @id @default(uuid())
-  shopDomain          String
-  shop                ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
-  shopifyVariantId    String
-  shopifyVariant      ShopifyVariant  @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
-  competitorVariantId String?
-  competitorVariant   ScrapedVariant? @relation(fields: [competitorVariantId], references: [id], onDelete: SetNull)
-  competitorProdId    String
-  competitorProduct   ScrapedProduct  @relation(fields: [competitorProdId], references: [id], onDelete: Cascade)
-
-  matchScore     Decimal  @db.Decimal(5, 2)
-  textScore      Decimal? @db.Decimal(5, 2)
-  imageScore     Decimal? @db.Decimal(5, 2)
-  matchType      String   @default("semantic")
-  vectorDistance Decimal  @db.Decimal(10, 6)
-  thresholdUsed  Decimal  @db.Decimal(5, 4)
-
-  confidence     Decimal?             @db.Decimal(4, 3)
-  confidenceTier MatchConfidenceTier?
-  productMatchId String?
-  productMatch   ProductLevelMatch?   @relation(fields: [productMatchId], references: [id], onDelete: SetNull)
-
-  // True when the merchant shop currency and the competitor variant currency
-  // differ. The matcher still produces the row (useful for catalog mapping
-  // + suggestions), but the pricing pipeline must skip these until FX
-  // conversion is implemented.
-  currencyMismatch Boolean @default(false)
-
-  matchedAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  dismissedAt DateTime?
-
-  @@unique([shopifyVariantId, competitorVariantId])
-  @@index([shopifyVariantId, matchScore(sort: Desc)], map: "idx_pm_shopify")
-  @@index([competitorVariantId], map: "idx_pm_competitor")
-  @@index([shopDomain, matchScore(sort: Desc)], map: "idx_pm_shop_domain")
-  @@index([shopDomain, dismissedAt], map: "idx_pm_shop_dismissed")
-}
-
-// ─────────────────────────────────────────
-// PRODUCT SUGGESTIONS (LLM-generated title/description + competitor price stats)
-// ─────────────────────────────────────────
-enum SuggestionStatus {
-  FIRST_TIME
-  SHOWED
-  SKIPPED
-  APPLIED
-}
-
-model ProductSuggestion {
-  id               String         @id @default(uuid())
-  shopDomain       String
-  shopifyProductId String         @unique
-  product          ShopifyProduct @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
-
-  suggestedTitle           String?
-  suggestedDescriptionHtml String?
-  contentRationale         String?
-
-  editedTitle           String?
-  editedDescriptionHtml String?
-
-  appliedTitle           String?
-  appliedDescriptionHtml String?
-
-  matchCount    Int      @default(0)
-  avgMatchScore Decimal? @db.Decimal(5, 2)
-
-  status      SuggestionStatus @default(FIRST_TIME)
-  generatedAt DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  appliedAt   DateTime?
-
-  @@index([shopDomain, status])
-}
-
-// ─────────────────────────────────────────
-// DYNAMIC PRICING — competitors, observations, stats (v1: simple)
-// ─────────────────────────────────────────
 enum MatchConfidenceTier {
   CONFIRMED
   LIKELY
   WEAK
-}
-
-// Per-product positioning. Biases the auto-pricing formula:
-//   BUDGET      → undercut competitor weighted reference
-//   COMPETITIVE → small markup-below-reference (the default)
-//   PREMIUM     → small uplift above reference
-enum PricingTier {
-  BUDGET
-  COMPETITIVE
-  PREMIUM
-}
-
-// Hypertable on observedAt (created via raw SQL after migration).
-// Composite PK includes observedAt because TimescaleDB hypertables require the
-// partitioning column to be part of every unique constraint.
-model CompetitorPriceObservation {
-  id                  String         @default(uuid())
-  shopDomain          String
-  shop                ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
-  competitorVariantId String
-  competitorVariant   ScrapedVariant @relation(fields: [competitorVariantId], references: [id], onDelete: Cascade)
-  price               Decimal        @db.Decimal(10, 2)
-  currency            String         @default("INR") @db.VarChar(3)
-  isInStock           Boolean        @default(true)
-  observedAt          DateTime       @default(now())
-
-  @@id([id, observedAt])
-  @@index([competitorVariantId, observedAt(sort: Desc)])
-  @@index([shopDomain, observedAt(sort: Desc)])
-}
-
-// Simple per-variant competitor-price snapshot used by the v1 pricing formula.
-model VariantCompetitorStats {
-  shopifyVariantId String         @id
-  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
-  shopDomain       String
-
-  competitorCount Int      @default(0)
-  minPrice        Decimal? @db.Decimal(10, 2)
-  median          Decimal? @db.Decimal(10, 2)
-  maxPrice        Decimal? @db.Decimal(10, 2)
-  lastUpdatedAt   DateTime @default(now())
-
-  @@index([shopDomain])
-}
-
-// Product-level match (best variant pair) — feeds price observations.
-model ProductLevelMatch {
-  id               String         @id @default(uuid())
-  shopDomain       String
-  shop             ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
-  shopifyProductId String
-  shopifyProduct   ShopifyProduct @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
-  scrapedProductId String
-  scrapedProduct   ScrapedProduct @relation(fields: [scrapedProductId], references: [id], onDelete: Cascade)
-
-  confidence          Decimal             @db.Decimal(4, 3)
-  confidenceTier      MatchConfidenceTier
-  source              String              @default("DISCOVERY") // DISCOVERY | RERANKER | MANUAL
-  confirmedByMerchant Boolean             @default(false)
-  rejectedByMerchant  Boolean             @default(false)
-  reviewedAt          DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  variantMatches ProductMatch[]
-
-  @@unique([shopifyProductId, scrapedProductId])
-  @@index([shopDomain, confidenceTier])
-  @@index([shopDomain, reviewedAt])
-}
-
-// ─────────────────────────────────────────
-// DYNAMIC PRICING — v1 audit + per-shop settings
-// ─────────────────────────────────────────
-// Audit trail of suggested / applied price changes. v1: no rules, no ML blend.
-model PriceDecision {
-  id               String         @id @default(uuid())
-  shopDomain       String
-  shop             ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
-  shopifyVariantId String
-  variant          ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
-
-  oldPrice Decimal @db.Decimal(10, 2)
-  newPrice Decimal @db.Decimal(10, 2)
-  reason   String
-
-  // Audit / stats-page fields. Skipped decisions also write a row (with
-  // autoApplied=false and a skipReason) so the merchant can see *why* no
-  // change happened on this cycle.
-  changePct       Float?
-  refPrice        Decimal?     @db.Decimal(10, 2)
-  formulaTarget   Decimal?     @db.Decimal(10, 2)
-  competitorsUsed Int          @default(0)
-  oosObservations Int          @default(0)
-  currencyDrops   Int          @default(0)
-  topMatchesJson  Json?
-  tierAtDecision  PricingTier?
-  skipReason      String?
-  autoApplied     Boolean      @default(false)
-  applyError      String?
-
-  shopifyResponse Json?
-
-  decidedAt DateTime  @default(now())
-  appliedAt DateTime?
-
-  @@index([shopDomain, decidedAt(sort: Desc)])
-  @@index([shopifyVariantId, decidedAt(sort: Desc)])
-  @@index([shopDomain, appliedAt])
-}
-
-// Per-shop knobs for discovery + v1 pricing formula.
-model ShopSettings {
-  shopDomain               String      @id
-  shop                     ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
-  markupPct                Decimal     @default(0.02) @db.Decimal(5, 4)
-  maxCompetitorsPerProduct Int         @default(8)
-  // Auto-pricing knobs (defaults documented in services/pricing_svc/decide.py).
-  minCompetitorsToPrice    Int         @default(4)
-  topKCompetitors          Int         @default(4)
-  maxAutoApplyChangePct    Float       @default(0.05)
-  lifetimeCapPct           Float       @default(0.25)
-  budgetUndercut           Float       @default(0.05)
-  premiumUplift            Float       @default(0.05)
-  // Default rescrape cadence; per-product overrides live on ShopifyProduct.
-  frequencyInterval        Int         @default(1)
-  frequencyUnit            String      @default("daily")
-  // Default cap on listing-page expansion; ShopifyProduct / DiscoveryJob override.
-  listingExpansionCap      Int?
-
-  marketplaceBlocklist String[] @default([])
-  // Global pause for all rescrape work in this shop. When false, beat skips
-  // rescrape dispatch for every ProductUrl belonging to this shop, regardless
-  // of per-product frequency.
-  autoRescrapeEnabled  Boolean  @default(true)
-  // When false (default), competitor observations marked isInStock=false are
-  // dropped from the pricing reference. Flip to true if the scraper's stock
-  // signal is unreliable for your competitor set — observations will then
-  // count regardless. The OOS count is still recorded on each PriceDecision
-  // for the stats page.
-  includeOosInPricing  Boolean  @default(false)
-
-  // Serper geo/language targeting for competitor discovery.
-  serperGl       String @default("in")
-  serperHl       String @default("en")
-  serperLocation String @default("Kochi, Kerala")
-
-  // ISO-4217 currency code for the merchant store (e.g. "USD", "INR").
-  // Read from Shopify shop.currencyCode during install/refresh. Nullable
-  // until first sync — matcher treats null as "unknown" (no mismatch flag).
-  currency String?
-
-  updatedAt DateTime @updatedAt
-}
-
-// ─────────────────────────────────────────
-// Chatbot (merchant-facing assistant)
-// ─────────────────────────────────────────
-enum ChatRole {
-  user
-  assistant
-  tool
 }
 
 enum PreviewKind {
@@ -666,50 +529,28 @@ enum PreviewKind {
   dynamic_pricing_toggle
 }
 
-model ChatSession {
-  id             String        @id @default(cuid())
-  shopDomain     String
-  shop           ShopifyUser   @relation(fields: [shopDomain], references: [shopDomain])
-  userId         String?
-  title          String?
-  runningSummary String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  messages       ChatMessage[]
-  previews       ChatPreview[]
-
-  @@index([shopDomain, updatedAt])
+enum PricingTier {
+  BUDGET
+  COMPETITIVE
+  PREMIUM
 }
 
-model ChatMessage {
-  id         String      @id @default(cuid())
-  sessionId  String
-  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role       ChatRole
-  content    Json
-  tokenCount Int?
-  pinned     Boolean     @default(false)
-  createdAt  DateTime    @default(now())
-
-  @@index([sessionId, createdAt])
-  @@index([sessionId, pinned])
+enum ScrapeStatus {
+  IDLE
+  QUEUED
+  RUNNING
+  SCRAPED_FIRST
 }
 
-model ChatPreview {
-  id          String      @id @default(cuid())
-  sessionId   String
-  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  shopDomain  String
-  kind        PreviewKind
-  scopeFilter Json
-  change      Json
-  variantIds  String[]
-  summary     Json
-  expiresAt   DateTime
-  appliedAt   DateTime?
-  appliedBy   String?
-  result      Json?
-  createdAt   DateTime    @default(now())
+enum SuggestionStatus {
+  FIRST_TIME
+  SHOWED
+  SKIPPED
+  APPLIED
+}
 
-  @@index([shopDomain, expiresAt])
+enum UrlStatus {
+  ACTIVE
+  DEAD
+  PAUSED
 }

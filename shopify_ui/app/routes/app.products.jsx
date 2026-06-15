@@ -19,8 +19,8 @@ export const loader = async ({ request }) => {
   const products = await db.shopifyProduct.findMany({
     where: { shopDomain },
     include: {
-      variants: { take: 1 },
-      _count: { select: { competitorCandidates: true, productLevelMatches: true } },
+      ShopifyVariant: { take: 1 },
+      _count: { select: { CompetitorCandidate: true, ProductLevelMatch: true } },
     },
     orderBy: { updatedAt: "desc" },
   });
@@ -31,8 +31,8 @@ export const loader = async ({ request }) => {
     productType: p.productType,
     tags: p.tags,
     imageUrl: p.imageUrl,
-    price: p.variants[0]?.currentPrice?.toString() ?? "0.00",
-    compareAtPrice: p.variants[0]?.compareAtPrice?.toString() ?? null,
+    price: p.ShopifyVariant[0]?.currentPrice?.toString() ?? "0.00",
+    compareAtPrice: p.ShopifyVariant[0]?.compareAtPrice?.toString() ?? null,
     dynamicPricingEnabled: p.dynamicPricingEnabled,
     syncPrice: p.syncPrice,
     syncDescription: p.syncDescription,
@@ -47,19 +47,24 @@ export const loader = async ({ request }) => {
     maxPriceOverride: p.maxPriceOverride?.toString() ?? "",
     frequencyInterval: p.frequencyInterval ?? "",
     frequencyUnit: p.frequencyUnit ?? "",
-    discoveryNumResults: p.discoveryNumResults ?? 10,
-    listingExpansionCap: p.listingExpansionCap ?? 5,
+    discoveryNumResults: p.discoveryNumResults ?? "",
+    listingExpansionCap: p.listingExpansionCap ?? "",
     lastDiscoveryAt: p.lastDiscoveryAt ? p.lastDiscoveryAt.toISOString() : null,
-    matchCount: p._count.productLevelMatches,
-    candidateCount: p._count.competitorCandidates,
+    matchCount: p._count.ProductLevelMatch,
+    candidateCount: p._count.CompetitorCandidate,
   }));
 
   const freshUser = await db.shopifyUser.findUnique({ where: { shopDomain } });
+  const shopSettings = await db.shopSettings.upsert({
+    where: { shopDomain },
+    update: {},
+    create: { shopDomain, updatedAt: new Date() },
+  });
   const processingCount = await db.shopifyProduct.count({
     where: {
       shopDomain,
       updatedAt: { gte: new Date(Date.now() - 15 * 60 * 1000) },
-      variants: { some: { semanticText: null } },
+      ShopifyVariant: { some: { semanticText: null } },
     },
   });
 
@@ -78,6 +83,12 @@ export const loader = async ({ request }) => {
     productSyncState: freshUser?.productSyncState ?? "IDLE",
     productSyncedAt: freshUser?.productSyncedAt ? freshUser.productSyncedAt.toISOString() : null,
     processingCount,
+    shopDefaults: {
+      frequencyInterval: shopSettings.frequencyInterval,
+      frequencyUnit: shopSettings.frequencyUnit,
+      listingExpansionCap: shopSettings.listingExpansionCap,
+      discoveryNumResults: shopSettings.discoveryNumResults,
+    },
   };
 };
 
@@ -122,33 +133,30 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "toggleDynamic") {
-    // Pause/resume model. We no longer clear lastDiscoveryAt on toggle-off,
-    // so turning the product back on resumes from existing competitor URLs
-    // instead of running Serper from scratch. The beat filter is the actual
-    // gate: it only dispatches rescrape when dynamicPricingEnabled=TRUE.
+    // Pause/resume model. The beat filter is the actual gate: it only
+    // dispatches rescrape when dynamicPricingEnabled=TRUE.
     const enabled = formData.get("enabled") === "true";
 
-    // Snapshot basePrice on FIRST enable (both at product- and variant-level)
-    // so the lifetime cap has a stable anchor. Preserved across toggle off→on.
+    const updateData = { dynamicPricingEnabled: enabled };
+
     if (enabled) {
+      // Snapshot basePrice on FIRST enable (both at product- and variant-level)
+      // so the lifetime cap has a stable anchor. Preserved across toggle off→on.
       const product = await db.shopifyProduct.findUnique({
         where: { id: productId },
-        select: { basePrice: true, variants: { select: { id: true, currentPrice: true, basePrice: true } } },
+        select: { basePrice: true, ShopifyVariant: { select: { id: true, currentPrice: true, basePrice: true } } },
       });
       if (product && product.basePrice == null) {
-        const minVariantPrice = product.variants
+        const minVariantPrice = product.ShopifyVariant
           .map((v) => Number(v.currentPrice))
           .filter((n) => Number.isFinite(n) && n > 0)
           .reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
         if (Number.isFinite(minVariantPrice)) {
-          await db.shopifyProduct.update({
-            where: { id: productId },
-            data: { basePrice: minVariantPrice },
-          });
+          updateData.basePrice = minVariantPrice;
         }
       }
       // Per-variant snapshot — only fills nulls.
-      for (const v of product?.variants ?? []) {
+      for (const v of product?.ShopifyVariant ?? []) {
         if (v.basePrice == null && Number(v.currentPrice) > 0) {
           await db.shopifyVariant.update({
             where: { id: v.id },
@@ -156,12 +164,26 @@ export const action = async ({ request }) => {
           });
         }
       }
+    } else {
+      // When turning off DP, clear all product-specific setting overrides
+      // so they revert to shop defaults when re-enabled.
+      updateData.frequencyInterval = null;
+      updateData.frequencyUnit = null;
+      updateData.floorPrice = null;
+      updateData.ceilingPrice = null;
+      updateData.pricingTier = "COMPETITIVE";
+      updateData.minPriceOverride = null;
+      updateData.maxPriceOverride = null;
+      updateData.searchQueryOverride = null;
+      updateData.listingExpansionCap = null;
+      updateData.discoveryNumResults = null;
     }
 
     await db.shopifyProduct.update({
       where: { id: productId },
-      data: { dynamicPricingEnabled: enabled },
+      data: updateData,
     });
+
     if (enabled) {
       // Resume: re-arm any URLs we already discovered so they enter the
       // rescrape loop on the next beat tick. Only touches active rows whose
@@ -321,7 +343,7 @@ export const action = async ({ request }) => {
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const { products, auth, productSyncState, productSyncedAt, processingCount } = useLoaderData();
+  const { products, auth, productSyncState, productSyncedAt, processingCount, shopDefaults } = useLoaderData();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
   const syncFetcher = useFetcher();
@@ -332,6 +354,11 @@ export default function HomePage() {
     const t = setInterval(() => revalidator.revalidate(), 2000);
     return () => clearInterval(t);
   }, [isBusy, revalidator]);
+
+  // Revalidate on mount to always get fresh shop settings
+  useEffect(() => {
+    revalidator.revalidate();
+  }, [revalidator]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState("all");
@@ -402,8 +429,8 @@ export default function HomePage() {
       maxPriceOverride: "",
       frequencyInterval: "",
       frequencyUnit: "",
-      discoveryNumResults: 10,
-      listingExpansionCap: 5,
+      discoveryNumResults: "",
+      listingExpansionCap: "",
     };
 
   const setOverrideField = (productId, field, value) => {
@@ -435,8 +462,8 @@ export default function HomePage() {
         maxPriceOverride:    local.maxPriceOverride ?? "",
         frequencyInterval:   local.frequencyInterval ?? "",
         frequencyUnit:       local.frequencyUnit ?? "",
-        discoveryNumResults: String(local.discoveryNumResults ?? 10),
-        listingExpansionCap: String(local.listingExpansionCap ?? 5),
+        discoveryNumResults: String(local.discoveryNumResults ?? ""),
+        listingExpansionCap: String(local.listingExpansionCap ?? ""),
       },
       { method: "POST" },
     );
@@ -446,10 +473,23 @@ export default function HomePage() {
   // disables immediately (no panel data to commit on the way down).
   const handleToggle = (productId, currentValue) => {
     if (currentValue) {
-      // Disable path — commit immediately.
+      // Disable path — clear product-specific overrides and commit immediately.
       setLocalState((prev) => ({
         ...prev,
-        [productId]: { ...prev[productId], dynamicPricingEnabled: false },
+        [productId]: {
+          ...prev[productId],
+          dynamicPricingEnabled: false,
+          frequencyInterval: "",
+          frequencyUnit: "",
+          floorPrice: "",
+          ceilingPrice: "",
+          pricingTier: "COMPETITIVE",
+          minPriceOverride: "",
+          maxPriceOverride: "",
+          searchQueryOverride: "",
+          listingExpansionCap: "",
+          discoveryNumResults: "",
+        },
       }));
       fetcher.submit(
         { intent: "toggleDynamic", productId, enabled: "false" },
@@ -555,6 +595,9 @@ export default function HomePage() {
               <s-option key={tag} value={tag}>{tag}</s-option>
             ))}
           </s-select> */}
+
+
+          
           <s-select
             label="Category"
             value={selectedCategory}
@@ -756,7 +799,8 @@ export default function HomePage() {
                               min="1"
                               max="50"
                               value={String(local.discoveryNumResults ?? "")}
-                              helpText="1–50 products per discovery run"
+                              placeholder={String(shopDefaults.discoveryNumResults)}
+                              helpText={`1–50 products per discovery run. Shop default: ${shopDefaults.discoveryNumResults}`}
                               onInput={(e) =>
                                 setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
                               }
@@ -770,7 +814,7 @@ export default function HomePage() {
                               min="1"
                               max="50"
                               value={String(local.listingExpansionCap ?? "")}
-                              helpText="When a discovered URL is a listing page, expand this many products (1–50)"
+                              helpText={`When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${shopDefaults.listingExpansionCap}`}
                               onInput={(e) =>
                                 setOverrideField(product.id, "listingExpansionCap", e.currentTarget.value)
                               }
@@ -884,11 +928,14 @@ export default function HomePage() {
                           <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                             How often should we re-check for competitor price changes?
                           </s-text>
+                          <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
+                            Shop default: Every {shopDefaults.frequencyInterval} {shopDefaults.frequencyUnit}
+                          </s-text>
                           <s-stack direction="inline" gap="base">
                             <s-text-field
                               label="Every"
                               type="number"
-                              placeholder="e.g. 15"
+                              placeholder={String(shopDefaults.frequencyInterval)}
                               value={local.frequencyInterval ?? ""}
                               onInput={(e) =>
                                 setOverrideField(product.id, "frequencyInterval", e.currentTarget.value)
@@ -901,7 +948,7 @@ export default function HomePage() {
                                 setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
                               }
                             >
-                              <s-option value="">(shop default)</s-option>
+                              <s-option value="">(shop default: {shopDefaults.frequencyUnit})</s-option>
                               {FREQ_UNITS.map((u) => (
                                 <s-option key={u.value} value={u.value}>{u.label}</s-option>
                               ))}
