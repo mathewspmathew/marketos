@@ -460,6 +460,7 @@ export default function HomePage() {
     };
 
   const fetchFreshDefaults = async () => {
+    setHasFetched(true);
     setLoadingDefaults(true);
     setDefaultsError(null);
     try {
@@ -468,6 +469,8 @@ export default function HomePage() {
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
+      setCachedDefaults(data);
+      setCachedTimestamp(new Date());
       setFetchedDefaults(data);
     } catch (error) {
       console.error("Failed to fetch defaults:", error);
