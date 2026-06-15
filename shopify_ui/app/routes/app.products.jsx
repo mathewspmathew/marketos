@@ -924,12 +924,19 @@ export default function HomePage() {
 
                           {/* === SECTION 5: Rescrape Frequency === */}
                           <div>
-                            <s-text emphasis="bold">Rescrape Frequency</s-text>
-                            <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                              How often should we re-check for competitor price changes?
-                            </s-text>
+                            <div>
+                              <s-text emphasis="bold">Rescrape Frequency</s-text>
+                              <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
+                                How often should we re-check for competitor price changes?
+                              </s-text>
+                              {defaultsError && (
+                                <s-text tone="subdued" style={{ fontSize: "0.85em", color: "#d32f2f", marginBottom: "8px" }}>
+                                  ⚠ {defaultsError}
+                                </s-text>
+                              )}
+                            </div>
                             <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
-                              Shop default: Every {shopDefaults.frequencyInterval} {shopDefaults.frequencyUnit}
+                              Shop default: Every {getCurrentDefaults().frequencyInterval} {getCurrentDefaults().frequencyUnit}
                             </s-text>
                             <s-stack direction="inline" gap="base">
                               <s-text-field
@@ -948,7 +955,7 @@ export default function HomePage() {
                                   setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
                                 }
                               >
-                                <s-option value="">(shop default: {shopDefaults.frequencyUnit})</s-option>
+                                <s-option value="">(shop default: {getCurrentDefaults().frequencyUnit})</s-option>
                                 {FREQ_UNITS.map((u) => (
                                   <s-option key={u.value} value={u.value}>{u.label}</s-option>
                                 ))}
