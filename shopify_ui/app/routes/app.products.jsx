@@ -630,369 +630,350 @@ export default function HomePage() {
             </s-text>
           </s-stack>
         ) : (
-          <s-resource-list>
-            {filteredProducts.map((product) => {
+          <div style={{ display: "flex", flexDirection: "column", gap: "0", border: "1px solid #ddd", borderRadius: "4px", overflow: "hidden" }}>
+            {/* Table Header */}
+            <div style={{ display: "flex", padding: "12px 16px", borderBottom: "2px solid #f0f0f0", background: "#f9f9f9", fontWeight: "bold", fontSize: "12px", color: "#666", gap: "16px", alignItems: "center" }}>
+              <div style={{ width: "50px" }}>Image</div>
+              <div style={{ flex: 1, minWidth: "220px" }}>Product Name</div>
+              <div style={{ width: "70px" }}>Price</div>
+              <div style={{ width: "80px" }}>DP Status</div>
+              <div style={{ width: "100px" }}>Rescrape</div>
+              <div style={{ width: "80px" }}>Matches</div>
+              <div style={{ width: "60px" }}></div>
+            </div>
+
+            {/* Product Rows */}
+            {paginatedProducts.map((product) => {
               const local = getLocal(product.id);
               const isOn = local.dynamicPricingEnabled;
               const isExpanded = expandedId === product.id;
-              const productTags = (() => {
-                try { return JSON.parse(product.tags); } catch { return []; }
-              })();
 
               return (
-                <s-resource-item key={product.id} id={product.id}>
-                  {product.imageUrl && (
-                    <img
-                      slot="media"
-                      src={product.imageUrl}
-                      alt={product.title}
-                      width="50"
-                      height="50"
-                      style={{ objectFit: "cover", borderRadius: "4px" }}
-                    />
-                  )}
-
-                  <s-stack direction="block" gap="tight">
-                    {/* Product title, category, price */}
-                    <s-stack direction="inline" gap="base" align="center">
-                      <s-text emphasis="bold">{product.title}</s-text>
-                      <s-badge>{product.productType || "Product"}</s-badge>
-                      <s-text>${product.price}</s-text>
-                      {product.compareAtPrice && (
-                        <s-text tone="subdued" style={{ textDecoration: "line-through" }}>
-                          ${product.compareAtPrice}
-                        </s-text>
-                      )}
-                    </s-stack>
-
-                    {/* Product tags (if any) */}
-                    {productTags.length > 0 && (
-                      <s-stack direction="inline" gap="tight">
-                        {productTags.slice(0, 5).map((tag) => (
-                          <s-badge key={tag} tone="info">{tag}</s-badge>
-                        ))}
-                      </s-stack>
+                <div key={product.id}>
+                  {/* Product Row */}
+                  <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid #f0f0f0", alignItems: "center", gap: "16px", background: "white" }}>
+                    {product.imageUrl && (
+                      <img
+                        src={product.imageUrl}
+                        alt={product.title}
+                        width="50"
+                        height="50"
+                        style={{ objectFit: "cover", borderRadius: "4px", flex: "0 0 50px" }}
+                      />
+                    )}
+                    {!product.imageUrl && (
+                      <div style={{ width: "50px", height: "50px", background: "#ddd", borderRadius: "4px", flex: "0 0 50px" }} />
                     )}
 
-                    {/* Compact status line: DP status + Rescrape status + Details button */}
-                    <s-stack direction="inline" gap="base" align="center" wrap={false}>
-                      {/* Dynamic Pricing status + quick buttons */}
-                      <s-stack direction="inline" gap="tight" align="center">
-                        <s-text>DP</s-text>
-                        {isOn ? (
-                          <>
-                            <s-badge tone="success">ON</s-badge>
-                            <s-button
-                              size="slim"
-                              tone="critical"
-                              onClick={() => handleToggle(product.id, true)}
-                            >
-                              Off
-                            </s-button>
-                          </>
-                        ) : (
-                          <>
-                            <s-badge tone="subdued">OFF</s-badge>
-                            <s-button
-                              size="slim"
-                              variant="primary"
-                              onClick={() => setExpandedId(product.id)}
-                            >
-                              Setup
-                            </s-button>
-                          </>
-                        )}
-                      </s-stack>
+                    <div style={{ flex: 1, minWidth: "220px" }}>
+                      <div style={{ fontWeight: "500", marginBottom: "4px" }}>{product.title}</div>
+                      <div style={{ fontSize: "12px", color: "#666" }}>{product.productType || "Product"}</div>
+                    </div>
 
-                      {/* Rescrape status + quick buttons */}
-                      {(() => {
-                        const rescrapeOn =
-                          isOn && !!local.frequencyUnit && local.frequencyUnit !== "never";
-                        return (
-                          <s-stack direction="inline" gap="tight" align="center">
-                            <s-text>Rescrape</s-text>
-                            {rescrapeOn ? (
-                              <>
-                                <s-badge tone="success">
-                                  {`${local.frequencyInterval || ""} ${local.frequencyUnit}`}
-                                </s-badge>
-                                <s-button
-                                  size="slim"
-                                  tone="critical"
-                                  onClick={() => handleRescrapeToggle(product.id, true)}
-                                  disabled={!isOn || undefined}
-                                >
-                                  Off
-                                </s-button>
-                              </>
-                            ) : (
-                              <>
-                                <s-badge tone="subdued">–</s-badge>
-                                <s-button
-                                  size="slim"
-                                  onClick={() => handleRescrapeToggle(product.id, false)}
-                                  disabled={!isOn || undefined}
-                                >
-                                  On
-                                </s-button>
-                              </>
-                            )}
-                          </s-stack>
-                        );
-                      })()}
+                    <div style={{ width: "70px", fontWeight: "500" }}>${product.price}</div>
 
-                      {/* Details button */}
+                    <div style={{ width: "80px" }}>
+                      {isOn ? (
+                        <span style={{ background: "#4CAF50", color: "white", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>ON</span>
+                      ) : (
+                        <span style={{ background: "#ccc", color: "#666", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>OFF</span>
+                      )}
+                    </div>
+
+                    <div style={{ width: "100px", fontSize: "12px" }}>
+                      {isOn && local.frequencyUnit && local.frequencyUnit !== "never"
+                        ? `${local.frequencyInterval || ""} ${local.frequencyUnit}`
+                        : "–"}
+                    </div>
+
+                    <div style={{ width: "80px", fontSize: "12px" }}>{product.matchCount || 0}</div>
+
+                    <div style={{ width: "60px" }}>
                       <s-button
                         variant="plain"
                         size="slim"
-                        id={`expand-${product.id}`}
                         onClick={() => toggleExpand(product.id)}
-                        aria-label={isExpanded ? "Collapse details" : "Expand details"}
+                        style={{ fontSize: "11px" }}
                       >
                         {isExpanded ? "▾ Hide" : "▸ Details"}
                       </s-button>
-                    </s-stack>
-                  </s-stack>
+                    </div>
+                  </div>
 
-                  {/* Expanded details panel (rendered below if isExpanded) */}
+                  {/* Expanded Details Panel */}
                   {isExpanded && (
-                    <s-box
-                      padding="base"
-                      borderWidth="base"
-                      borderRadius="base"
-                      background="subdued"
-                    >
-                      <s-stack direction="block" gap="base">
-                        {/* === SECTION 1: Search Query === */}
-                        <div>
-                          <s-text emphasis="bold">Search Query</s-text>
+                    <div style={{ padding: "20px 16px", borderBottom: "1px solid #f0f0f0", background: "#f9f9f9" }}>
+                      <s-box
+                        padding="base"
+                        borderWidth="base"
+                        borderRadius="base"
+                        background="subdued"
+                      >
+                        <s-stack direction="block" gap="base">
+                          {/* === SECTION 1: Search Query === */}
                           <div>
-                          <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                            What competitors should we search for?
-                          </s-text>
-                          </div>
-                          <s-text-field
-                            label="Search query"
-                            placeholder={product.searchQuery || "e.g. nike air max 90 blue mens"}
-                            value={local.searchQueryOverride || product.searchQuery || ""}
-                            helpText={
-                              product.searchQuery && !local.searchQueryOverride
-                                ? `AI-generated from product details. Edit to refine.`
-                                : `Edit to override the generated query.`
-                            }
-                            onInput={(e) => {
-                              const v = e.currentTarget.value;
-                              setOverrideField(
-                                product.id,
-                                "searchQueryOverride",
-                                v === (product.searchQuery || "") ? "" : v,
-                              );
-                            }}
-                          />
-                        </div>
-
-                        <s-divider />
-
-                        {/* === SECTION 2: Discovery Settings === */}
-                        <div>
-                          <s-text emphasis="bold">Discovery Settings</s-text>
-                          <div>
-                          <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                            How many competitor products and listings should we explore?
-                          </s-text>
-                          </div>
-
-                          <div style={{ marginBottom: "12px" }}>
+                            <s-text emphasis="bold">Search Query</s-text>
+                            <div>
+                              <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
+                                What competitors should we search for?
+                              </s-text>
+                            </div>
                             <s-text-field
-                              label="Competitor products per run"
-                              type="number"
-                              min="1"
-                              max="50"
-                              value={String(local.discoveryNumResults ?? "")}
-                              placeholder={String(shopDefaults.discoveryNumResults)}
-                              helpText={`1–50 products per discovery run. Shop default: ${shopDefaults.discoveryNumResults}`}
-                              onInput={(e) =>
-                                setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
+                              label="Search query"
+                              placeholder={product.searchQuery || "e.g. nike air max 90 blue mens"}
+                              value={local.searchQueryOverride || product.searchQuery || ""}
+                              helpText={
+                                product.searchQuery && !local.searchQueryOverride
+                                  ? `AI-generated from product details. Edit to refine.`
+                                  : `Edit to override the generated query.`
                               }
+                              onInput={(e) => {
+                                const v = e.currentTarget.value;
+                                setOverrideField(
+                                  product.id,
+                                  "searchQueryOverride",
+                                  v === (product.searchQuery || "") ? "" : v,
+                                );
+                              }}
                             />
                           </div>
 
+                          <s-divider />
+
+                          {/* === SECTION 2: Discovery Settings === */}
                           <div>
-                            <s-text-field
-                              label="Products per listing page"
-                              type="number"
-                              min="1"
-                              max="50"
-                              value={String(local.listingExpansionCap ?? "")}
-                              helpText={`When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${shopDefaults.listingExpansionCap}`}
-                              onInput={(e) =>
-                                setOverrideField(product.id, "listingExpansionCap", e.currentTarget.value)
-                              }
-                            />
+                            <s-text emphasis="bold">Discovery Settings</s-text>
+                            <div>
+                              <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
+                                How many competitor products and listings should we explore?
+                              </s-text>
+                            </div>
+
+                            <div style={{ marginBottom: "12px" }}>
+                              <s-text-field
+                                label="Competitor products per run"
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={String(local.discoveryNumResults ?? "")}
+                                placeholder={String(shopDefaults.discoveryNumResults)}
+                                helpText={`1–50 products per discovery run. Shop default: ${shopDefaults.discoveryNumResults}`}
+                                onInput={(e) =>
+                                  setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
+                                }
+                              />
+                            </div>
+
+                            <div>
+                              <s-text-field
+                                label="Products per listing page"
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={String(local.listingExpansionCap ?? "")}
+                                helpText={`When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${shopDefaults.listingExpansionCap}`}
+                                onInput={(e) =>
+                                  setOverrideField(product.id, "listingExpansionCap", e.currentTarget.value)
+                                }
+                              />
+                            </div>
                           </div>
-                        </div>
 
-                        <s-divider />
+                          <s-divider />
 
-                        {/* === SECTION 3: Pricing Rules === */}
-                        <div>
-                          <s-text emphasis="bold">Pricing Rules</s-text>
+                          {/* === SECTION 3: Pricing Rules === */}
+                          <div>
+                            <s-text emphasis="bold">Pricing Rules</s-text>
 
-                          <div style={{ marginBottom: "12px" }}>
+                            <div style={{ marginBottom: "12px" }}>
+                              <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
+                                Which strategy should we use to price relative to competitors?
+                              </s-text>
+                              <s-stack direction="inline" gap="base" align="center">
+                                {["BUDGET", "COMPETITIVE", "PREMIUM"].map((t) => (
+                                  <label key={t} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                    <input
+                                      type="radio"
+                                      name={`tier-${product.id}`}
+                                      value={t}
+                                      checked={(local.pricingTier ?? "COMPETITIVE") === t}
+                                      onChange={() => setOverrideField(product.id, "pricingTier", t)}
+                                    />
+                                    {t.charAt(0) + t.slice(1).toLowerCase()}
+                                  </label>
+                                ))}
+                              </s-stack>
+                            </div>
+
+                            <div>
+                              <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
+                                Hard price bounds (optional overrides)
+                              </s-text>
+                              {local.basePrice && (
+                                <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
+                                  Base price snapshot: ${Number(local.basePrice).toFixed(2)}.
+                                  Lifetime cap defaults to ±25% from this anchor.
+                                </s-text>
+                              )}
+                              <s-stack direction="inline" gap="base">
+                                <s-text-field
+                                  label="Minimum price"
+                                  type="number"
+                                  placeholder="0.00"
+                                  value={local.minPriceOverride ?? ""}
+                                  onInput={(e) =>
+                                    setOverrideField(product.id, "minPriceOverride", e.currentTarget.value)
+                                  }
+                                />
+                                <s-text-field
+                                  label="Maximum price"
+                                  type="number"
+                                  placeholder="0.00"
+                                  value={local.maxPriceOverride ?? ""}
+                                  onInput={(e) =>
+                                    setOverrideField(product.id, "maxPriceOverride", e.currentTarget.value)
+                                  }
+                                />
+                              </s-stack>
+                            </div>
+                          </div>
+
+                          <s-divider />
+
+                          {/* === SECTION 4: Sync to Shopify === */}
+                          <div>
+                            <s-text emphasis="bold">Sync to Shopify</s-text>
                             <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                              Which strategy should we use to price relative to competitors?
+                              Which product fields should we auto-update?
                             </s-text>
-                            <s-stack direction="inline" gap="base" align="center">
-                              {["BUDGET", "COMPETITIVE", "PREMIUM"].map((t) => (
-                                <label key={t} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                                  <input
-                                    type="radio"
-                                    name={`tier-${product.id}`}
-                                    value={t}
-                                    checked={(local.pricingTier ?? "COMPETITIVE") === t}
-                                    onChange={() => setOverrideField(product.id, "pricingTier", t)}
-                                  />
-                                  {t.charAt(0) + t.slice(1).toLowerCase()}
-                                </label>
-                              ))}
+                            <s-stack direction="inline" gap="loose">
+                              <s-checkbox
+                                id={`price-${product.id}`}
+                                label="Price"
+                                checked={local.syncPrice || undefined}
+                                disabled={!isOn || undefined}
+                                onChange={() =>
+                                  handleFieldChange(product.id, "syncPrice", local.syncPrice)
+                                }
+                              />
+                              <s-checkbox
+                                id={`description-${product.id}`}
+                                label="Description"
+                                checked={local.syncDescription || undefined}
+                                disabled={!isOn || undefined}
+                                onChange={() =>
+                                  handleFieldChange(product.id, "syncDescription", local.syncDescription)
+                                }
+                              />
+                              <s-checkbox
+                                id={`title-${product.id}`}
+                                label="Title"
+                                checked={local.syncTitle || undefined}
+                                disabled={!isOn || undefined}
+                                onChange={() =>
+                                  handleFieldChange(product.id, "syncTitle", local.syncTitle)
+                                }
+                              />
                             </s-stack>
                           </div>
 
+                          <s-divider />
+
+                          {/* === SECTION 5: Rescrape Frequency === */}
                           <div>
+                            <s-text emphasis="bold">Rescrape Frequency</s-text>
                             <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                              Hard price bounds (optional overrides)
+                              How often should we re-check for competitor price changes?
                             </s-text>
-                            {local.basePrice && (
-                              <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
-                                Base price snapshot: ${Number(local.basePrice).toFixed(2)}.
-                                Lifetime cap defaults to ±25% from this anchor.
-                              </s-text>
-                            )}
+                            <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
+                              Shop default: Every {shopDefaults.frequencyInterval} {shopDefaults.frequencyUnit}
+                            </s-text>
                             <s-stack direction="inline" gap="base">
                               <s-text-field
-                                label="Minimum price"
+                                label="Every"
                                 type="number"
-                                placeholder="0.00"
-                                value={local.minPriceOverride ?? ""}
+                                placeholder={String(shopDefaults.frequencyInterval)}
+                                value={local.frequencyInterval ?? ""}
                                 onInput={(e) =>
-                                  setOverrideField(product.id, "minPriceOverride", e.currentTarget.value)
+                                  setOverrideField(product.id, "frequencyInterval", e.currentTarget.value)
                                 }
                               />
-                              <s-text-field
-                                label="Maximum price"
-                                type="number"
-                                placeholder="0.00"
-                                value={local.maxPriceOverride ?? ""}
-                                onInput={(e) =>
-                                  setOverrideField(product.id, "maxPriceOverride", e.currentTarget.value)
+                              <s-select
+                                label="Unit"
+                                value={local.frequencyUnit || ""}
+                                onChange={(e) =>
+                                  setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
                                 }
-                              />
+                              >
+                                <s-option value="">(shop default: {shopDefaults.frequencyUnit})</s-option>
+                                {FREQ_UNITS.map((u) => (
+                                  <s-option key={u.value} value={u.value}>{u.label}</s-option>
+                                ))}
+                              </s-select>
                             </s-stack>
                           </div>
-                        </div>
 
-                        <s-divider />
+                          {/* === ACTION BUTTONS (at bottom, after all inputs) === */}
+                          <s-divider />
 
-                        {/* === SECTION 4: Sync to Shopify === */}
-                        <div>
-                          <s-text emphasis="bold">Sync to Shopify</s-text>
-                          <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                            Which product fields should we auto-update?
-                          </s-text>
-                          <s-stack direction="inline" gap="loose">
-                            <s-checkbox
-                              id={`price-${product.id}`}
-                              label="Price"
-                              checked={local.syncPrice || undefined}
-                              disabled={!isOn || undefined}
-                              onChange={() =>
-                                handleFieldChange(product.id, "syncPrice", local.syncPrice)
-                              }
-                            />
-                            <s-checkbox
-                              id={`description-${product.id}`}
-                              label="Description"
-                              checked={local.syncDescription || undefined}
-                              disabled={!isOn || undefined}
-                              onChange={() =>
-                                handleFieldChange(product.id, "syncDescription", local.syncDescription)
-                              }
-                            />
-                            <s-checkbox
-                              id={`title-${product.id}`}
-                              label="Title"
-                              checked={local.syncTitle || undefined}
-                              disabled={!isOn || undefined}
-                              onChange={() =>
-                                handleFieldChange(product.id, "syncTitle", local.syncTitle)
-                              }
-                            />
-                          </s-stack>
-                        </div>
-
-                        <s-divider />
-
-                        {/* === SECTION 5: Rescrape Frequency === */}
-                        <div>
-                          <s-text emphasis="bold">Rescrape Frequency</s-text>
-                          <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                            How often should we re-check for competitor price changes?
-                          </s-text>
-                          <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
-                            Shop default: Every {shopDefaults.frequencyInterval} {shopDefaults.frequencyUnit}
-                          </s-text>
-                          <s-stack direction="inline" gap="base">
-                            <s-text-field
-                              label="Every"
-                              type="number"
-                              placeholder={String(shopDefaults.frequencyInterval)}
-                              value={local.frequencyInterval ?? ""}
-                              onInput={(e) =>
-                                setOverrideField(product.id, "frequencyInterval", e.currentTarget.value)
-                              }
-                            />
-                            <s-select
-                              label="Unit"
-                              value={local.frequencyUnit || ""}
-                              onChange={(e) =>
-                                setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
-                              }
+                          <s-stack direction="inline" gap="base" align="center">
+                            <s-button
+                              variant="primary"
+                              onClick={() => submitOverrides(product.id, { enable: !isOn })}
                             >
-                              <s-option value="">(shop default: {shopDefaults.frequencyUnit})</s-option>
-                              {FREQ_UNITS.map((u) => (
-                                <s-option key={u.value} value={u.value}>{u.label}</s-option>
-                              ))}
-                            </s-select>
+                              {isOn ? "Save changes" : "Save & Enable Dynamic Pricing"}
+                            </s-button>
+                            <s-link href={`/app/stats/${encodeURIComponent(product.id)}`}>
+                              Stats &amp; price history
+                            </s-link>
                           </s-stack>
-                        </div>
 
-                        {/* === ACTION BUTTONS (at bottom, after all inputs) === */}
-                        <s-divider />
-
-                        <s-stack direction="inline" gap="base" align="center">
-                          <s-button
-                            variant="primary"
-                            onClick={() => submitOverrides(product.id, { enable: !isOn })}
-                          >
-                            {isOn ? "Save changes" : "Save & Enable Dynamic Pricing"}
-                          </s-button>
-                          <s-link href={`/app/stats/${encodeURIComponent(product.id)}`}>
-                            Stats &amp; price history
-                          </s-link>
+                          {!isOn && (
+                            <s-text tone="subdued">
+                              When you save, discovery begins within ~30s and competitor scraping starts on the schedule you set.
+                            </s-text>
+                          )}
                         </s-stack>
-
-                        {!isOn && (
-                          <s-text tone="subdued">
-                            When you save, discovery begins within ~30s and competitor scraping starts on the schedule you set.
-                          </s-text>
-                        )}
-                      </s-stack>
-                    </s-box>
+                      </s-box>
+                    </div>
                   )}
-                </s-resource-item>
+                </div>
               );
             })}
-          </s-resource-list>
+
+            {/* Pagination Controls */}
+            <div style={{ display: "flex", justifyContent: "center", gap: "8px", padding: "16px", borderTop: "1px solid #f0f0f0", fontSize: "12px" }}>
+              <s-button
+                size="slim"
+                variant="plain"
+                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                disabled={currentPage === 1}
+              >
+                ← Prev
+              </s-button>
+
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                <s-button
+                  key={page}
+                  size="slim"
+                  variant={currentPage === page ? "primary" : "plain"}
+                  onClick={() => setCurrentPage(page)}
+                  style={{ minWidth: "40px" }}
+                >
+                  {page}
+                </s-button>
+              ))}
+
+              <s-button
+                size="slim"
+                variant="plain"
+                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Next →
+              </s-button>
+            </div>
+          </div>
         )}
       </s-section>
     </s-page>
