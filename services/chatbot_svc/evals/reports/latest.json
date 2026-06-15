@@ -1,0 +1,306 @@
+{
+  "run_at": "2026-06-13T05:46:58+00:00",
+  "model": "groq:openai/gpt-oss-120b",
+  "cases_total": 12,
+  "overall_pass_rate_pct": 0.0,
+  "layers": {
+    "output_correctness": {
+      "pass": 7,
+      "fail": 5,
+      "rate_pct": 58.3
+    },
+    "structured_output": {
+      "pass": 0,
+      "fail": 12,
+      "rate_pct": 0.0
+    },
+    "tool_selection": {
+      "pass": 1,
+      "fail": 11,
+      "rate_pct": 8.3
+    },
+    "hallucination": {
+      "pass": 12,
+      "fail": 0,
+      "rate_pct": 100.0
+    },
+    "business_logic": {
+      "pass": 9,
+      "fail": 3,
+      "rate_pct": 75.0
+    }
+  },
+  "llm_judge": {
+    "avg_score": 0.0,
+    "scale": "0-1"
+  },
+  "latency_ms": {
+    "p50": 41286,
+    "p95": 94580
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "est_cost_usd": 0.0
+  },
+  "failures": {
+    "exceptions": 12,
+    "validation_errors": 0,
+    "timeouts": 0
+  },
+  "case_results": [
+    {
+      "case_id": "price_query_camlin_663538",
+      "prompt": "What is the price of the Camlin Scholar Pro?",
+      "expected_tools": [
+        "resolve_product"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": false,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 28.972090838,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "price_query_driftwood_&_co_883442",
+      "prompt": "What is the price of the Canvas Weekender Duffle?",
+      "expected_tools": [
+        "resolve_product"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": false,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 56.991167134,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "price_query_unknown_056114",
+      "prompt": "What is the price of the Casio FX-82MS 2nd?",
+      "expected_tools": [
+        "resolve_product"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": false,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 29.775169949,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "AskUserRequested",
+      "retries": 0
+    },
+    {
+      "case_id": "price_query_apex_athletic_228402",
+      "prompt": "What is the price of the Charcoal Tapered Jogger?",
+      "expected_tools": [
+        "resolve_product"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": false,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 41.285627269,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelAPIError",
+      "retries": 0
+    },
+    {
+      "case_id": "price_query_northcoast_basics_097330",
+      "prompt": "What is the price of the Classic Crewneck Cotton?",
+      "expected_tools": [
+        "resolve_product"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": false,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 27.467634504,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "dp_status_query",
+      "prompt": "Is dynamic pricing turned on for the Camlin Scholar Pro?",
+      "expected_tools": [
+        "resolve_product",
+        "get_dynamic_pricing_status"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 48.251453297,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "toggle_enable_first",
+      "prompt": "Enable dynamic pricing for the Camlin Scholar Pro.",
+      "expected_tools": [
+        "resolve_product",
+        "preview_dynamic_pricing_toggle"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": false
+      },
+      "judge_score": 0.0,
+      "duration_s": 94.579510861,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "price_increase_preview",
+      "prompt": "Increase the price of the Camlin Scholar Pro by 10 percent.",
+      "expected_tools": [
+        "resolve_product",
+        "preview_price_change"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": false
+      },
+      "judge_score": 0.0,
+      "duration_s": 54.5975999,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "stats_average_price",
+      "prompt": "What is the average price across my products?",
+      "expected_tools": [
+        "get_stats"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 57.259919109,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "nonexistent_product",
+      "prompt": "What is the price of the Apple MacBook Pro in my store?",
+      "expected_tools": [
+        "resolve_product"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 36.506083653,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "no_price_history",
+      "prompt": "What was the price of the Camlin Scholar Pro three months ago?",
+      "expected_tools": [],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": false,
+        "tool_selection": true,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "judge_score": 0.0,
+      "duration_s": 17.341544826,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    },
+    {
+      "case_id": "ambiguous_reference",
+      "prompt": "Change the price of the pack.",
+      "expected_tools": [
+        "resolve_product"
+      ],
+      "actual_tools": [],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": false,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": false
+      },
+      "judge_score": 0.0,
+      "duration_s": 13.292883876,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
+      "retries": 0
+    }
+  ]
+}

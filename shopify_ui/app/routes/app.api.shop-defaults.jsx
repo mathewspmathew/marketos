@@ -24,10 +24,10 @@ export const loader = async ({ request }) => {
     }
 
     return Response.json({
-      frequencyInterval: shopSettings.frequencyInterval,
-      frequencyUnit: shopSettings.frequencyUnit,
-      listingExpansionCap: shopSettings.listingExpansionCap,
-      discoveryNumResults: shopSettings.discoveryNumResults,
+      frequencyInterval: shopSettings.frequencyInterval ?? 1,
+      frequencyUnit: shopSettings.frequencyUnit ?? "daily",
+      listingExpansionCap: shopSettings.listingExpansionCap ?? 5,
+      discoveryNumResults: shopSettings.discoveryNumResults ?? 10,
     });
   } catch (error) {
     console.error("Error fetching shop defaults:", error);

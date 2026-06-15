@@ -58,7 +58,14 @@ export const loader = async ({ request }) => {
   const shopSettings = await db.shopSettings.upsert({
     where: { shopDomain },
     update: {},
-    create: { shopDomain, updatedAt: new Date() },
+    create: {
+      shopDomain,
+      updatedAt: new Date(),
+      frequencyInterval: 1,
+      frequencyUnit: "daily",
+      discoveryNumResults: 10,
+      listingExpansionCap: 5,
+    },
   });
   const processingCount = await db.shopifyProduct.count({
     where: {
@@ -838,8 +845,7 @@ export default function HomePage() {
                                 type="number"
                                 min="1"
                                 max="50"
-                                value={String(local.discoveryNumResults ?? "")}
-                                placeholder={String(shopDefaults.discoveryNumResults)}
+                                value={String(local.discoveryNumResults ?? getCurrentDefaults().discoveryNumResults ?? "")}
                                 helpText={`1–50 products per discovery run. Shop default: ${getCurrentDefaults().discoveryNumResults}`}
                                 onInput={(e) =>
                                   setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
@@ -853,7 +859,7 @@ export default function HomePage() {
                                 type="number"
                                 min="1"
                                 max="50"
-                                value={String(local.listingExpansionCap ?? "")}
+                                value={String(local.listingExpansionCap ?? getCurrentDefaults().listingExpansionCap ?? "")}
                                 helpText={`When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${getCurrentDefaults().listingExpansionCap}`}
                                 onInput={(e) =>
                                   setOverrideField(product.id, "listingExpansionCap", e.currentTarget.value)
@@ -982,20 +988,18 @@ export default function HomePage() {
                               <s-text-field
                                 label="Every"
                                 type="number"
-                                placeholder={String(shopDefaults.frequencyInterval)}
-                                value={local.frequencyInterval ?? ""}
+                                value={String(local.frequencyInterval ?? getCurrentDefaults().frequencyInterval ?? "")}
                                 onInput={(e) =>
                                   setOverrideField(product.id, "frequencyInterval", e.currentTarget.value)
                                 }
                               />
                               <s-select
                                 label="Unit"
-                                value={local.frequencyUnit || ""}
+                                value={local.frequencyUnit ?? getCurrentDefaults().frequencyUnit ?? ""}
                                 onChange={(e) =>
                                   setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
                                 }
                               >
-                                <s-option value="">(shop default: {getCurrentDefaults().frequencyUnit})</s-option>
                                 {FREQ_UNITS.map((u) => (
                                   <s-option key={u.value} value={u.value}>{u.label}</s-option>
                                 ))}
