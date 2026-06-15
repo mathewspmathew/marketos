@@ -416,6 +416,14 @@ export default function HomePage() {
     });
   }, [products, searchQuery, selectedTag, selectedCategory]);
 
+  const paginatedProducts = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return filteredProducts.slice(startIndex, endIndex);
+  }, [filteredProducts, currentPage, itemsPerPage]);
+
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+
   const getLocal = (id) =>
     localState[id] ?? {
       dynamicPricingEnabled: false,
