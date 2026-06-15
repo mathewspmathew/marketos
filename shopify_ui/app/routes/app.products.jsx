@@ -592,6 +592,14 @@ export default function HomePage() {
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
+  const getMinutesAgo = () => {
+    if (!cachedTimestamp) return null;
+    const minutes = Math.floor((Date.now() - cachedTimestamp) / 60000);
+    if (minutes === 0) return "Just now";
+    if (minutes === 1) return "1 minute ago";
+    return `${minutes} minutes ago`;
+  };
+
   // Auto-pricing only fails permanently when there's no offline session at
   // all (install never completed). Per-token expiry is handled by the
   // library on the next call, so we don't surface it.
@@ -747,6 +755,32 @@ export default function HomePage() {
                   {/* Expanded Details Panel */}
                   {isExpanded && (
                     <div style={{ padding: "20px 16px", borderBottom: "1px solid #f0f0f0", background: "#f9f9f9" }}>
+                      {cachedDefaults && (
+                        <div style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "12px 16px",
+                          marginBottom: "12px",
+                          background: "#f5f5f5",
+                          border: "1px solid #ddd",
+                          borderRadius: "4px",
+                          gap: "12px"
+                        }}>
+                          <s-text tone="subdued" style={{ fontSize: "0.9em", margin: 0 }}>
+                            Using cached defaults from {getMinutesAgo()}
+                          </s-text>
+                          <s-button
+                            size="slim"
+                            variant="secondary"
+                            onClick={() => fetchFreshDefaults()}
+                            disabled={loadingDefaults}
+                            style={{ whiteSpace: "nowrap" }}
+                          >
+                            {loadingDefaults ? "Refreshing..." : "Refresh now"}
+                          </s-button>
+                        </div>
+                      )}
                       <s-box
                         padding="base"
                         borderWidth="base"
