@@ -364,6 +364,9 @@ export default function HomePage() {
   const [selectedTag, setSelectedTag] = useState("all");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [expandedId, setExpandedId] = useState(null);
+  const [fetchedDefaults, setFetchedDefaults] = useState(null);
+  const [defaultsError, setDefaultsError] = useState(null);
+  const [loadingDefaults, setLoadingDefaults] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
 
