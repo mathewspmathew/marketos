@@ -426,7 +426,7 @@ export default function HomePage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, selectedCategory]);
+  }, [searchQuery, selectedCategory, selectedTag]);
 
   const getLocal = (id) =>
     localState[id] ?? {
