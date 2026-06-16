@@ -6,11 +6,10 @@ import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const shopDomain  = session.shop;
+  const shopDomain = session.shop;
 
-  const matches = await db.productLevelMatch.findMany({
-    // WEAK matches stay in the DB (matcher uses them as scaffolding) but
-    // never surface here — they're too noisy to ask a merchant about.
+  // Fetch all non-rejected matches (CONFIRMED + LIKELY)
+  const allMatches = await db.productLevelMatch.findMany({
     where: {
       shopDomain,
       rejectedByMerchant: false,
@@ -32,9 +31,23 @@ export const loader = async ({ request }) => {
     orderBy: [{ shopifyProductId: "asc" }, { confidence: "desc" }],
   });
 
-  // Group by Shopify product.
+  // Calculate metrics
+  const uniqueProducts = new Set(allMatches.map((m) => m.shopifyProductId));
+  const totalProducts = uniqueProducts.size;
+
+  const unreviewed = allMatches.filter((m) => m.reviewedAt === null);
+  const pendingReviews = unreviewed.length;
+
+  const totalMatches = allMatches.length;
+  const reviewedMatches = totalMatches - pendingReviews;
+  const reviewPercentage = totalMatches > 0 ? Math.round((reviewedMatches / totalMatches) * 100) : 0;
+
+  const confidenceSum = allMatches.reduce((sum, m) => sum + Number(m.confidence), 0);
+  const avgConfidence = allMatches.length > 0 ? (confidenceSum / allMatches.length).toFixed(1) : "0.0";
+
+  // Group by Shopify product, keep only TOP 1 match (highest confidence)
   const byProduct = new Map();
-  for (const m of matches) {
+  for (const m of allMatches) {
     const sp = m.ShopifyProduct;
     if (!sp) continue;
     if (!byProduct.has(sp.id)) {
@@ -43,42 +56,57 @@ export const loader = async ({ request }) => {
         title: sp.title,
         imageUrl: sp.imageUrl,
         merchantPrice: sp.ShopifyVariant[0]?.currentPrice?.toString() ?? null,
-        matches: [],
+        matchCount: 0,
+        topMatch: null,
       });
     }
-    const scraped = m.ScrapedProduct;
-    const variant = scraped?.ScrapedVariant[0];
-    byProduct.get(sp.id).matches.push({
-      id: m.id,
-      confidence:     Number(m.confidence),
-      confidenceTier: m.confidenceTier,
-      source:         m.source,
-      confirmedByMerchant: m.confirmedByMerchant,
-      scrapedTitle:   scraped?.title ?? "(missing)",
-      scrapedDomain:  scraped?.domain ?? "",
-      scrapedImageUrl: scraped?.imageUrl ?? null,
-      competitorPrice: variant?.currentPrice?.toString() ?? null,
-      competitorUrl:   null,  // ProductUrl lookup below
-      scrapedProductId: scraped?.id,
-    });
+    const product = byProduct.get(sp.id);
+    product.matchCount += 1;
+
+    // Store only top 1 match
+    if (!product.topMatch) {
+      const scraped = m.ScrapedProduct;
+      const variant = scraped?.ScrapedVariant[0];
+      product.topMatch = {
+        id: m.id,
+        confidence: Number(m.confidence),
+        confidenceTier: m.confidenceTier,
+        source: m.source,
+        confirmedByMerchant: m.confirmedByMerchant,
+        scrapedTitle: scraped?.title ?? "(missing)",
+        scrapedDomain: scraped?.domain ?? "",
+        scrapedImageUrl: scraped?.imageUrl ?? null,
+        competitorPrice: variant?.currentPrice?.toString() ?? null,
+        competitorUrl: null,
+        scrapedProductId: scraped?.id,
+      };
+    }
   }
 
-  // Pull the canonical ProductUrl per scraped product for "Open competitor" link.
-  const scrapedIds = matches.map((m) => m.scrapedProductId);
-  if (scrapedIds.length) {
+  // Pull ProductUrls for top 1 match in each product group
+  const topScrapedIds = [...byProduct.values()].map((p) => p.topMatch?.scrapedProductId).filter(Boolean);
+  if (topScrapedIds.length) {
     const urls = await db.productUrl.findMany({
-      where: { prodId: { in: scrapedIds } },
+      where: { prodId: { in: topScrapedIds } },
       select: { prodId: true, url: true },
     });
     const urlByScraped = new Map(urls.map((u) => [u.prodId, u.url]));
     for (const grp of byProduct.values()) {
-      for (const m of grp.matches) {
-        m.competitorUrl = urlByScraped.get(m.scrapedProductId) ?? null;
+      if (grp.topMatch) {
+        grp.topMatch.competitorUrl = urlByScraped.get(grp.topMatch.scrapedProductId) ?? null;
       }
     }
   }
 
-  return { groups: [...byProduct.values()] };
+  return {
+    metrics: {
+      totalProducts,
+      pendingReviews,
+      reviewPercentage,
+      avgConfidence: parseFloat(avgConfidence),
+    },
+    groups: [...byProduct.values()],
+  };
 };
 
 export const action = async ({ request }) => {
