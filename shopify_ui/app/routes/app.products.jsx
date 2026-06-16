@@ -55,18 +55,8 @@ export const loader = async ({ request }) => {
   }));
 
   const freshUser = await db.shopifyUser.findUnique({ where: { shopDomain } });
-  const shopSettings = await db.shopSettings.upsert({
-    where: { shopDomain },
-    update: {},
-    create: {
-      shopDomain,
-      updatedAt: new Date(),
-      frequencyInterval: 1,
-      frequencyUnit: "daily",
-      discoveryNumResults: 10,
-      listingExpansionCap: 5,
-    },
-  });
+  const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain } });
+
   const processingCount = await db.shopifyProduct.count({
     where: {
       shopDomain,
@@ -90,12 +80,12 @@ export const loader = async ({ request }) => {
     productSyncState: freshUser?.productSyncState ?? "IDLE",
     productSyncedAt: freshUser?.productSyncedAt ? freshUser.productSyncedAt.toISOString() : null,
     processingCount,
-    shopDefaults: {
+    shopDefaults: shopSettings ? {
       frequencyInterval: shopSettings.frequencyInterval,
       frequencyUnit: shopSettings.frequencyUnit,
       listingExpansionCap: shopSettings.listingExpansionCap,
       discoveryNumResults: shopSettings.discoveryNumResults,
-    },
+    } : null,
   };
 };
 
@@ -484,21 +474,10 @@ export default function HomePage() {
     return () => clearInterval(t);
   }, [isBusy, revalidator]);
 
-  // Revalidate on mount to always get fresh shop settings
-  useEffect(() => {
-    revalidator.revalidate();
-  }, [revalidator]);
-
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState("all");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [expandedId, setExpandedId] = useState(null);
-  const [fetchedDefaults, setFetchedDefaults] = useState(null);
-  const [defaultsError, setDefaultsError] = useState(null);
-  const [loadingDefaults, setLoadingDefaults] = useState(false);
-  const [cachedDefaults, setCachedDefaults] = useState(null);
-  const [cachedTimestamp, setCachedTimestamp] = useState(null);
-  const [hasFetched, setHasFetched] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [openMenuId, setOpenMenuId] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
@@ -521,8 +500,8 @@ export default function HomePage() {
         maxPriceOverride: p.maxPriceOverride,
         frequencyInterval: p.frequencyInterval === "" ? "" : String(p.frequencyInterval),
         frequencyUnit: p.frequencyUnit,
-        discoveryNumResults: p.discoveryNumResults ?? 10,
-        listingExpansionCap: p.listingExpansionCap ?? 5,
+        discoveryNumResults: p.discoveryNumResults || (shopDefaults?.discoveryNumResults ?? ""),
+        listingExpansionCap: p.listingExpansionCap || (shopDefaults?.listingExpansionCap ?? ""),
       };
     }
     return map;
@@ -565,12 +544,6 @@ export default function HomePage() {
     setCurrentPage(1);
   }, [searchQuery, selectedCategory, selectedTag]);
 
-  useEffect(() => {
-    if (expandedId !== null && !hasFetched) {
-      fetchFreshDefaults();
-    }
-  }, [expandedId, hasFetched]);
-
   const getLocal = (id) =>
     localState[id] ?? {
       dynamicPricingEnabled: false,
@@ -590,30 +563,11 @@ export default function HomePage() {
       listingExpansionCap: "",
     };
 
-  const fetchFreshDefaults = async () => {
-    setHasFetched(true);
-    setLoadingDefaults(true);
-    setDefaultsError(null);
-    try {
-      const response = await fetch("/api/shop-defaults");
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const data = await response.json();
-      setCachedDefaults(data);
-      setCachedTimestamp(new Date());
-      setFetchedDefaults(data);
-    } catch (error) {
-      console.error("Failed to fetch defaults:", error);
-      setDefaultsError("Couldn't refresh defaults — using cached values");
-    } finally {
-      setLoadingDefaults(false);
-    }
-  };
-
-  const getCurrentDefaults = () => {
-    // Prefer freshly fetched defaults, fall back to cached
-    return fetchedDefaults || shopDefaults;
+  const getCurrentDefaults = () => shopDefaults ?? {
+    frequencyInterval: "",
+    frequencyUnit: "",
+    listingExpansionCap: "",
+    discoveryNumResults: "",
   };
 
   const setOverrideField = (productId, field, value) => {
@@ -778,14 +732,6 @@ export default function HomePage() {
 
   const toggleExpand = (id) => {
     setExpandedId((prev) => (prev === id ? null : id));
-  };
-
-  const getMinutesAgo = () => {
-    if (!cachedTimestamp) return null;
-    const minutes = Math.floor((Date.now() - cachedTimestamp) / 60000);
-    if (minutes === 0) return "Just now";
-    if (minutes === 1) return "1 minute ago";
-    return `${minutes} minutes ago`;
   };
 
   // Auto-pricing only fails permanently when there's no offline session at
@@ -1029,32 +975,6 @@ export default function HomePage() {
                   {/* Expanded Details Panel */}
                   {isExpanded && (
                     <div style={{ padding: "20px 16px", borderBottom: "1px solid #f0f0f0", background: "#f9f9f9" }}>
-                      {cachedDefaults && (
-                        <div style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          padding: "12px 16px",
-                          marginBottom: "12px",
-                          background: "#f5f5f5",
-                          border: "1px solid #ddd",
-                          borderRadius: "4px",
-                          gap: "12px"
-                        }}>
-                          <s-text tone="subdued" style={{ fontSize: "0.9em", margin: 0 }}>
-                            Using cached defaults from {getMinutesAgo()}
-                          </s-text>
-                          <s-button
-                            size="slim"
-                            variant="secondary"
-                            onClick={() => fetchFreshDefaults()}
-                            disabled={loadingDefaults}
-                            style={{ whiteSpace: "nowrap" }}
-                          >
-                            {loadingDefaults ? "Refreshing..." : "Refresh now"}
-                          </s-button>
-                        </div>
-                      )}
                       <s-box
                         padding="base"
                         borderWidth="base"
@@ -1099,11 +1019,6 @@ export default function HomePage() {
                               <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                                 How many competitor products and listings should we explore?
                               </s-text>
-                              {defaultsError && (
-                                <s-text tone="subdued" style={{ fontSize: "0.85em", color: "#d32f2f", marginBottom: "8px" }}>
-                                  ⚠ {defaultsError}
-                                </s-text>
-                              )}
                             </div>
 
                             <div style={{ marginBottom: "12px" }}>
@@ -1242,11 +1157,6 @@ export default function HomePage() {
                               <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                                 How often should we re-check for competitor price changes?
                               </s-text>
-                              {defaultsError && (
-                                <s-text tone="subdued" style={{ fontSize: "0.85em", color: "#d32f2f", marginBottom: "8px" }}>
-                                  ⚠ {defaultsError}
-                                </s-text>
-                              )}
                             </div>
                             <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
                               Shop default: Every {getCurrentDefaults().frequencyInterval} {getCurrentDefaults().frequencyUnit}
