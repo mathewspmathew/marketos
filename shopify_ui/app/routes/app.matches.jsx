@@ -1,5 +1,5 @@
 import React from "react";
-import { useFetcher, useLoaderData } from "react-router";
+import { useFetcher, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { Page, Layout, Box, BlockStack, Text } from "@shopify/polaris";
 
@@ -220,6 +220,10 @@ export default function MatchesPage() {
       </Layout>
     </Page>
   );
+}
+
+export function ErrorBoundary() {
+  return boundary.error(useRouteError());
 }
 
 export const headers = (h) => boundary.headers(h);
