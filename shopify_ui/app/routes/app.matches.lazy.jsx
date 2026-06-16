@@ -1,4 +1,3 @@
-import { json } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
@@ -71,5 +70,5 @@ export const loader = async ({ request }) => {
     };
   });
 
-  return json({ matches: matchData, totalCount });
+  return { matches: matchData, totalCount };
 };
