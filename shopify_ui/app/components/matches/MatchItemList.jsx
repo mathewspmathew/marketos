@@ -1,4 +1,4 @@
-import { Card, Text, Button, Stack, Badge, Box } from "@shopify/polaris";
+import { Card, Text, Button, BlockStack, InlineStack, Badge, Box } from "@shopify/polaris";
 import { ExternalIcon } from "@shopify/polaris-icons";
 
 export function MatchItemList({ matches, onConfirm, onReject, loading = false }) {
@@ -11,13 +11,13 @@ export function MatchItemList({ matches, onConfirm, onReject, loading = false })
   }
 
   return (
-    <Stack gap="300" wrap={false}>
+    <BlockStack gap="300">
       {matches.map((m) => (
         <Card key={m.id}>
           <Box padding="400">
-            <Stack gap="300">
+            <BlockStack gap="300">
               {/* Header: Title, Domain, Confidence */}
-              <Stack gap="200" wrap={false}>
+              <InlineStack gap="200" wrap={false}>
                 {m.scrapedImageUrl && (
                   <Box minWidth="60px" minHeight="60px">
                     <img
@@ -29,9 +29,9 @@ export function MatchItemList({ matches, onConfirm, onReject, loading = false })
                     />
                   </Box>
                 )}
-                <Stack gap="100" grow>
+                <BlockStack gap="100" grow>
                   <Text as="p" variant="headingSm">{m.scrapedTitle}</Text>
-                  <Stack gap="200" wrap={false} align="center">
+                  <InlineStack gap="200" wrap={false} align="center">
                     <Badge tone={m.confidenceTier === "CONFIRMED" ? "success" : "info"}>
                       {m.confidenceTier} ({(m.confidence * 100).toFixed(0)}%)
                     </Badge>
@@ -39,12 +39,12 @@ export function MatchItemList({ matches, onConfirm, onReject, loading = false })
                     {m.confirmedByMerchant && (
                       <Badge tone="success">✓ Confirmed</Badge>
                     )}
-                  </Stack>
-                </Stack>
-              </Stack>
+                  </InlineStack>
+                </BlockStack>
+              </InlineStack>
 
               {/* Price & Link */}
-              <Stack gap="200" wrap={false} align="center">
+              <InlineStack gap="200" wrap={false} align="center">
                 {m.competitorPrice && (
                   <Text as="span">Their price: ₹{m.competitorPrice}</Text>
                 )}
@@ -58,13 +58,13 @@ export function MatchItemList({ matches, onConfirm, onReject, loading = false })
                     Open
                   </Button>
                 )}
-              </Stack>
+              </InlineStack>
 
               {/* Actions */}
               {m.confidenceTier === "LIKELY" && !m.confirmedByMerchant && (
-                <Stack gap="200" wrap={false}>
+                <InlineStack gap="200" wrap={false}>
                   <Button
-                    primary
+                    variant="primary"
                     size="slim"
                     onClick={() => onConfirm(m.id)}
                     loading={loading}
@@ -78,12 +78,12 @@ export function MatchItemList({ matches, onConfirm, onReject, loading = false })
                   >
                     Reject
                   </Button>
-                </Stack>
+                </InlineStack>
               )}
-            </Stack>
+            </BlockStack>
           </Box>
         </Card>
       ))}
-    </Stack>
+    </BlockStack>
   );
 }

@@ -1,4 +1,4 @@
-import { Card, Badge, Box, Text } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, Badge, Box, Text } from "@shopify/polaris";
 import { CheckCircleIcon, XCircleIcon, StarIcon } from "@shopify/polaris-icons";
 
 export function MatchActivitySection({ activities = [] }) {
@@ -13,54 +13,37 @@ export function MatchActivitySection({ activities = [] }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+    <BlockStack gap="200">
       {activities.map((activity, idx) => (
         <Card key={`${activity.matchId}-${idx}`}>
           <Box padding="400">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
-              {/* Icon + Description */}
-              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start", flex: 1 }}>
-                <div style={{ minWidth: "24px", minHeight: "24px", marginTop: "2px" }}>
-                  {activity.type === "confirmed" && (
-                    <CheckCircleIcon color="success" />
-                  )}
-                  {activity.type === "rejected" && (
-                    <XCircleIcon color="critical" />
-                  )}
-                  {activity.type === "created" && (
-                    <StarIcon color="info" />
-                  )}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <Text as="p" variant="bodySm">
-                    {activity.description}
-                  </Text>
+            <InlineStack gap="200" align="space-between" wrap={false}>
+              <InlineStack gap="200" align="start" wrap={false}>
+                {activity.type === "confirmed" && <CheckCircleIcon />}
+                {activity.type === "rejected" && <XCircleIcon />}
+                {activity.type === "created" && <StarIcon />}
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm">{activity.description}</Text>
                   <Text as="p" variant="bodySm" tone="subdued">
                     {new Date(activity.timestamp).toLocaleString()}
                   </Text>
-                </div>
-              </div>
-
-              {/* Status Badge */}
+                </BlockStack>
+              </InlineStack>
               <Badge
                 tone={
-                  activity.type === "confirmed"
-                    ? "success"
-                    : activity.type === "rejected"
-                    ? "critical"
-                    : "info"
+                  activity.type === "confirmed" ? "success"
+                  : activity.type === "rejected" ? "critical"
+                  : "info"
                 }
               >
-                {activity.type === "confirmed"
-                  ? "Confirmed"
-                  : activity.type === "rejected"
-                  ? "Rejected"
+                {activity.type === "confirmed" ? "Confirmed"
+                  : activity.type === "rejected" ? "Rejected"
                   : "Discovered"}
               </Badge>
-            </div>
+            </InlineStack>
           </Box>
         </Card>
       ))}
-    </div>
+    </BlockStack>
   );
 }
