@@ -35,8 +35,6 @@ export const loader = async ({ request }) => {
     compareAtPrice: p.ShopifyVariant[0]?.compareAtPrice?.toString() ?? null,
     dynamicPricingEnabled: p.dynamicPricingEnabled,
     syncPrice: p.syncPrice,
-    syncDescription: p.syncDescription,
-    syncTitle: p.syncTitle,
     searchQuery: p.searchQuery ?? "",
     searchQueryOverride: p.searchQueryOverride ?? "",
     floorPrice: p.floorPrice?.toString() ?? "",
@@ -228,15 +226,6 @@ export const action = async ({ request }) => {
         data: { frequencyUnit: "never", frequencyInterval: null },
       });
     }
-  } else if (intent === "updateFields") {
-    await db.shopifyProduct.update({
-      where: { id: productId },
-      data: {
-        syncPrice: formData.get("syncPrice") === "true",
-        syncDescription: formData.get("syncDescription") === "true",
-        syncTitle: formData.get("syncTitle") === "true",
-      },
-    });
   } else if (intent === "saveAndEnable" || intent === "updateOverrides") {
     // Strict validation: frequencyUnit must be a canonical option; floor/ceiling
     // must parse as positive numbers when provided.
@@ -489,8 +478,6 @@ export default function HomePage() {
       map[p.id] = {
         dynamicPricingEnabled: p.dynamicPricingEnabled,
         syncPrice: p.syncPrice,
-        syncDescription: p.syncDescription,
-        syncTitle: p.syncTitle,
         searchQueryOverride: p.searchQueryOverride,
         floorPrice: p.floorPrice,
         ceilingPrice: p.ceilingPrice,
@@ -548,8 +535,6 @@ export default function HomePage() {
     localState[id] ?? {
       dynamicPricingEnabled: false,
       syncPrice: true,
-      syncDescription: false,
-      syncTitle: false,
       searchQueryOverride: "",
       floorPrice: "",
       ceilingPrice: "",
@@ -714,21 +699,10 @@ export default function HomePage() {
     );
   };
 
-  const handleFieldChange = (productId, field, currentValue) => {
-    const newValue = !currentValue;
-    const updated = { ...getLocal(productId), [field]: newValue };
-    setLocalState((prev) => ({ ...prev, [productId]: updated }));
-    fetcher.submit(
-      {
-        intent: "updateFields",
-        productId,
-        syncPrice: String(updated.syncPrice),
-        syncDescription: String(updated.syncDescription),
-        syncTitle: String(updated.syncTitle),
-      },
-      { method: "POST" },
-    );
-  };
+  /* REMOVED: handleFieldChange function
+     - Was used to toggle sync options (Price/Description/Title)
+     - Only price syncing is active now; no UI for selecting fields
+  */
 
   const toggleExpand = (id) => {
     setExpandedId((prev) => (prev === id ? null : id));
@@ -1111,42 +1085,11 @@ export default function HomePage() {
 
                           <s-divider />
 
-                          {/* === SECTION 4: Sync to Shopify === */}
-                          <div>
-                            <s-text emphasis="bold">Sync to Shopify</s-text>
-                            <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                              Which product fields should we auto-update?
-                            </s-text>
-                            <s-stack direction="inline" gap="loose">
-                              <s-checkbox
-                                id={`price-${product.id}`}
-                                label="Price"
-                                checked={local.syncPrice || undefined}
-                                disabled={!isOn || undefined}
-                                onChange={() =>
-                                  handleFieldChange(product.id, "syncPrice", local.syncPrice)
-                                }
-                              />
-                              <s-checkbox
-                                id={`description-${product.id}`}
-                                label="Description"
-                                checked={local.syncDescription || undefined}
-                                disabled={!isOn || undefined}
-                                onChange={() =>
-                                  handleFieldChange(product.id, "syncDescription", local.syncDescription)
-                                }
-                              />
-                              <s-checkbox
-                                id={`title-${product.id}`}
-                                label="Title"
-                                checked={local.syncTitle || undefined}
-                                disabled={!isOn || undefined}
-                                onChange={() =>
-                                  handleFieldChange(product.id, "syncTitle", local.syncTitle)
-                                }
-                              />
-                            </s-stack>
-                          </div>
+                          {/* REMOVED: Sync to Shopify section (Price/Description/Title options)
+                              - Only price syncing is active now
+                              - syncPrice is always enabled
+                              - syncDescription and syncTitle removed from UI and form handlers
+                          */}
 
                           <s-divider />
 

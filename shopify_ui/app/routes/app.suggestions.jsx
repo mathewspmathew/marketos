@@ -1,9 +1,20 @@
 /* eslint-disable react/prop-types */
+
+/**
+ * DEPRECATED: Product Suggestions Page
+ * This feature has been disabled and is no longer accessible from the main navigation.
+ * Can be extended/re-enabled in the future if needed.
+ *
+ * To restore:
+ * 1. Uncomment the s-link in app.jsx
+ * 2. Uncomment the export default SuggestionsPage function below
+ */
+
 import { useMemo, useState } from "react";
 import { useFetcher, useLoaderData, useRouteError } from "react-router";
-import { authenticate } from "../shopify.server";
+// import { authenticate } from "../shopify.server"; // DISABLED - only used by loader
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import db from "../db.server";
+// import db from "../db.server"; // DISABLED - only used by loader/action
 
 // Content-only suggestion page (title + description). All pricing UI moved to
 // /app/pricing. The VariantPriceSuggestion model is being retired — this file
@@ -12,6 +23,7 @@ import db from "../db.server";
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
+/* DISABLED - Feature is no longer in use
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const showSkipped = url.searchParams.get("showSkipped") === "1";
@@ -243,8 +255,10 @@ export const action = async ({ request }) => {
 
   return { ok: false, error: `Unknown intent: ${intent}` };
 };
+*/
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+/*
 function formatINR(n) {
   if (n == null) return "—";
   return `₹${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
@@ -271,8 +285,10 @@ function statusTone(s) {
   if (s === "SKIPPED") return "subdued";
   return "info";
 }
+*/
 
 // ─── UI ──────────────────────────────────────────────────────────────────────
+/* DISABLED - Feature is no longer in use
 export default function SuggestionsPage() {
   const { products, showSkipped, shop } = useLoaderData();
   const fetcher = useFetcher();
@@ -354,8 +370,11 @@ export default function SuggestionsPage() {
     </s-page>
   );
 }
+*/
 
 // ─── Product Card ────────────────────────────────────────────────────────────
+/*
+// Also commented out - no longer needed since SuggestionsPage is disabled
 function ProductCard({ product, fetcher, shop }) {
   const ps = product.suggestion;
   const initialTitle = ps?.editedTitle ?? ps?.suggestedTitle ?? product.title;
@@ -564,6 +583,7 @@ function CurrentPanel({ product }) {
     </s-box>
   );
 }
+*/
 
 export function ErrorBoundary() {
   const error = useRouteError();
