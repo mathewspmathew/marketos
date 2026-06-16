@@ -1,7 +1,7 @@
 import React from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { Page, Layout, Section, Box, Stack, Text } from "@shopify/polaris";
+import { Page, Layout, Box, BlockStack, Text } from "@shopify/polaris";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
@@ -147,13 +147,13 @@ export default function MatchesPage() {
   const loadMatches = (productId, limit = 3) => {
     if (matchesCache[productId]) return;
     setPendingLoad({ productId, limit });
-    fetcher.load(`/app/matches.lazy?productId=${productId}&limit=${limit}`);
+    fetcher.load(`/app/matches/lazy?productId=${productId}&limit=${limit}`);
   };
 
   const loadAllMatches = (productId) => {
     if (matchesCache[`${productId}-all`]) return;
     setPendingLoad({ productId, limit: 999 });
-    fetcher.load(`/app/matches.lazy?productId=${productId}&limit=999`);
+    fetcher.load(`/app/matches/lazy?productId=${productId}&limit=999`);
   };
 
   // Cache fetched matches
@@ -182,7 +182,7 @@ export default function MatchesPage() {
 
         <Layout.Section>
           {groups.length === 0 ? (
-            <Section>
+            <Box>
               <Box padding="500">
                 <Text as="p" variant="headingMd" alignment="center">
                   No matches yet
@@ -191,9 +191,9 @@ export default function MatchesPage() {
                   Enable Dynamic Pricing on a product to start discovering competitors.
                 </Text>
               </Box>
-            </Section>
+            </Box>
           ) : (
-            <Stack gap="400">
+            <BlockStack gap="400">
               {groups.map((product) => (
                 <ProductMatchCard
                   key={product.id}
@@ -214,7 +214,7 @@ export default function MatchesPage() {
                   showAllMatches={!!matchesCache[`${product.id}-all`]}
                 />
               ))}
-            </Stack>
+            </BlockStack>
           )}
         </Layout.Section>
       </Layout>
