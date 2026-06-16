@@ -350,92 +350,121 @@ export const action = async ({ request }) => {
       where: { id: productId },
       data: { dynamicPricingEnabled: false },
     });
-  } else if (intent === "deleteDynamicWithData") {
-    // Completely delete DP and all related data.
-    // 1. Delete scraped products & variants for this product
-    const scraped = await db.scrapedProduct.findMany({
-      where: { parentShopifyProductId: productId },
-      select: { id: true },
-    });
-    for (const s of scraped) {
-      await db.scrapedVariant.deleteMany({
-        where: { scrapedProductId: s.id },
-      });
-      await db.productEmbedding.deleteMany({
-        where: { scrapedProductId: s.id },
-      });
-    }
-    await db.scrapedProduct.deleteMany({
-      where: { parentShopifyProductId: productId },
-    });
-
-    // 2. Delete matches
-    await db.productMatch.deleteMany({
-      where: { shopifyProductId: productId },
-    });
-    await db.productLevelMatch.deleteMany({
-      where: { shopifyProductId: productId },
-    });
-
-    // 3. Delete price observations & suggestions
-    await db.variantCompetitorStats.deleteMany({
-      where: { shopifyVariantId: { in: (await db.shopifyVariant.findMany({
-        where: { shopifyProductId: productId },
-        select: { id: true },
-      })).map((v) => v.id) } },
-    });
-    await db.competitorPriceObservation.deleteMany({
-      where: { shopifyVariantId: { in: (await db.shopifyVariant.findMany({
-        where: { shopifyProductId: productId },
-        select: { id: true },
-      })).map((v) => v.id) } },
-    });
-    await db.productSuggestion.deleteMany({
-      where: { shopifyProductId: productId },
-    });
-    await db.priceDecision.deleteMany({
-      where: { shopifyProductId: productId },
-    });
-
-    // 4. Delete scraping & discovery configs
-    const configs = await db.scrapingConfig.findMany({
-      where: { shopifyProductId: productId },
-      select: { id: true },
-    });
-    for (const cfg of configs) {
-      await db.productUrl.deleteMany({
-        where: { scrapingConfigId: cfg.id },
-      });
-    }
-    await db.scrapingConfig.deleteMany({
-      where: { shopifyProductId: productId },
-    });
-
-    await db.discoveryJob.deleteMany({
-      where: { shopifyProductId: productId },
-    });
-    await db.competitorCandidate.deleteMany({
-      where: { shopifyProductId: productId },
-    });
-
-    // 5. Clear DP config and all settings
+  } else if (intent === "resumeDynamic") {
+    // Resume paused DP — re-enable the flag and re-arm stale schedules.
     await db.shopifyProduct.update({
       where: { id: productId },
-      data: {
-        dynamicPricingEnabled: false,
-        frequencyInterval: null,
-        frequencyUnit: null,
-        floorPrice: null,
-        ceilingPrice: null,
-        pricingTier: "COMPETITIVE",
-        minPriceOverride: null,
-        maxPriceOverride: null,
-        searchQueryOverride: null,
-        listingExpansionCap: null,
-        discoveryNumResults: null,
-        basePrice: null,
-      },
+      data: { dynamicPricingEnabled: true },
     });
+    // Re-arm any URLs with stale schedules so beat picks them up on next tick.
+    await db.productUrl.updateMany({
+      where: {
+        shopifyProductId: productId,
+        status: "ACTIVE",
+        OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+      },
+      data: { nextRunAt: new Date() },
+    });
+  } else if (intent === "deleteDynamicWithData") {
+    try {
+      // Get all variants for this product
+      const variants = await db.shopifyVariant.findMany({
+        where: { productId },
+        select: { id: true },
+      });
+      const variantIds = variants.map((v) => v.id);
+
+      // 1. Delete variant-level data (VariantCompetitorStats, PriceDecision)
+      if (variantIds.length > 0) {
+        await db.variantCompetitorStats.deleteMany({
+          where: { shopifyVariantId: { in: variantIds } },
+        });
+        await db.priceDecision.deleteMany({
+          where: { shopifyVariantId: { in: variantIds } },
+        });
+      }
+
+      // 2. Delete ProductMatch (matches between shopify variants and competitor variants)
+      if (variantIds.length > 0) {
+        await db.productMatch.deleteMany({
+          where: { shopifyVariantId: { in: variantIds } },
+        });
+      }
+
+      // 3. Delete ProductLevelMatch and ProductSuggestion (product-level)
+      await db.productLevelMatch.deleteMany({
+        where: { shopifyProductId: productId },
+      });
+      await db.productSuggestion.deleteMany({
+        where: { shopifyProductId: productId },
+      });
+
+      // 4. Delete ProductUrl and get ScrapingConfigs to delete
+      const productUrls = await db.productUrl.findMany({
+        where: { shopifyProductId: productId },
+        select: { configId: true },
+      });
+      const configIds = productUrls.map((pu) => pu.configId).filter(Boolean);
+      await db.productUrl.deleteMany({
+        where: { shopifyProductId: productId },
+      });
+
+      // 5. Delete ScrapingConfigs
+      if (configIds.length > 0) {
+        await db.scrapingConfig.deleteMany({
+          where: { id: { in: configIds } },
+        });
+      }
+
+      // 6. Delete DiscoveryJob and CompetitorCandidate
+      await db.discoveryJob.deleteMany({
+        where: { shopifyProductId: productId },
+      });
+      await db.competitorCandidate.deleteMany({
+        where: { shopifyProductId: productId },
+      });
+
+      // 7. Delete ScrapedProducts and related data
+      const scrapedProducts = await db.scrapedProduct.findMany({
+        where: { CompetitorCandidate: { some: { shopifyProductId: productId } } },
+        select: { id: true },
+      });
+      const scrapedIds = scrapedProducts.map((s) => s.id);
+
+      if (scrapedIds.length > 0) {
+        await db.scrapedVariant.deleteMany({
+          where: { productId: { in: scrapedIds } },
+        });
+        await db.productEmbedding.deleteMany({
+          where: { prodId: { in: scrapedIds } },
+        });
+        await db.scrapedProduct.deleteMany({
+          where: { id: { in: scrapedIds } },
+        });
+      }
+
+      // 8. Clear DP config on ShopifyProduct
+      await db.shopifyProduct.update({
+        where: { id: productId },
+        data: {
+          dynamicPricingEnabled: false,
+          frequencyInterval: null,
+          frequencyUnit: null,
+          floorPrice: null,
+          ceilingPrice: null,
+          pricingTier: "COMPETITIVE",
+          minPriceOverride: null,
+          maxPriceOverride: null,
+          searchQueryOverride: null,
+          listingExpansionCap: null,
+          discoveryNumResults: null,
+          basePrice: null,
+        },
+      });
+    } catch (error) {
+      console.error("Delete DP error:", error);
+      throw new Error(`Failed to delete dynamic pricing data: ${error.message}`);
+    }
   }
 
   return null;
@@ -669,6 +698,20 @@ export default function HomePage() {
     );
   };
 
+  const handleResume = (productId) => {
+    setLocalState((prev) => ({
+      ...prev,
+      [productId]: {
+        ...prev[productId],
+        dynamicPricingEnabled: true,
+      },
+    }));
+    fetcher.submit(
+      { intent: "resumeDynamic", productId },
+      { method: "POST" },
+    );
+  };
+
   const handleDeleteWithData = (productId) => {
     setDeleteConfirmId(productId);
   };
@@ -894,27 +937,31 @@ export default function HomePage() {
                                 zIndex: 100,
                                 minWidth: "140px",
                               }}>
-                                <button
-                                  onClick={() => {
-                                    handlePause(product.id);
-                                    setOpenMenuId(null);
-                                  }}
-                                  style={{
-                                    display: "block",
-                                    width: "100%",
-                                    padding: "8px 12px",
-                                    border: "none",
-                                    background: "none",
-                                    cursor: "pointer",
-                                    fontSize: "12px",
-                                    textAlign: "left",
-                                  }}
-                                  onMouseEnter={(e) => e.target.style.background = "#f5f5f5"}
-                                  onMouseLeave={(e) => e.target.style.background = "none"}
-                                >
-                                  Pause
-                                </button>
-                                <div style={{ borderTop: "1px solid #f0f0f0" }} />
+                                {local.frequencyUnit && local.frequencyUnit !== "never" && (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        handlePause(product.id);
+                                        setOpenMenuId(null);
+                                      }}
+                                      style={{
+                                        display: "block",
+                                        width: "100%",
+                                        padding: "8px 12px",
+                                        border: "none",
+                                        background: "none",
+                                        cursor: "pointer",
+                                        fontSize: "12px",
+                                        textAlign: "left",
+                                      }}
+                                      onMouseEnter={(e) => e.target.style.background = "#f5f5f5"}
+                                      onMouseLeave={(e) => e.target.style.background = "none"}
+                                    >
+                                      Pause
+                                    </button>
+                                    <div style={{ borderTop: "1px solid #f0f0f0" }} />
+                                  </>
+                                )}
                                 <button
                                   onClick={() => {
                                     handleDeleteWithData(product.id);
@@ -940,6 +987,8 @@ export default function HomePage() {
                             )}
                           </div>
                         </>
+                      ) : local.frequencyUnit && local.frequencyUnit !== "never" ? (
+                        <span style={{ background: "#FF9800", color: "white", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>Pause</span>
                       ) : (
                         <span style={{ background: "#ccc", color: "#666", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>OFF</span>
                       )}
@@ -948,6 +997,18 @@ export default function HomePage() {
                     <div style={{ width: "100px", fontSize: "12px" }}>
                       {isOn && local.frequencyUnit && local.frequencyUnit !== "never"
                         ? `${local.frequencyInterval || ""} ${local.frequencyUnit}`
+                        : !isOn && local.frequencyUnit && local.frequencyUnit !== "never"
+                        ? <s-button
+                            size="slim"
+                            variant="secondary"
+                            onClick={() => {
+                              handleResume(product.id);
+                              setOpenMenuId(null);
+                            }}
+                            style={{ fontSize: "11px" }}
+                          >
+                            Resume
+                          </s-button>
                         : "–"}
                     </div>
 
@@ -1221,7 +1282,11 @@ export default function HomePage() {
                               variant="primary"
                               onClick={() => submitOverrides(product.id, { enable: !isOn })}
                             >
-                              {isOn ? "Save changes" : "Save & Enable Dynamic Pricing"}
+                              {isOn
+                                ? "Save changes"
+                                : (local.frequencyUnit && local.frequencyUnit !== "" && local.frequencyUnit !== "never")
+                                ? "Save & Resume"
+                                : "Save & Enable Dynamic Pricing"}
                             </s-button>
                             <s-link href={`/app/stats/${encodeURIComponent(product.id)}`}>
                               Stats &amp; price history
