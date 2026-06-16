@@ -1,12 +1,7 @@
-import React from "react";
 import { useFetcher, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { Page, Layout, Box, BlockStack, Text } from "@shopify/polaris";
-
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
-import { MetricsSection } from "../components/matches/MetricsSection.jsx";
-import { ProductMatchCard } from "../components/matches/ProductMatchCard.jsx";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -137,88 +132,63 @@ export default function MatchesPage() {
   const { metrics, groups } = useLoaderData();
   const fetcher = useFetcher();
 
-  // Track expanded matches in local cache
-  const [matchesCache, setMatchesCache] = React.useState({});
-  const [pendingLoad, setPendingLoad] = React.useState(null);
-
   const act = (matchId, intent) =>
     fetcher.submit({ intent, matchId }, { method: "POST" });
 
-  const loadMatches = (productId, limit = 3) => {
-    if (matchesCache[productId]) return;
-    setPendingLoad({ productId, limit });
-    fetcher.load(`/app/matches/lazy?productId=${productId}&limit=${limit}`);
-  };
-
-  const loadAllMatches = (productId) => {
-    if (matchesCache[`${productId}-all`]) return;
-    setPendingLoad({ productId, limit: 999 });
-    fetcher.load(`/app/matches/lazy?productId=${productId}&limit=999`);
-  };
-
-  // Cache fetched matches
-  React.useEffect(() => {
-    if (fetcher.data?.matches && fetcher.state === "idle" && pendingLoad) {
-      const cacheKey = pendingLoad.limit === 999 ? `${pendingLoad.productId}-all` : pendingLoad.productId;
-      setMatchesCache((prev) => ({
-        ...prev,
-        [cacheKey]: fetcher.data.matches,
-      }));
-      setPendingLoad(null);
-    }
-  }, [fetcher.data, fetcher.state, pendingLoad]);
-
   return (
-    <Page title="Matched competitors">
-      <Layout>
-        <Layout.Section>
-          <MetricsSection
-            totalProducts={metrics.totalProducts}
-            pendingReviews={metrics.pendingReviews}
-            reviewPercentage={metrics.reviewPercentage}
-            avgConfidence={metrics.avgConfidence}
-          />
-        </Layout.Section>
+    <s-page heading="Matched competitors" subheading={`${groups.length} product${groups.length === 1 ? "" : "s"} with matches`}>
+      {groups.length === 0 ? (
+        <s-section>
+          <s-stack direction="block" gap="tight" align="center">
+            <s-text emphasis="bold">No matches yet</s-text>
+            <s-text tone="subdued">
+              Enable Dynamic Pricing on a product to start discovering competitors.
+            </s-text>
+          </s-stack>
+        </s-section>
+      ) : (
+        groups.map((g) => (
+          <s-section key={g.id} heading={g.title}>
+            <s-stack direction="inline" gap="base" align="center">
+              {g.imageUrl && (
+                <img src={g.imageUrl} alt={g.title} width="48" height="48" style={{ objectFit: "cover", borderRadius: 4 }} />
+              )}
+              {g.merchantPrice && <s-text>Your price: ₹{g.merchantPrice}</s-text>}
+              <s-link href={`/app/product/${encodeURIComponent(g.id)}/activity`}>Match activity</s-link>
+            </s-stack>
 
-        <Layout.Section>
-          {groups.length === 0 ? (
-            <Box>
-              <Box padding="500">
-                <Text as="p" variant="headingMd" alignment="center">
-                  No matches yet
-                </Text>
-                <Text as="p" tone="subdued" alignment="center">
-                  Enable Dynamic Pricing on a product to start discovering competitors.
-                </Text>
-              </Box>
-            </Box>
-          ) : (
-            <BlockStack gap="400">
-              {groups.map((product) => (
-                <ProductMatchCard
-                  key={product.id}
-                  product={product}
-                  topMatch={product.topMatch}
-                  onConfirm={(matchId) => act(matchId, "confirm")}
-                  onReject={(matchId) => act(matchId, "reject")}
-                  onLoadMore={(productId, limit) =>
-                    limit === null ? loadAllMatches(productId) : loadMatches(productId, limit)
-                  }
-                  expandedMatches={
-                    matchesCache[product.id]?.slice(0, 3) ||
-                    matchesCache[`${product.id}-all`] ||
-                    []
-                  }
-                  allMatchesCount={product.matchCount}
-                  isLoading={fetcher.state === "loading"}
-                  showAllMatches={!!matchesCache[`${product.id}-all`]}
-                />
-              ))}
-            </BlockStack>
-          )}
-        </Layout.Section>
-      </Layout>
-    </Page>
+            <s-resource-list>
+              {g.topMatch && (
+                <s-resource-item key={g.topMatch.id} id={g.topMatch.id}>
+                  {g.topMatch.scrapedImageUrl && (
+                    <img slot="media" src={g.topMatch.scrapedImageUrl} alt={g.topMatch.scrapedTitle} width="50" height="50" style={{ objectFit: "cover", borderRadius: 4 }} />
+                  )}
+                  <s-stack direction="block" gap="tight">
+                    <s-stack direction="inline" gap="base" align="center">
+                      <s-text emphasis="bold">{g.topMatch.scrapedTitle}</s-text>
+                      <s-badge>{g.topMatch.scrapedDomain}</s-badge>
+                      <s-badge tone={g.topMatch.confidenceTier === "CONFIRMED" ? "success" : "info"}>
+                        {g.topMatch.confidenceTier} ({(g.topMatch.confidence * 100).toFixed(0)}%)
+                      </s-badge>
+                      {g.topMatch.confirmedByMerchant && <s-badge tone="success">Confirmed</s-badge>}
+                    </s-stack>
+                    <s-stack direction="inline" gap="loose" align="center">
+                      {g.topMatch.competitorPrice && <s-text>Their price: ₹{g.topMatch.competitorPrice}</s-text>}
+                      {g.topMatch.competitorUrl && (
+                        <s-link href={g.topMatch.competitorUrl} target="_blank">Open</s-link>
+                      )}
+                      {g.matchCount > 1 && (
+                        <s-link href={`/app/product/${encodeURIComponent(g.id)}/all-matches`}>View all {g.matchCount} competitors</s-link>
+                      )}
+                    </s-stack>
+                  </s-stack>
+                </s-resource-item>
+              )}
+            </s-resource-list>
+          </s-section>
+        ))
+      )}
+    </s-page>
   );
 }
 
