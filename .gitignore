@@ -81,3 +81,4 @@ docs/superpowers/
 .pytest_cache
 
 /scripts
+shopify_ui/prisma/dev.db

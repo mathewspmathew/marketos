@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, Text, Button, Stack, Box } from "@shopify/polaris";
+import { Card, Text, Button, BlockStack, InlineStack, Box } from "@shopify/polaris";
 import { ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { MatchItemList } from "./MatchItemList.jsx";
 
@@ -30,11 +30,11 @@ export function ProductMatchCard({
   return (
     <Card>
       <Box padding="500">
-        <Stack gap="400">
+        <BlockStack gap="400">
           {/* Product Header (Always Visible) */}
           <Box borderBottomWidth="1" borderColor="border" paddingBlockEnd="300">
-            <Stack gap="300" wrap={false} align="space-between">
-              <Stack gap="300" wrap={false} align="center" grow>
+            <InlineStack gap="300" wrap={false} align="space-between">
+              <InlineStack gap="300" wrap={false} align="center" grow>
                 {product.imageUrl && (
                   <Box minWidth="80px" minHeight="80px">
                     <img
@@ -46,7 +46,7 @@ export function ProductMatchCard({
                     />
                   </Box>
                 )}
-                <Stack gap="100" grow>
+                <BlockStack gap="100" grow>
                   <Text as="p" variant="headingMd">{product.title}</Text>
                   {product.merchantPrice && (
                     <Text as="p" tone="subdued">
@@ -58,8 +58,8 @@ export function ProductMatchCard({
                       {allMatchesCount} competitor{allMatchesCount !== 1 ? "s" : ""} found
                     </Text>
                   )}
-                </Stack>
-              </Stack>
+                </BlockStack>
+              </InlineStack>
 
               {/* Expand/Collapse Button */}
               {allMatchesCount > 0 && (
@@ -70,7 +70,7 @@ export function ProductMatchCard({
                   accessibilityLabel={isExpanded ? "Collapse matches" : "Expand matches"}
                 />
               )}
-            </Stack>
+            </InlineStack>
           </Box>
 
           {/* Top Match (Always shown when available) */}
@@ -144,7 +144,7 @@ export function ProductMatchCard({
               </Button>
             </Box>
           )}
-        </Stack>
+        </BlockStack>
       </Box>
     </Card>
   );
