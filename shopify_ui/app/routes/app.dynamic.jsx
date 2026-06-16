@@ -31,11 +31,11 @@ export const loader = async ({ request }) => {
     },
     orderBy: [{ confidence: "desc" }],
     include: {
-      shopifyProduct: {
+      ShopifyProduct: {
         select: {
           id: true, title: true, vendor: true, imageUrl: true,
           dynamicPricingEnabled: true,
-          variants: {
+          ShopifyVariant: {
             select: {
               id: true, title: true, currentPrice: true,
               autoPriceEnabled: true, inventoryQuantity: true,
@@ -55,10 +55,10 @@ export const loader = async ({ request }) => {
           },
         },
       },
-      scrapedProduct: {
+      ScrapedProduct: {
         select: {
           id: true, title: true, domain: true, imageUrl: true,
-          variants: {
+          ScrapedVariant: {
             select: { id: true, title: true, currentPrice: true,
                       isInStock: true },
             orderBy: { currentPrice: "asc" },
@@ -74,13 +74,13 @@ export const loader = async ({ request }) => {
   // collect every confirmed competitor under it for the expanded panel.
   const byProduct = new Map();
   for (const m of matches) {
-    const sp = m.shopifyProduct;
-    const cp = m.scrapedProduct;
+    const sp = m.ShopifyProduct;
+    const cp = m.ScrapedProduct;
     // Don't filter out products with no active variants — they belong on the
     // "Paused" tab so the merchant can turn them back on without hunting.
 
     if (!byProduct.has(sp.id)) {
-      const variants = sp.variants.map((v) => ({
+      const variants = sp.ShopifyVariant.map((v) => ({
         id:               v.id,
         title:            v.title,
         currentPrice:     Number(v.currentPrice),
@@ -124,9 +124,9 @@ export const loader = async ({ request }) => {
       title:      cp.title,
       domain:     cp.domain,
       imageUrl:   cp.imageUrl,
-      minPrice:   cp.variants[0]?.currentPrice != null
-                    ? Number(cp.variants[0].currentPrice) : null,
-      inStock:    cp.variants[0]?.isInStock ?? null,
+      minPrice:   cp.ScrapedVariant[0]?.currentPrice != null
+                    ? Number(cp.ScrapedVariant[0].currentPrice) : null,
+      inStock:    cp.ScrapedVariant[0]?.isInStock ?? null,
     });
   }
 
@@ -183,7 +183,7 @@ export const action = async ({ request }) => {
     const enabled   = fd.get("enabled") === "true";
     if (!variantId) return { ok: false, error: "missing_variantId" };
     await db.shopifyVariant.updateMany({
-      where: { id: variantId, product: { shopDomain: shop } },
+      where: { id: variantId, ShopifyProduct: { shopDomain: shop } },
       data:  { autoPriceEnabled: enabled },
     });
     return { ok: true, intent };

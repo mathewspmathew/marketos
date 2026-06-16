@@ -17,12 +17,12 @@ export const loader = async ({ request }) => {
       confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
     },
     include: {
-      shopifyProduct: {
-        include: { variants: { take: 1 } },
+      ShopifyProduct: {
+        include: { ShopifyVariant: { take: 1 } },
       },
-      scrapedProduct: {
+      ScrapedProduct: {
         include: {
-          variants: {
+          ScrapedVariant: {
             orderBy: { updatedAt: "desc" },
             take: 1,
           },
@@ -35,19 +35,19 @@ export const loader = async ({ request }) => {
   // Group by Shopify product.
   const byProduct = new Map();
   for (const m of matches) {
-    const sp = m.shopifyProduct;
+    const sp = m.ShopifyProduct;
     if (!sp) continue;
     if (!byProduct.has(sp.id)) {
       byProduct.set(sp.id, {
         id: sp.id,
         title: sp.title,
         imageUrl: sp.imageUrl,
-        merchantPrice: sp.variants[0]?.currentPrice?.toString() ?? null,
+        merchantPrice: sp.ShopifyVariant[0]?.currentPrice?.toString() ?? null,
         matches: [],
       });
     }
-    const scraped = m.scrapedProduct;
-    const variant = scraped?.variants[0];
+    const scraped = m.ScrapedProduct;
+    const variant = scraped?.ScrapedVariant[0];
     byProduct.get(sp.id).matches.push({
       id: m.id,
       confidence:     Number(m.confidence),

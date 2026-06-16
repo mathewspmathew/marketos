@@ -47,7 +47,7 @@ export const loader = async ({ request }) => {
 
   const existing = await db.shopSettings.findUnique({ where: { shopDomain } });
   const s = existing ?? (await db.shopSettings.create({
-    data: { shopDomain, ...DEFAULTS },
+    data: { shopDomain, ...DEFAULTS, updatedAt: new Date() },
   }));
 
   return {
@@ -133,7 +133,7 @@ export const action = async ({ request }) => {
   await db.shopSettings.upsert({
     where: { shopDomain },
     update: data,
-    create: { shopDomain, ...data, marketplaceBlocklist: blocklist },
+    create: { shopDomain, ...data, marketplaceBlocklist: blocklist, updatedAt: new Date() },
   });
 
   if (autoRescrapeTurnedOn) {

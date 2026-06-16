@@ -79,6 +79,7 @@ export const action = async ({ request }) => {
           barcode:           v.barcode ?? null,
           options,
           inventoryQuantity: v.inventory_quantity ?? null,
+          updatedAt:         new Date(),
         },
       });
     }

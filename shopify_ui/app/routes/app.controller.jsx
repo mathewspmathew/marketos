@@ -64,6 +64,7 @@ export const action = async ({ request }) => {
         productLimit: isNaN(productLimit) ? null : productLimit,
         frequencyInterval,
         frequencyUnit,
+        updatedAt: new Date(),
       },
     });
   } else if (intent === "stopRescraping") {

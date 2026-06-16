@@ -16,11 +16,11 @@ export const loader = async ({ request }) => {
 
   // Variant + product totals
   const totalVariants = await db.shopifyVariant.count({
-    where: { product: { shopDomain: shop } },
+    where: { ShopifyProduct: { shopDomain: shop } },
   });
 
   const autoVariants = await db.shopifyVariant.count({
-    where: { product: { shopDomain: shop }, autoPriceEnabled: true },
+    where: { ShopifyProduct: { shopDomain: shop }, autoPriceEnabled: true },
   });
 
   const totalProducts = await db.shopifyProduct.count({
@@ -91,10 +91,10 @@ export const loader = async ({ request }) => {
     orderBy: { appliedAt: "desc" },
     take: 10,
     include: {
-      variant: {
+      ShopifyVariant: {
         select: {
           id: true, title: true,
-          product: { select: { title: true } },
+          ShopifyProduct: { select: { title: true } },
         },
       },
     },
@@ -127,8 +127,8 @@ export const loader = async ({ request }) => {
       oldPrice:  Number(c.oldPrice),
       newPrice:  Number(c.newPrice),
       reverted:  !!c.revertedAt,
-      variantId: c.variant?.id,
-      title:     c.variant ? `${c.variant.product.title} — ${c.variant.title}` : "(deleted)",
+      variantId: c.ShopifyVariant?.id,
+      title:     c.ShopifyVariant ? `${c.ShopifyVariant.ShopifyProduct.title} — ${c.ShopifyVariant.title}` : "(deleted)",
     })),
   };
 };

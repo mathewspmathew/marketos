@@ -34,7 +34,7 @@ export const loader = async ({ request }) => {
   // Only show products that have at least one variant — variant-less products
   // can't be priced anyway.
   const products = await db.shopifyProduct.findMany({
-    where: { shopDomain: shop, variants: { some: {} } },
+    where: { shopDomain: shop, ShopifyVariant: { some: {} } },
     orderBy: { title: "asc" },
     select: { id: true, title: true, vendor: true, imageUrl: true },
     take: 500,

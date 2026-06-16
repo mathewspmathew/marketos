@@ -22,22 +22,22 @@ export const loader = async ({ request }) => {
     orderBy: [{ confidence: "desc" }, { createdAt: "desc" }],
     take: 50,
     include: {
-      shopifyProduct: {
+      ShopifyProduct: {
         select: {
           id: true, title: true, vendor: true, productType: true,
           imageUrl: true, categoryTop: true, productGender: true,
-          variants: {
+          ShopifyVariant: {
             select: { id: true, title: true, currentPrice: true, imageUrl: true },
             orderBy: { currentPrice: "asc" },
             take: 1,
           },
         },
       },
-      scrapedProduct: {
+      ScrapedProduct: {
         select: {
           id: true, title: true, vendor: true, productType: true, domain: true,
           imageUrl: true, categoryTop: true, productGender: true,
-          variants: {
+          ScrapedVariant: {
             select: { id: true, title: true, currentPrice: true },
             orderBy: { currentPrice: "asc" },
             take: 1,
@@ -69,17 +69,17 @@ export const loader = async ({ request }) => {
       confidence:         Number(p.confidence),
       createdAt:          p.createdAt,
       shopifyProduct: {
-        ...p.shopifyProduct,
-        sampleVariant: p.shopifyProduct.variants[0]
-          ? { ...p.shopifyProduct.variants[0],
-              currentPrice: Number(p.shopifyProduct.variants[0].currentPrice) }
+        ...p.ShopifyProduct,
+        sampleVariant: p.ShopifyProduct.ShopifyVariant[0]
+          ? { ...p.ShopifyProduct.ShopifyVariant[0],
+              currentPrice: Number(p.ShopifyProduct.ShopifyVariant[0].currentPrice) }
           : null,
       },
       scrapedProduct: {
-        ...p.scrapedProduct,
-        sampleVariant: p.scrapedProduct.variants[0]
-          ? { ...p.scrapedProduct.variants[0],
-              currentPrice: Number(p.scrapedProduct.variants[0].currentPrice) }
+        ...p.ScrapedProduct,
+        sampleVariant: p.ScrapedProduct.ScrapedVariant[0]
+          ? { ...p.ScrapedProduct.ScrapedVariant[0],
+              currentPrice: Number(p.ScrapedProduct.ScrapedVariant[0].currentPrice) }
           : null,
       },
     })),

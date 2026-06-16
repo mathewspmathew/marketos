@@ -343,6 +343,99 @@ export const action = async ({ request }) => {
         data: { nextRunAt: new Date() },
       });
     }
+  } else if (intent === "pauseDynamic") {
+    // Pause DP but keep all config intact — just disable the flag.
+    // If frequency is set, rescraping will stop on next beat tick.
+    await db.shopifyProduct.update({
+      where: { id: productId },
+      data: { dynamicPricingEnabled: false },
+    });
+  } else if (intent === "deleteDynamicWithData") {
+    // Completely delete DP and all related data.
+    // 1. Delete scraped products & variants for this product
+    const scraped = await db.scrapedProduct.findMany({
+      where: { parentShopifyProductId: productId },
+      select: { id: true },
+    });
+    for (const s of scraped) {
+      await db.scrapedVariant.deleteMany({
+        where: { scrapedProductId: s.id },
+      });
+      await db.productEmbedding.deleteMany({
+        where: { scrapedProductId: s.id },
+      });
+    }
+    await db.scrapedProduct.deleteMany({
+      where: { parentShopifyProductId: productId },
+    });
+
+    // 2. Delete matches
+    await db.productMatch.deleteMany({
+      where: { shopifyProductId: productId },
+    });
+    await db.productLevelMatch.deleteMany({
+      where: { shopifyProductId: productId },
+    });
+
+    // 3. Delete price observations & suggestions
+    await db.variantCompetitorStats.deleteMany({
+      where: { shopifyVariantId: { in: (await db.shopifyVariant.findMany({
+        where: { shopifyProductId: productId },
+        select: { id: true },
+      })).map((v) => v.id) } },
+    });
+    await db.competitorPriceObservation.deleteMany({
+      where: { shopifyVariantId: { in: (await db.shopifyVariant.findMany({
+        where: { shopifyProductId: productId },
+        select: { id: true },
+      })).map((v) => v.id) } },
+    });
+    await db.productSuggestion.deleteMany({
+      where: { shopifyProductId: productId },
+    });
+    await db.priceDecision.deleteMany({
+      where: { shopifyProductId: productId },
+    });
+
+    // 4. Delete scraping & discovery configs
+    const configs = await db.scrapingConfig.findMany({
+      where: { shopifyProductId: productId },
+      select: { id: true },
+    });
+    for (const cfg of configs) {
+      await db.productUrl.deleteMany({
+        where: { scrapingConfigId: cfg.id },
+      });
+    }
+    await db.scrapingConfig.deleteMany({
+      where: { shopifyProductId: productId },
+    });
+
+    await db.discoveryJob.deleteMany({
+      where: { shopifyProductId: productId },
+    });
+    await db.competitorCandidate.deleteMany({
+      where: { shopifyProductId: productId },
+    });
+
+    // 5. Clear DP config and all settings
+    await db.shopifyProduct.update({
+      where: { id: productId },
+      data: {
+        dynamicPricingEnabled: false,
+        frequencyInterval: null,
+        frequencyUnit: null,
+        floorPrice: null,
+        ceilingPrice: null,
+        pricingTier: "COMPETITIVE",
+        minPriceOverride: null,
+        maxPriceOverride: null,
+        searchQueryOverride: null,
+        listingExpansionCap: null,
+        discoveryNumResults: null,
+        basePrice: null,
+      },
+    });
   }
 
   return null;
@@ -378,6 +471,8 @@ export default function HomePage() {
   const [cachedTimestamp, setCachedTimestamp] = useState(null);
   const [hasFetched, setHasFetched] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const itemsPerPage = 20;
 
   const [localState, setLocalState] = useState(() => {
@@ -560,6 +655,49 @@ export default function HomePage() {
     }
   };
 
+  const handlePause = (productId) => {
+    setLocalState((prev) => ({
+      ...prev,
+      [productId]: {
+        ...prev[productId],
+        dynamicPricingEnabled: false,
+      },
+    }));
+    fetcher.submit(
+      { intent: "pauseDynamic", productId },
+      { method: "POST" },
+    );
+  };
+
+  const handleDeleteWithData = (productId) => {
+    setDeleteConfirmId(productId);
+  };
+
+  const confirmDelete = (productId) => {
+    setLocalState((prev) => ({
+      ...prev,
+      [productId]: {
+        ...prev[productId],
+        dynamicPricingEnabled: false,
+        frequencyInterval: "",
+        frequencyUnit: "",
+        floorPrice: "",
+        ceilingPrice: "",
+        pricingTier: "COMPETITIVE",
+        minPriceOverride: "",
+        maxPriceOverride: "",
+        searchQueryOverride: "",
+        listingExpansionCap: "",
+        discoveryNumResults: "",
+      },
+    }));
+    fetcher.submit(
+      { intent: "deleteDynamicWithData", productId },
+      { method: "POST" },
+    );
+    setDeleteConfirmId(null);
+  };
+
   const handleRescrapeToggle = (productId, currentlyOn) => {
     const nextUnit = currentlyOn ? "never" : "hour";
     setLocalState((prev) => {
@@ -731,9 +869,77 @@ export default function HomePage() {
 
                     <div style={{ width: "70px", fontWeight: "500" }}>${product.price}</div>
 
-                    <div style={{ width: "80px" }}>
+                    <div style={{ width: "80px", display: "flex", gap: "6px", alignItems: "center" }}>
                       {isOn ? (
-                        <span style={{ background: "#4CAF50", color: "white", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>ON</span>
+                        <>
+                          <span style={{ background: "#4CAF50", color: "white", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>ON</span>
+                          <div style={{ position: "relative" }}>
+                            <s-button
+                              variant="plain"
+                              size="slim"
+                              onClick={() => setOpenMenuId(openMenuId === product.id ? null : product.id)}
+                              style={{ fontSize: "10px", padding: "0 4px" }}
+                            >
+                              ⋮
+                            </s-button>
+                            {openMenuId === product.id && (
+                              <div style={{
+                                position: "absolute",
+                                top: "100%",
+                                right: 0,
+                                background: "white",
+                                border: "1px solid #ddd",
+                                borderRadius: "4px",
+                                boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                                zIndex: 100,
+                                minWidth: "140px",
+                              }}>
+                                <button
+                                  onClick={() => {
+                                    handlePause(product.id);
+                                    setOpenMenuId(null);
+                                  }}
+                                  style={{
+                                    display: "block",
+                                    width: "100%",
+                                    padding: "8px 12px",
+                                    border: "none",
+                                    background: "none",
+                                    cursor: "pointer",
+                                    fontSize: "12px",
+                                    textAlign: "left",
+                                  }}
+                                  onMouseEnter={(e) => e.target.style.background = "#f5f5f5"}
+                                  onMouseLeave={(e) => e.target.style.background = "none"}
+                                >
+                                  Pause
+                                </button>
+                                <div style={{ borderTop: "1px solid #f0f0f0" }} />
+                                <button
+                                  onClick={() => {
+                                    handleDeleteWithData(product.id);
+                                    setOpenMenuId(null);
+                                  }}
+                                  style={{
+                                    display: "block",
+                                    width: "100%",
+                                    padding: "8px 12px",
+                                    border: "none",
+                                    background: "none",
+                                    cursor: "pointer",
+                                    fontSize: "12px",
+                                    textAlign: "left",
+                                    color: "#d32f2f",
+                                  }}
+                                  onMouseEnter={(e) => e.target.style.background = "#ffebee"}
+                                  onMouseLeave={(e) => e.target.style.background = "none"}
+                                >
+                                  Delete with Data
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </>
                       ) : (
                         <span style={{ background: "#ccc", color: "#666", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>OFF</span>
                       )}
@@ -1066,6 +1272,63 @@ export default function HomePage() {
               >
                 Next →
               </s-button>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {deleteConfirmId && (
+          <div style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}>
+            <div style={{
+              background: "white",
+              borderRadius: "8px",
+              padding: "24px",
+              maxWidth: "400px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            }}>
+              <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: "600" }}>
+                Delete Dynamic Pricing?
+              </h3>
+              <p style={{ margin: "0 0 20px 0", fontSize: "14px", color: "#666" }}>
+                This will permanently delete all dynamic pricing configuration, competitor matches, and scraped product data for this product. This action cannot be undone.
+              </p>
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                <button
+                  onClick={() => setDeleteConfirmId(null)}
+                  style={{
+                    padding: "8px 16px",
+                    border: "1px solid #ddd",
+                    borderRadius: "4px",
+                    background: "white",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => confirmDelete(deleteConfirmId)}
+                  style={{
+                    padding: "8px 16px",
+                    border: "none",
+                    borderRadius: "4px",
+                    background: "#d32f2f",
+                    color: "white",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                  }}
+                >
+                  Delete with Data
+                </button>
+              </div>
             </div>
           </div>
         )}

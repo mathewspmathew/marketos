@@ -23,14 +23,14 @@ export const loader = async ({ request, params }) => {
 
   const product = await db.shopifyProduct.findFirst({
     where: { id: productId, shopDomain },
-    include: { variants: { select: { id: true, title: true, currentPrice: true, basePrice: true } } },
+    include: { ShopifyVariant: { select: { id: true, title: true, currentPrice: true, basePrice: true } } },
   });
   if (!product) throw new Response("Product not found", { status: 404 });
 
   const decisions = await db.priceDecision.findMany({
     where: {
       shopDomain,
-      shopifyVariantId: { in: product.variants.map((v) => v.id) },
+      shopifyVariantId: { in: product.ShopifyVariant.map((v) => v.id) },
     },
     orderBy: { decidedAt: "desc" },
     take: 100,
@@ -51,13 +51,13 @@ export const loader = async ({ request, params }) => {
     orderBy: { confidence: "desc" },
     take: 8,
     include: {
-      scrapedProduct: {
-        select: { title: true, domain: true, variants: { select: { id: true } } },
+      ScrapedProduct: {
+        select: { title: true, domain: true, ScrapedVariant: { select: { id: true } } },
       },
     },
   });
 
-  const competitorVariantIds = matches.flatMap((m) => m.scrapedProduct.variants.map((v) => v.id));
+  const competitorVariantIds = matches.flatMap((m) => m.ScrapedProduct.ScrapedVariant.map((v) => v.id));
   const since = new Date(Date.now() - DAYS * 24 * 3600 * 1000);
   const observations = competitorVariantIds.length === 0
     ? []
@@ -69,11 +69,11 @@ export const loader = async ({ request, params }) => {
 
   const variantToProduct = new Map();
   for (const m of matches) {
-    for (const v of m.scrapedProduct.variants) {
+    for (const v of m.ScrapedProduct.ScrapedVariant) {
       variantToProduct.set(v.id, {
         id: m.scrapedProductId,
-        title: m.scrapedProduct.title,
-        domain: m.scrapedProduct.domain,
+        title: m.ScrapedProduct.title,
+        domain: m.ScrapedProduct.domain,
         confidence: Number(m.confidence),
       });
     }
@@ -106,7 +106,7 @@ export const loader = async ({ request, params }) => {
       tier: product.pricingTier,
       basePrice: product.basePrice?.toString() ?? null,
       adminProductUrl,
-      variants: product.variants.map((v) => ({
+      variants: product.ShopifyVariant.map((v) => ({
         id: v.id, title: v.title,
         currentPrice: Number(v.currentPrice),
         basePrice: v.basePrice ? Number(v.basePrice) : null,

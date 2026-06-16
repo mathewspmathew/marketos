@@ -21,8 +21,8 @@ export const loader = async ({ request }) => {
 
   // All variants for this shop, plus product context.
   const variants = await db.shopifyVariant.findMany({
-    where: { product: { shopDomain: shop } },
-    orderBy: [{ product: { title: "asc" } }, { title: "asc" }],
+    where: { ShopifyProduct: { shopDomain: shop } },
+    orderBy: [{ ShopifyProduct: { title: "asc" } }, { title: "asc" }],
     select: {
       id: true,
       title: true,
@@ -31,10 +31,10 @@ export const loader = async ({ request }) => {
       useMlSuggestion: true,
       inventoryQuantity: true,
       imageUrl: true,
-      product: {
+      ShopifyProduct: {
         select: {
           id: true, title: true, vendor: true, imageUrl: true,
-          productLevelMatches: {
+          ProductLevelMatch: {
             where: { confidenceTier: "CONFIRMED" },
             select: { id: true },
             take: 1,
@@ -42,7 +42,7 @@ export const loader = async ({ request }) => {
         },
       },
       // Most-recent decision (any state) for the snapshot row.
-      priceDecisions: {
+      PriceDecision: {
         orderBy: { decidedAt: "desc" },
         take: 2,
         select: {
@@ -53,14 +53,14 @@ export const loader = async ({ request }) => {
           mlSuggestedPrice: true, mlConfidence: true, modelVersion: true,
         },
       },
-      competitorStats: {
+      VariantCompetitorStats: {
         select: { competitorCount: true, weightedMin: true, weightedMedian: true,
                   lastUpdatedAt: true },
       },
       // Mapped competitors for the "what are we pricing against?" panel.
       // Confidence-ordered so the most trustworthy mappings show first;
       // dismissed/unbound rows are filtered out at the SQL level.
-      productMatches: {
+      ProductMatch: {
         where: { competitorVariantId: { not: null }, dismissedAt: null },
         orderBy: [{ confidence: "desc" }, { matchScore: "desc" }],
         take: 5,
@@ -68,10 +68,10 @@ export const loader = async ({ request }) => {
           id: true,
           confidenceTier: true,
           confidence: true,
-          competitorVariant: {
+          ScrapedVariant: {
             select: {
               id: true, title: true, currentPrice: true,
-              product: { select: { title: true, domain: true } },
+              ScrapedProduct: { select: { title: true, domain: true } },
             },
           },
         },
@@ -80,17 +80,17 @@ export const loader = async ({ request }) => {
   });
 
   const rows = variants.map((v) => {
-    const lastDec = v.priceDecisions[0] || null;
+    const lastDec = v.PriceDecision[0] || null;
     // Most-recent decision that actually got pushed to Shopify (replaces
     // the old PriceChange lookup — appliedAt != NULL is the signal).
-    const lastApplied = v.priceDecisions.find((d) => d.appliedAt) || null;
-    const hasConfirmed = v.product.productLevelMatches.length > 0;
+    const lastApplied = v.PriceDecision.find((d) => d.appliedAt) || null;
+    const hasConfirmed = v.ShopifyProduct.ProductLevelMatch.length > 0;
     return {
       id:                v.id,
       title:             v.title,
-      productTitle:      v.product.title,
-      productVendor:     v.product.vendor,
-      imageUrl:          v.imageUrl || v.product.imageUrl,
+      productTitle:      v.ShopifyProduct.title,
+      productVendor:     v.ShopifyProduct.vendor,
+      imageUrl:          v.imageUrl || v.ShopifyProduct.imageUrl,
       currentPrice:      Number(v.currentPrice),
       autoPriceEnabled:  v.autoPriceEnabled,      useMlSuggestion:   v.useMlSuggestion,
       inventoryQuantity: v.inventoryQuantity,
@@ -114,26 +114,26 @@ export const loader = async ({ request }) => {
         newPrice:   Number(lastApplied.newPrice),
         revertedAt: lastApplied.revertedAt,
       } : null,
-      stats: v.competitorStats ? {
-        competitorCount: v.competitorStats.competitorCount,
-        weightedMin:     v.competitorStats.weightedMin != null
-          ? Number(v.competitorStats.weightedMin) : null,
-        weightedMedian:  v.competitorStats.weightedMedian != null
-          ? Number(v.competitorStats.weightedMedian) : null,
-        lastUpdatedAt:   v.competitorStats.lastUpdatedAt,
+      stats: v.VariantCompetitorStats ? {
+        competitorCount: v.VariantCompetitorStats.competitorCount,
+        weightedMin:     v.VariantCompetitorStats.weightedMin != null
+          ? Number(v.VariantCompetitorStats.weightedMin) : null,
+        weightedMedian:  v.VariantCompetitorStats.weightedMedian != null
+          ? Number(v.VariantCompetitorStats.weightedMedian) : null,
+        lastUpdatedAt:   v.VariantCompetitorStats.lastUpdatedAt,
       } : null,
-      mappedCompetitors: v.productMatches
-        .filter((m) => m.competitorVariant)
+      mappedCompetitors: v.ProductMatch
+        .filter((m) => m.ScrapedVariant)
         .map((m) => ({
           id:             m.id,
           tier:           m.confidenceTier,
           confidence:     m.confidence != null ? Number(m.confidence) : null,
-          title:          m.competitorVariant.product.title,
-          variantTitle:   m.competitorVariant.title !== "Default Title"
-                            ? m.competitorVariant.title : null,
-          domain:         m.competitorVariant.product.domain,
-          competitorPrice: m.competitorVariant.currentPrice != null
-                            ? Number(m.competitorVariant.currentPrice) : null,
+          title:          m.ScrapedVariant.ScrapedProduct.title,
+          variantTitle:   m.ScrapedVariant.title !== "Default Title"
+                            ? m.ScrapedVariant.title : null,
+          domain:         m.ScrapedVariant.ScrapedProduct.domain,
+          competitorPrice: m.ScrapedVariant.currentPrice != null
+                            ? Number(m.ScrapedVariant.currentPrice) : null,
         })),
     };
   });
@@ -170,7 +170,7 @@ export const action = async ({ request }) => {
     const id = String(fd.get("id"));
     const enabled = fd.get("enabled") === "true";
     await db.shopifyVariant.updateMany({
-      where: { id, product: { shopDomain: shop } },
+      where: { id, ShopifyProduct: { shopDomain: shop } },
       data:  { autoPriceEnabled: enabled },
     });
     return { ok: true };
@@ -179,7 +179,7 @@ export const action = async ({ request }) => {
     const id = String(fd.get("id"));
     const enabled = fd.get("enabled") === "true";
     await db.shopifyVariant.updateMany({
-      where: { id, product: { shopDomain: shop } },
+      where: { id, ShopifyProduct: { shopDomain: shop } },
       data:  { useMlSuggestion: enabled },
     });
     return { ok: true };

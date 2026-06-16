@@ -10,19 +10,15 @@ export const loader = async ({ request }) => {
     const { session } = await authenticate.admin(request);
     const shop = session.shop;
 
-    // Consistency with other pages: pull the demo user id
-    const demoUserId = process.env.MARKETOS_DEMO_TENANT_ID || "00000000-0000-0000-0000-000000000001";
-    
-    // Fetch configs filtered by shop and current user
+    // Fetch configs filtered by shop
     const configs = await db.scrapingConfig.findMany({
-      where: { 
-        userId: demoUserId,
-        shopId: shop
+      where: {
+        shopDomain: shop
       },
       orderBy: { createdAt: "desc" },
     });
 
-    return { configs, shop, demoUserId };
+    return { configs, shop };
   } catch (error) {
     console.error("[Scraper Loader] Error:", error);
     throw error;
@@ -37,20 +33,16 @@ export const action = async ({ request }) => {
     const formData = await request.formData();
     const intent = formData.get("intent");
 
-    const demoUserId = process.env.MARKETOS_DEMO_TENANT_ID || "00000000-0000-0000-0000-000000000001";
-
     if (intent === "createScrape") {
       const competitorUrl = formData.get("competitorUrl");
       const productLimit = parseInt(formData.get("productLimit") || "5", 10);
 
       await db.scrapingConfig.create({
         data: {
-          userId: demoUserId,
-          shopId: shop,
+          shopDomain: shop,
           competitorUrl,
           productLimit,
-          status: "IDLE", // Defaults to IDLE for Celery Beat pick-up
-          isActive: true,
+          updatedAt: new Date(),
         },
       });
     }

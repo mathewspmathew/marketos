@@ -28,7 +28,7 @@ export const loader = async ({ request }) => {
     },
     include: {
       suggestion: true,
-      variants: true,
+      ShopifyVariant: true,
     },
     orderBy: { updatedAt: "desc" },
   });
@@ -36,7 +36,7 @@ export const loader = async ({ request }) => {
   const dec = (d) => (d == null ? null : d.toString());
   const cleaned = products.map((p) => ({
     ...p,
-    variants: p.variants.map((v) => ({
+    variants: p.ShopifyVariant.map((v) => ({
       ...v,
       currentPrice:   dec(v.currentPrice),
       compareAtPrice: dec(v.compareAtPrice),

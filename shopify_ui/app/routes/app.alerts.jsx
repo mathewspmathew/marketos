@@ -57,10 +57,10 @@ export const loader = async ({ request }) => {
     orderBy: { decidedAt: "desc" },
     take: 100,
     include: {
-      variant: {
+      ShopifyVariant: {
         select: {
           id: true, title: true,
-          product: { select: { title: true } },
+          ShopifyProduct: { select: { title: true } },
         },
       },
     },
@@ -91,10 +91,10 @@ export const loader = async ({ request }) => {
       payload:     a.shopifyResponse,
       createdAt:   a.decidedAt,
       dismissedAt: a.alertDismissedAt,
-      variant:     a.variant ? {
-        id:           a.variant.id,
-        title:        a.variant.title,
-        productTitle: a.variant.product.title,
+      variant:     a.ShopifyVariant ? {
+        id:           a.ShopifyVariant.id,
+        title:        a.ShopifyVariant.title,
+        productTitle: a.ShopifyVariant.ShopifyProduct.title,
       } : null,
     })),
     counts: {

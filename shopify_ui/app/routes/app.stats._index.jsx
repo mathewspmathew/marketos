@@ -23,13 +23,13 @@ export const loader = async ({ request }) => {
       imageUrl: true,
       pricingTier: true,
       basePrice: true,
-      variants: { select: { currentPrice: true }, take: 1 },
+      ShopifyVariant: { select: { currentPrice: true }, take: 1 },
     },
     orderBy: { lastDecisionAt: "desc" },
   });
 
   // One latest PriceDecision per product (via its first variant).
-  const variantIds = products.flatMap((p) => p.variants.map((v) => v.currentPrice ? p.id : null)).filter(Boolean);
+  const variantIds = products.flatMap((p) => p.ShopifyVariant.map((v) => v.currentPrice ? p.id : null)).filter(Boolean);
   const productIds = products.map((p) => p.id);
   const recent = productIds.length === 0 ? [] : await db.$queryRawUnsafe(`
     SELECT DISTINCT ON (v."productId")
@@ -62,7 +62,7 @@ export const loader = async ({ request }) => {
         title: p.title,
         imageUrl: p.imageUrl,
         tier: p.pricingTier,
-        currentPrice: p.variants[0]?.currentPrice?.toString() ?? null,
+        currentPrice: p.ShopifyVariant[0]?.currentPrice?.toString() ?? null,
         basePrice: p.basePrice?.toString() ?? null,
         lastDecisionAt: r?.decidedAt ? new Date(r.decidedAt).toISOString() : null,
         lastChangePct: r?.changePct ?? null,

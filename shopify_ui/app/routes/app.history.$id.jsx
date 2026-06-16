@@ -15,14 +15,14 @@ export const loader = async ({ request, params }) => {
 
   const product = await db.shopifyProduct.findFirst({
     where: { id: productId, shopDomain },
-    include: { variants: true },
+    include: { ShopifyVariant: true },
   });
   if (!product) {
     throw new Response("Product not found", { status: 404 });
   }
 
   const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const variantIds = product.variants.map((v) => v.id);
+  const variantIds = product.ShopifyVariant.map((v) => v.id);
 
   // Merchant-side timeline: PriceDecisions across the product's variants.
   const decisions = variantIds.length
@@ -41,17 +41,17 @@ export const loader = async ({ request, params }) => {
   const matches = await db.productLevelMatch.findMany({
     where: { shopDomain, shopifyProductId: productId, rejectedByMerchant: false },
     include: {
-      scrapedProduct: {
-        include: { variants: { select: { id: true } } },
+      ScrapedProduct: {
+        include: { ScrapedVariant: { select: { id: true } } },
       },
     },
   });
-  const competitorVariantIds = matches.flatMap((m) => m.scrapedProduct?.variants.map((v) => v.id) ?? []);
+  const competitorVariantIds = matches.flatMap((m) => m.ScrapedProduct?.ScrapedVariant.map((v) => v.id) ?? []);
   const competitorByDomain = new Map(
     matches
-      .filter((m) => m.scrapedProduct)
+      .filter((m) => m.ScrapedProduct)
       .flatMap((m) =>
-        m.scrapedProduct.variants.map((v) => [v.id, m.scrapedProduct.domain])
+        m.ScrapedProduct.ScrapedVariant.map((v) => [v.id, m.ScrapedProduct.domain])
       ),
   );
 

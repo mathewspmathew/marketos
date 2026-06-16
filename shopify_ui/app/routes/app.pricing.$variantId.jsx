@@ -31,20 +31,20 @@ export const loader = async ({ request, params }) => {
 
   // Variant + product + product's CONFIRMED match
   const variant = await db.shopifyVariant.findFirst({
-    where: { id: variantId, product: { shopDomain: shop } },
+    where: { id: variantId, ShopifyProduct: { shopDomain: shop } },
     select: {
       id: true, title: true, currentPrice: true, autoPriceEnabled: true,
       inventoryQuantity: true, cost: true,
-      product: {
+      ShopifyProduct: {
         select: {
           id: true, title: true, vendor: true,
-          productLevelMatches: {
+          ProductLevelMatch: {
             where: { confidenceTier: "CONFIRMED" },
             select: { id: true, scrapedProductId: true },
           },
         },
       },
-      competitorStats: {
+      VariantCompetitorStats: {
         select: { competitorCount: true, weightedMin: true,
                   weightedMedian: true, minPrice: true, maxPrice: true,
                   lastUpdatedAt: true },
@@ -92,10 +92,10 @@ export const loader = async ({ request, params }) => {
     where: { shopifyVariantId: variantId, competitorVariantId: { not: null } },
     select: {
       competitorVariantId: true,
-      competitorVariant: {
+      ScrapedVariant: {
         select: {
           id: true, title: true,
-          product: { select: { id: true, title: true, domain: true } },
+          ScrapedProduct: { select: { id: true, title: true, domain: true } },
         },
       },
     },
@@ -132,7 +132,7 @@ export const loader = async ({ request, params }) => {
     .filter((m) => obsByVariant[m.competitorVariantId]?.length)
     .map((m, i) => ({
       key:    `c${i}`,
-      label:  `${m.competitorVariant.product.domain} — ${m.competitorVariant.title}`,
+      label:  `${m.ScrapedVariant.ScrapedProduct.domain} — ${m.ScrapedVariant.title}`,
       color:  COMPETITOR_COLORS[i % COMPETITOR_COLORS.length],
       points: obsByVariant[m.competitorVariantId],
     }));
@@ -161,20 +161,20 @@ export const loader = async ({ request, params }) => {
     variant: {
       id:                variant.id,
       title:             variant.title,
-      productTitle:      variant.product.title,
-      productVendor:     variant.product.vendor,
+      productTitle:      variant.ShopifyProduct.title,
+      productVendor:     variant.ShopifyProduct.vendor,
       currentPrice:      Number(variant.currentPrice),
       cost:              variant.cost != null ? Number(variant.cost) : null,
       autoPriceEnabled:  variant.autoPriceEnabled,
       inventoryQuantity: variant.inventoryQuantity,
-      hasConfirmedMatch: variant.product.productLevelMatches.length > 0,
-      stats: variant.competitorStats ? {
-        competitorCount: variant.competitorStats.competitorCount,
-        weightedMin:     variant.competitorStats.weightedMin != null
-          ? Number(variant.competitorStats.weightedMin) : null,
-        weightedMedian:  variant.competitorStats.weightedMedian != null
-          ? Number(variant.competitorStats.weightedMedian) : null,
-        lastUpdatedAt:   variant.competitorStats.lastUpdatedAt,
+      hasConfirmedMatch: variant.ShopifyProduct.ProductLevelMatch.length > 0,
+      stats: variant.VariantCompetitorStats ? {
+        competitorCount: variant.VariantCompetitorStats.competitorCount,
+        weightedMin:     variant.VariantCompetitorStats.weightedMin != null
+          ? Number(variant.VariantCompetitorStats.weightedMin) : null,
+        weightedMedian:  variant.VariantCompetitorStats.weightedMedian != null
+          ? Number(variant.VariantCompetitorStats.weightedMedian) : null,
+        lastUpdatedAt:   variant.VariantCompetitorStats.lastUpdatedAt,
       } : null,
     },
     decisions: decisions.map((d) => ({
@@ -213,7 +213,7 @@ export const action = async ({ request, params }) => {
 
   // Ownership check shared by all intents.
   const variant = await db.shopifyVariant.findFirst({
-    where: { id: variantId, product: { shopDomain: shop } },
+    where: { id: variantId, ShopifyProduct: { shopDomain: shop } },
     select: { id: true, productId: true, currentPrice: true },
   });
   if (!variant) return { ok: false, error: "not_found" };
