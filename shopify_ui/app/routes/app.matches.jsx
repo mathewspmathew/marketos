@@ -205,7 +205,7 @@ export default function MatchesPage() {
               <s-button size="slim" onClick={() => toggleExpand(product.id)} variant={expandedProducts[product.id] ? "primary" : "plain"}>
                 {expandedProducts[product.id] ? "Collapse" : "Expand"}
               </s-button>
-              <s-link href={`/app/product/${encodeURIComponent(product.id)}/activity`}>Activity</s-link>
+              <s-link href={`/app/history/${encodeURIComponent(product.id)}`}>Activity</s-link>
             </s-stack>
 
             {/* Top Match (always shown) */}
