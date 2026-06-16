@@ -1,4 +1,4 @@
-import { Card, Stack, Badge, Box, Text } from "@shopify/polaris";
+import { Card, Badge, Box, Text } from "@shopify/polaris";
 import { CheckCircleIcon, XCircleIcon, StarIcon } from "@shopify/polaris-icons";
 
 export function MatchActivitySection({ activities = [] }) {
@@ -13,14 +13,14 @@ export function MatchActivitySection({ activities = [] }) {
   }
 
   return (
-    <Stack gap="200">
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
       {activities.map((activity, idx) => (
         <Card key={`${activity.matchId}-${idx}`}>
           <Box padding="400">
-            <Stack gap="200" wrap={false} align="space-between">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
               {/* Icon + Description */}
-              <Stack gap="200" wrap={false} align="center">
-                <Box minWidth="24px" minHeight="24px">
+              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start", flex: 1 }}>
+                <div style={{ minWidth: "24px", minHeight: "24px", marginTop: "2px" }}>
                   {activity.type === "confirmed" && (
                     <CheckCircleIcon color="success" />
                   )}
@@ -30,16 +30,16 @@ export function MatchActivitySection({ activities = [] }) {
                   {activity.type === "created" && (
                     <StarIcon color="info" />
                   )}
-                </Box>
-                <Stack gap="100" grow>
+                </div>
+                <div style={{ flex: 1 }}>
                   <Text as="p" variant="bodySm">
                     {activity.description}
                   </Text>
                   <Text as="p" variant="bodySm" tone="subdued">
                     {new Date(activity.timestamp).toLocaleString()}
                   </Text>
-                </Stack>
-              </Stack>
+                </div>
+              </div>
 
               {/* Status Badge */}
               <Badge
@@ -57,10 +57,10 @@ export function MatchActivitySection({ activities = [] }) {
                   ? "Rejected"
                   : "Discovered"}
               </Badge>
-            </Stack>
+            </div>
           </Box>
         </Card>
       ))}
-    </Stack>
+    </div>
   );
 }
