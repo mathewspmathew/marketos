@@ -3,6 +3,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { MatchActivitySection } from "../components/history/MatchActivitySection.jsx";
 
 // 30-day window, capped to keep the chart cheap.
 const WINDOW_DAYS = 30;
@@ -78,6 +79,52 @@ export const loader = async ({ request, params }) => {
     });
   }
 
+  // Match activity for this product
+  const matchActivity = await db.productLevelMatch.findMany({
+    where: {
+      shopDomain,
+      shopifyProductId: productId,
+      rejectedByMerchant: false,
+    },
+    include: {
+      ScrapedProduct: { select: { title: true, domain: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Convert matches to activity events
+  const matchEvents = matchActivity.flatMap((m) => {
+    const events = [];
+    if (m.createdAt) {
+      events.push({
+        matchId: m.id,
+        type: "created",
+        timestamp: m.createdAt,
+        description: `New competitor discovered: ${m.ScrapedProduct?.title} (${m.ScrapedProduct?.domain})`,
+      });
+    }
+    if (m.confirmedByMerchant && m.reviewedAt) {
+      events.push({
+        matchId: m.id,
+        type: "confirmed",
+        timestamp: m.reviewedAt,
+        description: `Confirmed match: ${m.ScrapedProduct?.title}`,
+      });
+    }
+    if (m.rejectedByMerchant && m.reviewedAt) {
+      events.push({
+        matchId: m.id,
+        type: "rejected",
+        timestamp: m.reviewedAt,
+        description: `Rejected match: ${m.ScrapedProduct?.title}`,
+      });
+    }
+    return events;
+  });
+
+  // Sort all events by timestamp desc
+  matchEvents.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
   return {
     product: { id: product.id, title: product.title, imageUrl: product.imageUrl },
     decisions: decisions.map((d) => ({
@@ -88,6 +135,7 @@ export const loader = async ({ request, params }) => {
       applied:  Boolean(d.appliedAt),
     })),
     competitorSeries: [...competitorSeries.entries()].map(([domain, pts]) => ({ domain, pts })),
+    matchActivity: matchEvents,
   };
 };
 
@@ -133,7 +181,7 @@ function PolyLine({ pts, width, height, tR, pR, stroke, dashed }) {
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#6366f1"];
 
 export default function HistoryPage() {
-  const { product, decisions, competitorSeries } = useLoaderData();
+  const { product, decisions, competitorSeries, matchActivity } = useLoaderData();
   const pR = priceRange(decisions, competitorSeries);
   const tR = timeRange(decisions, competitorSeries);
 
@@ -174,6 +222,10 @@ export default function HistoryPage() {
             </s-text>
           </s-stack>
         )}
+      </s-section>
+
+      <s-section heading="Match activity">
+        <MatchActivitySection activities={matchActivity} />
       </s-section>
 
       <s-section heading="Decisions">
