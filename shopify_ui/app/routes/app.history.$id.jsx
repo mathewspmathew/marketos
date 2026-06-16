@@ -3,7 +3,6 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
-import { MatchActivitySection } from "../components/history/MatchActivitySection.jsx";
 
 // 30-day window, capped to keep the chart cheap.
 const WINDOW_DAYS = 30;
@@ -225,7 +224,34 @@ export default function HistoryPage() {
       </s-section>
 
       <s-section heading="Match activity">
-        <MatchActivitySection activities={matchActivity} />
+        {matchActivity.length === 0 ? (
+          <s-text tone="subdued">No match activity yet.</s-text>
+        ) : (
+          <s-stack direction="block" gap="tight">
+            {matchActivity.map((activity, idx) => (
+              <div key={`${activity.matchId}-${idx}`} style={{ padding: "12px", borderRadius: "8px", border: "1px solid #e4e5e7" }}>
+                <s-stack direction="inline" gap="base" align="space-between">
+                  <s-stack direction="inline" gap="base" align="start">
+                    <div style={{ fontSize: "16px" }}>
+                      {activity.type === "confirmed" && "✓"}
+                      {activity.type === "rejected" && "✕"}
+                      {activity.type === "created" && "★"}
+                    </div>
+                    <s-stack direction="block" gap="tight">
+                      <s-text>{activity.description}</s-text>
+                      <s-text tone="subdued" style={{ fontSize: "12px" }}>
+                        {new Date(activity.timestamp).toLocaleString()}
+                      </s-text>
+                    </s-stack>
+                  </s-stack>
+                  <s-badge tone={activity.type === "confirmed" ? "success" : activity.type === "rejected" ? "critical" : "info"}>
+                    {activity.type === "confirmed" ? "Confirmed" : activity.type === "rejected" ? "Rejected" : "Discovered"}
+                  </s-badge>
+                </s-stack>
+              </div>
+            ))}
+          </s-stack>
+        )}
       </s-section>
 
       <s-section heading="Decisions">
