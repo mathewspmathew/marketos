@@ -1,17 +1,22 @@
 import { Card, Grid, Text, Box } from "@shopify/polaris";
 
 function MetricCard({ label, value, tone = "default" }) {
-  const textTone = tone === "success" ? "success"
-                 : tone === "critical" ? "critical"
-                 : undefined;
+  const shouldShowTone = tone === "success" || tone === "critical";
+  const displayTone = tone === "success" ? "success" : tone === "critical" ? "critical" : undefined;
 
   return (
     <Card>
       <Box padding="400">
         <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
-        <Text as="p" variant="headingMd" tone={textTone}>
-          {value}
-        </Text>
+        {shouldShowTone ? (
+          <Text as="p" variant="headingMd" tone={displayTone}>
+            {value}
+          </Text>
+        ) : (
+          <Text as="p" variant="headingMd">
+            {value}
+          </Text>
+        )}
       </Box>
     </Card>
   );
