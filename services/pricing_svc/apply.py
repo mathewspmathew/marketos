@@ -25,19 +25,40 @@ import os
 import requests
 from sqlalchemy import text
 
+from services.common.activity_logger import log_decision_applied, log_decision_failed
 from services.common.celery_app import app
 from services.common.db import get_db
 
 logger = logging.getLogger(__name__)
 
 
-def _stamp_error(session, decision_ids: list[str], err: str) -> None:
+def _stamp_error(session, decision_ids: list[str], err: str, shop_domain: str = "", pending: list[tuple] = None) -> None:
     if not decision_ids:
         return
     session.execute(
         text('UPDATE "PriceDecision" SET "applyError" = :e WHERE id = ANY(:ids)'),
         {"e": err[:500], "ids": decision_ids},
     )
+    # Log failures for activity tracking
+    if pending and shop_domain:
+        for did, vid, _ in pending:
+            if did in decision_ids:
+                try:
+                    # Try to fetch the product ID from the variant
+                    product_result = session.execute(
+                        text('SELECT "productId" FROM "ShopifyVariant" WHERE id = :v'),
+                        {"v": vid},
+                    ).scalar()
+                    product_id = product_result if product_result else ""
+                    log_decision_failed(
+                        shop_domain=shop_domain,
+                        price_decision_id=did,
+                        shopify_product_id=product_id,
+                        shopify_variant_id=vid,
+                        error_message=err[:500],
+                    )
+                except Exception as e:
+                    logger.exception(f"Failed to log decision failure: {e}")
 
 
 def _post_to_proxy(shop_domain: str, product_id: str, variants_input: list[dict]) -> dict:
@@ -95,7 +116,7 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
             proxy_result = _post_to_proxy(shop_domain, shopify_product_id, variants_input)
         except Exception as exc:
             msg = str(exc)
-            _stamp_error(session, [d for d, _, _ in pending], f"proxy_failed: {msg}")
+            _stamp_error(session, [d for d, _, _ in pending], f"proxy_failed: {msg}", shop_domain, pending)
             # 401 from the proxy → no Session row exists; pointless to retry
             # until the merchant reopens the app.
             if "401" in msg or "no_session_for_shop" in msg:
@@ -104,7 +125,7 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
 
         if not proxy_result.get("ok"):
             err = proxy_result.get("error") or proxy_result.get("reason") or "unknown"
-            _stamp_error(session, [d for d, _, _ in pending], f"proxy_returned_not_ok: {err}"[:500])
+            _stamp_error(session, [d for d, _, _ in pending], f"proxy_returned_not_ok: {err}"[:500], shop_domain, pending)
             return {"ok": False, "reason": err}
 
         # The proxy returns { ok: true, data: { productVariantsBulkUpdate: {...} } }
@@ -115,6 +136,8 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
                 session,
                 [d for d, _, _ in pending],
                 f"user_errors: {json.dumps(user_errors)[:400]}",
+                shop_domain,
+                pending,
             )
             return {"ok": False, "reason": "user_errors", "userErrors": user_errors}
 
@@ -133,6 +156,24 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
                 text('UPDATE "ShopifyVariant" SET "currentPrice" = :p WHERE id = :v'),
                 {"p": float(price), "v": vid},
             )
+
+        # Log successful applies for activity tracking
+        for did, vid, _ in pending:
+            try:
+                # Try to fetch the product ID from the variant
+                product_result = session.execute(
+                    text('SELECT "productId" FROM "ShopifyVariant" WHERE id = :v'),
+                    {"v": vid},
+                ).scalar()
+                product_id = product_result if product_result else ""
+                log_decision_applied(
+                    shop_domain=shop_domain,
+                    price_decision_id=did,
+                    shopify_product_id=product_id,
+                    shopify_variant_id=vid,
+                )
+            except Exception as e:
+                logger.exception(f"Failed to log decision applied: {e}")
 
     return {"ok": True, "applied": len(pending), "decisionIds": decision_ids}
 
