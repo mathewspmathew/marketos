@@ -28,7 +28,6 @@ export const loader = async ({ request }) => {
       title: true,
       currentPrice: true,
       autoPriceEnabled: true,
-      useMlSuggestion: true,
       inventoryQuantity: true,
       imageUrl: true,
       ShopifyProduct: {
@@ -50,7 +49,6 @@ export const loader = async ({ request }) => {
           oldPrice: true, newPrice: true,
           reason: true, blockedBy: true, confidence: true,
           ruleSuggestedPrice: true,
-          mlSuggestedPrice: true, mlConfidence: true, modelVersion: true,
         },
       },
       VariantCompetitorStats: {
