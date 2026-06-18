@@ -1031,7 +1031,7 @@ export default function HomePage() {
                                 type="number"
                                 min="1"
                                 max="50"
-                                value={String(local.discoveryNumResults ?? getCurrentDefaults().discoveryNumResults ?? "")}
+                                value={String(local.discoveryNumResults || getCurrentDefaults().discoveryNumResults || "")}
                                 helpText={`1–50 products per discovery run. Shop default: ${getCurrentDefaults().discoveryNumResults}`}
                                 onInput={(e) =>
                                   setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
@@ -1045,7 +1045,7 @@ export default function HomePage() {
                                 type="number"
                                 min="1"
                                 max="50"
-                                value={String(local.listingExpansionCap ?? getCurrentDefaults().listingExpansionCap ?? "")}
+                                value={String(local.listingExpansionCap || getCurrentDefaults().listingExpansionCap || "")}
                                 helpText={`When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${getCurrentDefaults().listingExpansionCap}`}
                                 onInput={(e) =>
                                   setOverrideField(product.id, "listingExpansionCap", e.currentTarget.value)
@@ -1136,7 +1136,7 @@ export default function HomePage() {
                                 </div>
                                 <s-text-field
                                   type="number"
-                                  value={String(local.frequencyInterval ?? getCurrentDefaults().frequencyInterval ?? "")}
+                                  value={String(local.frequencyInterval || getCurrentDefaults().frequencyInterval || "")}
                                   helpText={`Shop default: ${getCurrentDefaults().frequencyInterval}`}
                                   onInput={(e) =>
                                     setOverrideField(product.id, "frequencyInterval", e.currentTarget.value)
@@ -1148,7 +1148,7 @@ export default function HomePage() {
                                   <label style={{ fontWeight: "500" }}>Unit</label>
                                 </div>
                                 <s-select
-                                  value={local.frequencyUnit ?? getCurrentDefaults().frequencyUnit ?? ""}
+                                  value={local.frequencyUnit || getCurrentDefaults().frequencyUnit || ""}
                                   onChange={(e) =>
                                     setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
                                   }
