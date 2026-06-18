@@ -343,18 +343,23 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
             if variant_rows:
                 db.execute(pg_insert(models.ScrapedVariant), variant_rows)
 
-                _record_observations(
-                    db, shop_domain,
-                    [
-                        {
-                            "competitorVariantId": r["id"],
-                            "price":               r["currentPrice"],
-                            "isInStock":           r["isInStock"],
-                        }
-                        for r in variant_rows
-                        if r["currentPrice"] and r["currentPrice"] > 0
-                    ],
+                obs_rows = [
+                    {
+                        "competitorVariantId": r["id"],
+                        "competitorProductId": prod_id,
+                        "price":               r["currentPrice"],
+                        "isInStock":           r["isInStock"],
+                        "competitorTitle":     product.title,
+                        "competitorDomain":    domain,
+                    }
+                    for r in variant_rows
+                    if r["currentPrice"] and r["currentPrice"] > 0
+                ]
+                logger.info(
+                    "Recording %d observations for %s from %s: title=%s domain=%s prod_id=%s",
+                    len(obs_rows), shop_domain, url, product.title, domain, prod_id
                 )
+                _record_observations(db, shop_domain, obs_rows)
 
             _set_candidate_status(
                 db, candidate_id,
@@ -374,6 +379,17 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
     # embedder.generate_embeddings writes ProductEmbedding.vectorText.
     # Confidence scoring against the merchant's ShopifyProduct is the
     # matcher_svc's responsibility once the embeddings land.
+    # Cooperative pause guard: check if product is still enabled before fanning out.
+    if shopify_product_id:
+        with get_db() as db:
+            sp = db.get(models.ShopifyProduct, shopify_product_id)
+            if sp and not sp.dynamicPricingEnabled:
+                logger.info(
+                    "extract_candidate: product %s paused after extraction, skipping semantics/embedding fan-out",
+                    shopify_product_id
+                )
+                return {"status": "queued_extract", "skipped_fan_out": True}
+
     app.send_task(
         "scraper.generate_variant_semantics",
         args=[prod_id, None, shop_domain, url],
@@ -560,6 +576,11 @@ def rescrape_url(self, product_url_id: str):
             db.get(models.ShopifyProduct, shopify_product_id)
             if shopify_product_id else None
         )
+        # Cooperative pause guard: if the product's dynamic pricing is off,
+        # skip this rescrape even if it was queued before the pause.
+        if shopify_product and not shopify_product.dynamicPricingEnabled:
+            logger.info("rescrape_url: product %s dynamic pricing off, skipping %s", shopify_product_id, product_url_id)
+            return {"status": "skipped_product_paused"}
         settings = db.get(models.ShopSettings, shop_domain)
         freq_unit = (
             (shopify_product.frequencyUnit if shopify_product else None)
