@@ -5,6 +5,7 @@ Helper functions to log ActivityEvent records for pricing pipeline visibility.
 All functions log synchronously (inline) with minimal DB overhead.
 """
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -14,6 +15,8 @@ from sqlalchemy import insert
 
 from services.common.db import get_db
 from services.common.models import ActivityEvent
+
+logger = logging.getLogger(__name__)
 
 
 def log_competitor_observation(
@@ -27,9 +30,9 @@ def log_competitor_observation(
 ) -> None:
     """Log a competitor price observation event."""
     try:
-        summary = f"Competitor price: ₹{float(price)}"
+        summary = f"Competitor price: ₹{price}"
         if competitor_title:
-            summary = f"{competitor_title[:40]}: ₹{float(price)}"
+            summary = f"{competitor_title[:40]}: ₹{price}"
         if not is_in_stock:
             summary += " (out of stock)"
 
@@ -55,7 +58,7 @@ def log_competitor_observation(
             )
             session.commit()
     except Exception as e:
-        print(f"[!] ActivityEvent log error (observation): {e}")
+        logger.exception(f"Failed to log COMPETITOR_OBSERVATION event: {e}")
 
 
 def log_decision_made(
@@ -79,8 +82,11 @@ def log_decision_made(
             summary = f"Decision skipped: {skip_reason}"
         else:
             event_type = "DECISION_MADE"
-            pct_str = f"+{change_pct*100:.1f}%" if change_pct and change_pct > 0 else f"{change_pct*100:.1f}%"
-            summary = f"Price decided: ₹{float(old_price)} → ₹{float(new_price)} ({pct_str})"
+            if change_pct is not None:
+                pct_str = f"+{change_pct*100:.1f}%" if change_pct > 0 else f"{change_pct*100:.1f}%"
+                summary = f"Price decided: ₹{old_price} → ₹{new_price} ({pct_str})"
+            else:
+                summary = f"Price decided: ₹{old_price} → ₹{new_price}"
 
         with get_db() as session:
             session.execute(
@@ -110,7 +116,7 @@ def log_decision_made(
             )
             session.commit()
     except Exception as e:
-        print(f"[!] ActivityEvent log error (decision): {e}")
+        logger.exception(f"Failed to log DECISION_MADE event: {e}")
 
 
 def log_decision_applied(
@@ -137,7 +143,7 @@ def log_decision_applied(
             )
             session.commit()
     except Exception as e:
-        print(f"[!] ActivityEvent log error (applied): {e}")
+        logger.exception(f"Failed to log DECISION_APPLIED event: {e}")
 
 
 def log_decision_failed(
@@ -166,4 +172,4 @@ def log_decision_failed(
             )
             session.commit()
     except Exception as e:
-        print(f"[!] ActivityEvent log error (failed): {e}")
+        logger.exception(f"Failed to log DECISION_FAILED event: {e}")
