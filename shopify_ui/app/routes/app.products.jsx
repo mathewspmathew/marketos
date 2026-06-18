@@ -1125,35 +1125,39 @@ export default function HomePage() {
 
                           {/* === SECTION 5: Rescrape Frequency === */}
                           <div>
-                            <div>
-                              <s-text emphasis="bold">Rescrape Frequency</s-text>
-                              <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                                How often should we re-check for competitor price changes?
-                              </s-text>
-                            </div>
-                            <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
-                              Shop default: Every {getCurrentDefaults().frequencyInterval} {getCurrentDefaults().frequencyUnit}
+                            <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
+                              How often should we re-check for competitor price changes?
                             </s-text>
                             <s-stack direction="inline" gap="base">
-                              <s-text-field
-                                label="Every"
-                                type="number"
-                                value={String(local.frequencyInterval ?? getCurrentDefaults().frequencyInterval ?? "")}
-                                onInput={(e) =>
-                                  setOverrideField(product.id, "frequencyInterval", e.currentTarget.value)
-                                }
-                              />
-                              <s-select
-                                label="Unit"
-                                value={local.frequencyUnit ?? getCurrentDefaults().frequencyUnit ?? ""}
-                                onChange={(e) =>
-                                  setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
-                                }
-                              >
-                                {FREQ_UNITS.map((u) => (
-                                  <s-option key={u.value} value={u.value}>{u.label}</s-option>
-                                ))}
-                              </s-select>
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                                  <label style={{ fontWeight: "500" }}>Every</label>
+                                  <span title="Rescrape interval for this product. Leave empty to use shop default." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+                                </div>
+                                <s-text-field
+                                  type="number"
+                                  value={String(local.frequencyInterval ?? getCurrentDefaults().frequencyInterval ?? "")}
+                                  helpText={`Shop default: ${getCurrentDefaults().frequencyInterval}`}
+                                  onInput={(e) =>
+                                    setOverrideField(product.id, "frequencyInterval", e.currentTarget.value)
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+                                  <label style={{ fontWeight: "500" }}>Unit</label>
+                                </div>
+                                <s-select
+                                  value={local.frequencyUnit ?? getCurrentDefaults().frequencyUnit ?? ""}
+                                  onChange={(e) =>
+                                    setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)
+                                  }
+                                >
+                                  {FREQ_UNITS.map((u) => (
+                                    <s-option key={u.value} value={u.value}>{u.label}</s-option>
+                                  ))}
+                                </s-select>
+                              </div>
                             </s-stack>
                           </div>
 
