@@ -252,7 +252,7 @@ model ProductUrl {
   createdAt         DateTime        @default(now())
   shopDomain        String
   frequencyInterval Int?
-  frequencyUnit     String?         @default("daily")
+  frequencyUnit     String?         @default("day")
   nextRunAt         DateTime?
   shopifyProductId  String?
   ScrapingConfig    ScrapingConfig? @relation(fields: [configId], references: [id])
@@ -352,7 +352,7 @@ model ShopSettings {
   marketplaceBlocklist     String[]    @default([])
   updatedAt                DateTime
   frequencyInterval        Int         @default(1)
-  frequencyUnit            String      @default("daily")
+  frequencyUnit            String      @default("day")
   maxCompetitorsPerProduct Int         @default(8)
   listingExpansionCap      Int?
   serperGl                 String      @default("in")
