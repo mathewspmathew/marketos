@@ -207,14 +207,15 @@ export default function SettingsPage() {
   // Check if form has unsaved changes
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialFormState);
 
-  // Auto-dismiss "Saved" message after 3 seconds
+  // Reset form to initialFormState after successful save and auto-dismiss "Saved" message
   useEffect(() => {
     if (fetcher.data?.ok && fetcher.state === "idle") {
+      setForm(initialFormState);
       setShowSavedMessage(true);
       const timer = setTimeout(() => setShowSavedMessage(false), 3000);
       return () => clearTimeout(timer);
     }
-  }, [fetcher.data?.ok, fetcher.state]);
+  }, [fetcher.data?.ok, fetcher.state, initialFormState]);
 
   const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
 
@@ -290,7 +291,7 @@ export default function SettingsPage() {
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Track up to N competitors per product</label>
+              <label style={{ fontWeight: "500" }}>Competitor products per run</label>
               <span title="Maximum number to monitor per product. More = broader coverage but slower scraping. Balance coverage vs. cost." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
@@ -302,7 +303,7 @@ export default function SettingsPage() {
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Products per search result page</label>
+              <label style={{ fontWeight: "500" }}>Products per listing page</label>
               <span title="When we find a category page, extract this many product cards. Higher = broader but slower." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
@@ -330,7 +331,7 @@ export default function SettingsPage() {
         <s-stack direction="block" gap="base">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Discount off median competitor price</label>
+              <label style={{ fontWeight: "500" }}>Discount applied to competitive tier products </label>
               <span title="Suggested price = median × (1 - discount). E.g., 5% means sell 5% cheaper than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
@@ -348,7 +349,7 @@ export default function SettingsPage() {
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Budget tier discount</label>
+              <label style={{ fontWeight: "500" }}>Discount applied to budget tier products</label>
               <span title="For Budget products, additional undercut below median. E.g., 5% = offer 5% cheaper than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
@@ -366,7 +367,7 @@ export default function SettingsPage() {
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Premium tier markup</label>
+              <label style={{ fontWeight: "500" }}>Markup applied to premium tier products</label>
               <span title="For Premium products, additional markup above median. E.g., 5% = charge 5% more than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
@@ -392,7 +393,7 @@ export default function SettingsPage() {
         <s-stack direction="block" gap="base">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Minimum competitors to price</label>
+              <label style={{ fontWeight: "500" }}>Number of minimum competitors to calculate price</label>
               <span title="Safety gate: don't calculate price until we have at least this many matched (semantically similar) competitor products. Higher = more confident but slower." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <s-text-field
@@ -436,7 +437,7 @@ export default function SettingsPage() {
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Don't drift more than (lifetime)</label>
+              <label style={{ fontWeight: "500" }}>Don't drift more than (lifetime) - affects min and max prices</label>
               <span title="Price can't stray this far from base price. E.g., $100 base with 25% cap = stay between $75–$125." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
