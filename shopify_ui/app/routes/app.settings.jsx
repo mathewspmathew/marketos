@@ -16,10 +16,10 @@ const ALLOWED_UNITS = new Set(FREQ_UNITS.map((u) => u.value));
 
 const DEFAULTS = {
   markupPct: 0.02,
-  maxCompetitorsPerProduct: 8,
   frequencyInterval: 1,
   frequencyUnit: "day",
   listingExpansionCap: 5,
+  discoveryNumResults: 10,
   marketplaceBlocklist: [],
   autoRescrapeEnabled: true,
   includeOosInPricing: false,
@@ -52,23 +52,23 @@ export const loader = async ({ request }) => {
 
   return {
     settings: {
-      markupPct:                Number(s.markupPct),
-      maxCompetitorsPerProduct: s.maxCompetitorsPerProduct,
-      frequencyInterval:        s.frequencyInterval,
-      frequencyUnit:            s.frequencyUnit,
-      listingExpansionCap:      s.listingExpansionCap ?? DEFAULTS.listingExpansionCap,
-      marketplaceBlocklist:     s.marketplaceBlocklist ?? [],
-      autoRescrapeEnabled:      s.autoRescrapeEnabled ?? true,
-      includeOosInPricing:      s.includeOosInPricing ?? false,
-      minCompetitorsToPrice:    s.minCompetitorsToPrice ?? DEFAULTS.minCompetitorsToPrice,
-      topKCompetitors:          s.topKCompetitors       ?? DEFAULTS.topKCompetitors,
-      maxAutoApplyChangePct:    Number(s.maxAutoApplyChangePct ?? DEFAULTS.maxAutoApplyChangePct),
-      lifetimeCapPct:           Number(s.lifetimeCapPct        ?? DEFAULTS.lifetimeCapPct),
-      budgetUndercut:           Number(s.budgetUndercut        ?? DEFAULTS.budgetUndercut),
-      premiumUplift:            Number(s.premiumUplift         ?? DEFAULTS.premiumUplift),
-      serperGl:                 s.serperGl       ?? DEFAULTS.serperGl,
-      serperHl:                 s.serperHl       ?? DEFAULTS.serperHl,
-      serperLocation:           s.serperLocation ?? DEFAULTS.serperLocation,
+      markupPct:                Number(s.markupPct), // "Discount applied to competitive tier products"
+      frequencyInterval:        s.frequencyInterval, // "Every" N (with frequencyUnit)
+      frequencyUnit:            s.frequencyUnit, // "Unit" (minute, hour, day, never)
+      listingExpansionCap:      s.listingExpansionCap, // "Products per listing page"
+      discoveryNumResults:      s.discoveryNumResults, // "Competitor products per run"
+      marketplaceBlocklist:     s.marketplaceBlocklist, // "Exclude these marketplaces"
+      autoRescrapeEnabled:      s.autoRescrapeEnabled, // "Auto rescrape" (master switch)
+      includeOosInPricing:      s.includeOosInPricing, // "Include out-of-stock"
+      minCompetitorsToPrice:    s.minCompetitorsToPrice, // "Number of minimum competitors to calculate price"
+      topKCompetitors:          s.topKCompetitors, // "Focus on top N most-similar"
+      maxAutoApplyChangePct:    Number(s.maxAutoApplyChangePct), // "Max price change per update"
+      lifetimeCapPct:           Number(s.lifetimeCapPct), // "Don't drift more than (lifetime) - affects min and max prices"
+      budgetUndercut:           Number(s.budgetUndercut), // "Discount applied to budget tier products"
+      premiumUplift:            Number(s.premiumUplift), // "Markup applied to premium tier products"
+      serperGl:                 s.serperGl, // "Country code"
+      serperHl:                 s.serperHl, // "Language"
+      serperLocation:           s.serperLocation, // "Search location"
     },
   };
 };
@@ -103,10 +103,10 @@ export const action = async ({ request }) => {
 
   const data = {
     markupPct: parsePctish(formData.get("markupPct")) ?? DEFAULTS.markupPct,
-    maxCompetitorsPerProduct: parsePositiveInt(formData.get("maxCompetitorsPerProduct"), DEFAULTS.maxCompetitorsPerProduct),
     frequencyInterval:        parsePositiveInt(formData.get("frequencyInterval"),        DEFAULTS.frequencyInterval),
     frequencyUnit:            unit,
     listingExpansionCap:      parsePositiveInt(formData.get("listingExpansionCap"),      DEFAULTS.listingExpansionCap),
+    discoveryNumResults:      parsePositiveInt(formData.get("discoveryNumResults"),      DEFAULTS.discoveryNumResults),
     marketplaceBlocklist:     { set: blocklist },
     autoRescrapeEnabled:      formData.get("autoRescrapeEnabled") === "true",
     includeOosInPricing:      formData.get("includeOosInPricing") === "true",
@@ -185,8 +185,8 @@ export default function SettingsPage() {
     serperLocation: settings.serperLocation,
     serperGl: settings.serperGl,
     serperHl: settings.serperHl,
-    maxCompetitorsPerProduct: String(settings.maxCompetitorsPerProduct),
     listingExpansionCap: String(settings.listingExpansionCap),
+    discoveryNumResults: String(settings.discoveryNumResults),
     marketplaceBlocklist: (settings.marketplaceBlocklist ?? []).join("\n"),
     markupPct: toPercentageDisplay(settings.markupPct),
     budgetUndercut: toPercentageDisplay(settings.budgetUndercut),
@@ -223,10 +223,10 @@ export default function SettingsPage() {
     fetcher.submit(
       {
         markupPct: form.markupPct,
-        maxCompetitorsPerProduct: form.maxCompetitorsPerProduct,
         frequencyInterval: form.frequencyInterval,
         frequencyUnit: form.frequencyUnit,
         listingExpansionCap: form.listingExpansionCap,
+        discoveryNumResults: form.discoveryNumResults,
         marketplaceBlocklist: form.marketplaceBlocklist,
         autoRescrapeEnabled: String(form.autoRescrapeEnabled),
         includeOosInPricing: String(form.includeOosInPricing),
@@ -291,18 +291,6 @@ export default function SettingsPage() {
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Competitor products per run</label>
-              <span title="Maximum number to monitor per product. More = broader coverage but slower scraping. Balance coverage vs. cost." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <s-text-field
-              type="number"
-              value={form.maxCompetitorsPerProduct}
-              onInput={(e) => setField("maxCompetitorsPerProduct", e.currentTarget.value)}
-            />
-          </div>
-
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
               <label style={{ fontWeight: "500" }}>Products per listing page</label>
               <span title="When we find a category page, extract this many product cards. Higher = broader but slower." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
@@ -310,6 +298,18 @@ export default function SettingsPage() {
               type="number"
               value={form.listingExpansionCap}
               onInput={(e) => setField("listingExpansionCap", e.currentTarget.value)}
+            />
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Competitor products per run</label>
+              <span title="Number of competitor search results to fetch per discovery run. Higher = more candidates to work with." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+            </div>
+            <s-text-field
+              type="number"
+              value={form.discoveryNumResults}
+              onInput={(e) => setField("discoveryNumResults", e.currentTarget.value)}
             />
           </div>
 
