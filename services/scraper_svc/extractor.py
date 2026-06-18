@@ -21,6 +21,7 @@ from services.common.groq_client import make_groq_client
 from sqlalchemy import select, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from services.common.activity_logger import log_competitor_observation
 from services.common.celery_app import app
 from services.common.db import get_db
 from services.common.gcs_utils import download_markdown_from_gcs, upload_image_to_gcs
@@ -172,11 +173,13 @@ def _record_observations(
     rows: list[dict],
 ) -> None:
     """Append CompetitorPriceObservation rows. `rows` is a list of
-    {competitorVariantId, price, currency, isInStock}.
+    {competitorVariantId, competitorProductId, price, currency, isInStock, competitorTitle, competitorDomain}.
 
     Also queues a stats fan-out task per competitor variant so any matched
     merchant variant gets its VariantCompetitorStats recomputed. Safe no-op
     when no matches exist yet (e.g. first-time scrape before matcher runs).
+
+    Logs each observation as an ActivityEvent for audit trail visibility.
     """
     if not rows:
         return
@@ -197,6 +200,17 @@ def _record_observations(
         ],
     )
     for r in rows:
+        # Log this observation as an ActivityEvent
+        log_competitor_observation(
+            shop_domain=shop_domain,
+            competitor_variant_id=r["competitorVariantId"],
+            competitor_product_id=r["competitorProductId"],
+            price=r["price"],
+            is_in_stock=r.get("isInStock", True),
+            competitor_title=r.get("competitorTitle"),
+            competitor_domain=r.get("competitorDomain"),
+        )
+
         app.send_task(
             "stats.recompute_after_observation",
             args=[shop_domain, r["competitorVariantId"]],
@@ -319,8 +333,11 @@ def upsert_to_db(
                 [
                     {
                         "competitorVariantId": row["id"],
+                        "competitorProductId": product_id,
                         "price":               row["currentPrice"],
                         "isInStock":           row["isInStock"],
+                        "competitorTitle":     product.title,
+                        "competitorDomain":    domain,
                     }
                     for row in variant_rows
                     if row["currentPrice"] and row["currentPrice"] > 0
@@ -365,6 +382,17 @@ def update_prices_in_db(
                 print(f"    [!] No existing variants for product {prod_id} — cannot update prices")
                 return False
 
+            # Fetch product metadata for logging
+            product_meta = session.execute(
+                select(ScrapedProduct.title, ScrapedProduct.shopDomain, ScrapedProduct.domain)
+                .where(ScrapedProduct.id == prod_id)
+            ).first()
+            if not product_meta:
+                print(f"    [!] No product metadata for {prod_id}")
+                return False
+
+            product_title, shop_domain, competitor_domain = product_meta
+
             observation_rows: list[dict] = []
             updated = 0
             if len(existing) == 1:
@@ -385,8 +413,11 @@ def update_prices_in_db(
                 if new_price > 0:
                     observation_rows.append({
                         "competitorVariantId": existing[0].id,
+                        "competitorProductId": prod_id,
                         "price":               new_price,
                         "isInStock":           bool(v_ex.is_in_stock),
+                        "competitorTitle":     product_title,
+                        "competitorDomain":    competitor_domain,
                     })
             else:
                 by_title = {v.title.strip().lower(): v for v in existing}
@@ -411,8 +442,11 @@ def update_prices_in_db(
                     if new_price > 0:
                         observation_rows.append({
                             "competitorVariantId": v_db.id,
+                            "competitorProductId": prod_id,
                             "price":               new_price,
                             "isInStock":           bool(v_ex.is_in_stock),
+                            "competitorTitle":     product_title,
+                            "competitorDomain":    competitor_domain,
                         })
 
             session.execute(
@@ -422,14 +456,7 @@ def update_prices_in_db(
             )
 
             if observation_rows:
-                # Look up shopDomain + domain via the ScrapedProduct row.
-                meta = session.execute(
-                    select(ScrapedProduct.shopDomain, ScrapedProduct.domain)
-                    .where(ScrapedProduct.id == prod_id)
-                ).first()
-                if meta:
-                    shop_domain, _domain = meta
-                    _record_observations(session, shop_domain, observation_rows)
+                _record_observations(session, shop_domain, observation_rows)
 
             print(f"    [✓] Price/stock updated: {updated}/{len(existing)} variant(s) for {product_url[:60]}")
             return updated > 0
