@@ -484,10 +484,33 @@ export default function HomePage() {
         frequencyUnit: p.frequencyUnit,
         discoveryNumResults: p.discoveryNumResults || (shopDefaults?.discoveryNumResults ?? ""),
         listingExpansionCap: p.listingExpansionCap || (shopDefaults?.listingExpansionCap ?? ""),
+        price: p.price,
+        calculatedMinPrice: null,
+        calculatedMaxPrice: null,
       };
     }
     return map;
   });
+
+  useEffect(() => {
+    if (expandedId) {
+      const product = products.find((p) => p.id === expandedId);
+      const local = getLocal(expandedId);
+      const priceForCalculation = local.basePrice || local.price;
+      if (product && priceForCalculation) {
+        const lifetimeCapPct = shopDefaults?.lifetimeCapPct ?? 0.25;
+        const { min, max } = calculateMinMaxPrices(Number(priceForCalculation), lifetimeCapPct);
+        setLocalState((prev) => ({
+          ...prev,
+          [expandedId]: {
+            ...prev[expandedId],
+            calculatedMinPrice: min,
+            calculatedMaxPrice: max,
+          },
+        }));
+      }
+    }
+  }, [expandedId, products, shopDefaults]);
 
   const allTags = useMemo(() => {
     const tagSet = new Set();
@@ -541,6 +564,9 @@ export default function HomePage() {
       frequencyUnit: "",
       discoveryNumResults: "",
       listingExpansionCap: "",
+      price: "0.00",
+      calculatedMinPrice: null,
+      calculatedMaxPrice: null,
     };
 
   const getCurrentDefaults = () => shopDefaults ?? {
@@ -548,6 +574,15 @@ export default function HomePage() {
     frequencyUnit: "",
     listingExpansionCap: "",
     discoveryNumResults: "",
+  };
+
+  const calculateMinMaxPrices = (basePrice, lifetimeCapPct) => {
+    if (!basePrice || !lifetimeCapPct || basePrice <= 0 || lifetimeCapPct <= 0) {
+      return { min: null, max: null };
+    }
+    const minPrice = basePrice * (1 - lifetimeCapPct);
+    const maxPrice = basePrice * (1 + lifetimeCapPct);
+    return { min: minPrice, max: maxPrice };
   };
 
   const setOverrideField = (productId, field, value) => {
@@ -1047,29 +1082,29 @@ export default function HomePage() {
 
                             <div>
                               <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
-                                Hard price bounds (optional overrides)
+                                Hard price bounds
                               </s-text>
-                              {local.basePrice && (
-                                <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "8px" }}>
-                                  Base price snapshot: ${Number(local.basePrice).toFixed(2)}.
-                                  Lifetime cap defaults to ±25% from this anchor.
+                              {local.calculatedMinPrice !== null && local.calculatedMaxPrice !== null && (
+                                <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "12px" }}>
+                                  {local.basePrice ? `Base price: $${Number(local.basePrice).toFixed(2)}.` : `Current price: $${Number(local.price).toFixed(2)}.`}
+                                  Auto-calculated bounds (±{Math.round((shopDefaults?.lifetimeCapPct ?? 0.25) * 100)}%): ${local.calculatedMinPrice.toFixed(2)} to ${local.calculatedMaxPrice.toFixed(2)}
                                 </s-text>
                               )}
                               <s-stack direction="inline" gap="base">
                                 <s-text-field
-                                  label="Minimum price"
+                                  label="Minimum override"
                                   type="number"
-                                  placeholder="0.00"
-                                  value={local.minPriceOverride ?? ""}
+                                  value={local.minPriceOverride || (local.calculatedMinPrice ? local.calculatedMinPrice.toFixed(2) : "")}
+                                  helpText={`Auto-calculated: $${local.calculatedMinPrice?.toFixed(2) ?? "—"}`}
                                   onInput={(e) =>
                                     setOverrideField(product.id, "minPriceOverride", e.currentTarget.value)
                                   }
                                 />
                                 <s-text-field
-                                  label="Maximum price"
+                                  label="Maximum override"
                                   type="number"
-                                  placeholder="0.00"
-                                  value={local.maxPriceOverride ?? ""}
+                                  value={local.maxPriceOverride || (local.calculatedMaxPrice ? local.calculatedMaxPrice.toFixed(2) : "")}
+                                  helpText={`Auto-calculated: $${local.calculatedMaxPrice?.toFixed(2) ?? "—"}`}
                                   onInput={(e) =>
                                     setOverrideField(product.id, "maxPriceOverride", e.currentTarget.value)
                                   }
