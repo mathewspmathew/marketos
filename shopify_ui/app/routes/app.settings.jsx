@@ -33,6 +33,7 @@ const DEFAULTS = {
   serperGl: "in",
   serperHl: "en",
   serperLocation: "Kochi, Kerala",
+  currency: "INR",
 };
 
 export const loader = async ({ request }) => {
@@ -69,6 +70,7 @@ export const loader = async ({ request }) => {
       serperGl:                 s.serperGl, // "Country code"
       serperHl:                 s.serperHl, // "Language"
       serperLocation:           s.serperLocation, // "Search location"
+      currency:                 s.currency ?? DEFAULTS.currency, // "Shop currency code"
     },
   };
 };
@@ -119,6 +121,7 @@ export const action = async ({ request }) => {
     serperGl:       ((formData.get("serperGl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperGl,
     serperHl:       ((formData.get("serperHl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperHl,
     serperLocation: ((formData.get("serperLocation") || "").toString().trim())               || DEFAULTS.serperLocation,
+    currency:       ((formData.get("currency")       || "").toString().trim().toUpperCase()) || DEFAULTS.currency,
   };
 
   // Detect OFF → ON transition on the global auto-rescrape switch so we can
@@ -199,6 +202,7 @@ export default function SettingsPage() {
     frequencyUnit: settings.frequencyUnit,
     autoRescrapeEnabled: settings.autoRescrapeEnabled,
     includeOosInPricing: settings.includeOosInPricing,
+    currency: settings.currency,
   };
 
   const [form, setForm] = useState(initialFormState);
@@ -239,6 +243,7 @@ export default function SettingsPage() {
         serperGl: form.serperGl,
         serperHl: form.serperHl,
         serperLocation: form.serperLocation,
+        currency: form.currency,
       },
       { method: "POST" },
     );
@@ -287,6 +292,19 @@ export default function SettingsPage() {
                 helpText="E.g., en, hi, ar, de"
               />
             </div>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Currency code</label>
+              <span title="3-letter currency code (e.g., USD, INR, GBP, EUR). Used to display prices with the correct symbol." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+            </div>
+            <s-text-field
+              value={form.currency}
+              onInput={(e) => setField("currency", e.currentTarget.value.toUpperCase())}
+              helpText="E.g., USD ($), INR (₹), GBP (£), EUR (€)"
+              placeholder="INR"
+            />
           </div>
 
           <div>

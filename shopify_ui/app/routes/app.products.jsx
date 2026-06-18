@@ -3,6 +3,7 @@ import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
+import { getCurrencySymbol } from "../lib/currencyFormatter";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
@@ -860,7 +861,7 @@ export default function HomePage() {
                       <div style={{ fontSize: "12px", color: "#666" }}>{product.productType || "Product"}</div>
                     </div>
 
-                    <div style={{ width: "70px", fontWeight: "500" }}>${product.price}</div>
+                    <div style={{ width: "70px", fontWeight: "500" }}>{getCurrencySymbol(shopDefaults?.currency)}{product.price}</div>
 
                     <div style={{ width: "80px", display: "flex", gap: "6px", alignItems: "center" }}>
                       {isOn ? (
@@ -1086,8 +1087,8 @@ export default function HomePage() {
                               </s-text>
                               {local.calculatedMinPrice !== null && local.calculatedMaxPrice !== null && (
                                 <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "12px" }}>
-                                  {local.basePrice ? `Base price: $${Number(local.basePrice).toFixed(2)}.` : `Current price: $${Number(local.price).toFixed(2)}.`}
-                                  Auto-calculated bounds (±{Math.round((shopDefaults?.lifetimeCapPct ?? 0.25) * 100)}%): ${local.calculatedMinPrice.toFixed(2)} to ${local.calculatedMaxPrice.toFixed(2)}
+                                  {local.basePrice ? `Base price: ${getCurrencySymbol(shopDefaults?.currency)}${Number(local.basePrice).toFixed(2)}.` : `Current price: ${getCurrencySymbol(shopDefaults?.currency)}${Number(local.price).toFixed(2)}.`}
+                                  Auto-calculated bounds (±{Math.round((shopDefaults?.lifetimeCapPct ?? 0.25) * 100)}%): ${getCurrencySymbol(shopDefaults?.currency)}${local.calculatedMinPrice.toFixed(2)} to ${getCurrencySymbol(shopDefaults?.currency)}${local.calculatedMaxPrice.toFixed(2)}
                                 </s-text>
                               )}
                               <s-stack direction="inline" gap="base">
@@ -1095,7 +1096,7 @@ export default function HomePage() {
                                   label="Minimum override"
                                   type="number"
                                   value={local.minPriceOverride || (local.calculatedMinPrice ? local.calculatedMinPrice.toFixed(2) : "")}
-                                  helpText={`Auto-calculated: $${local.calculatedMinPrice?.toFixed(2) ?? "—"}`}
+                                  helpText={`Auto-calculated: ${getCurrencySymbol(shopDefaults?.currency)}${local.calculatedMinPrice?.toFixed(2) ?? "—"}`}
                                   onInput={(e) =>
                                     setOverrideField(product.id, "minPriceOverride", e.currentTarget.value)
                                   }
@@ -1104,7 +1105,7 @@ export default function HomePage() {
                                   label="Maximum override"
                                   type="number"
                                   value={local.maxPriceOverride || (local.calculatedMaxPrice ? local.calculatedMaxPrice.toFixed(2) : "")}
-                                  helpText={`Auto-calculated: $${local.calculatedMaxPrice?.toFixed(2) ?? "—"}`}
+                                  helpText={`Auto-calculated: ${getCurrencySymbol(shopDefaults?.currency)}${local.calculatedMaxPrice?.toFixed(2) ?? "—"}`}
                                   onInput={(e) =>
                                     setOverrideField(product.id, "maxPriceOverride", e.currentTarget.value)
                                   }
