@@ -78,12 +78,7 @@ export const loader = async ({ request }) => {
     productSyncState: freshUser?.productSyncState ?? "IDLE",
     productSyncedAt: freshUser?.productSyncedAt ? freshUser.productSyncedAt.toISOString() : null,
     processingCount,
-    shopDefaults: shopSettings ? {
-      frequencyInterval: shopSettings.frequencyInterval,
-      frequencyUnit: shopSettings.frequencyUnit,
-      listingExpansionCap: shopSettings.listingExpansionCap,
-      discoveryNumResults: shopSettings.discoveryNumResults,
-    } : null,
+    shopDefaults: shopSettings,
   };
 };
 

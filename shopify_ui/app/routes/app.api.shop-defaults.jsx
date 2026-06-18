@@ -23,12 +23,7 @@ export const loader = async ({ request }) => {
       );
     }
 
-    return Response.json({
-      frequencyInterval: shopSettings.frequencyInterval ?? 1,
-      frequencyUnit: shopSettings.frequencyUnit ?? "daily",
-      listingExpansionCap: shopSettings.listingExpansionCap ?? 5,
-      discoveryNumResults: shopSettings.discoveryNumResults ?? 10,
-    });
+    return Response.json(shopSettings);
   } catch (error) {
     console.error("Error fetching shop defaults:", error);
     return Response.json(
