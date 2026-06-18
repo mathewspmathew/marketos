@@ -11,7 +11,7 @@ Pipeline
 1. Eligibility gates (any failure → write a PriceDecision with skipReason
    and return; no Shopify call):
      - dynamicPricingEnabled = TRUE
-     - syncPrice             = TRUE
+     - syncPrice = TRUE
      - debounce: now - lastDecisionAt >= rescrape interval
      - ≥ minCompetitorsToPrice matched competitor PRODUCTS with:
          * MatchConfidenceTier in (CONFIRMED, LIKELY)  (WEAK excluded)

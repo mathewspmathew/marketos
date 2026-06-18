@@ -399,9 +399,7 @@ model ShopifyProduct {
   dynamicPricingEnabled         Boolean               @default(false)
   handle                        String?
   shopDomain                    String
-  syncDescription               Boolean               @default(false)
   syncPrice                     Boolean               @default(true)
-  syncTitle                     Boolean               @default(false)
   syncedAt                      DateTime?
   categoryTop                   String?
   productGender                 String?
