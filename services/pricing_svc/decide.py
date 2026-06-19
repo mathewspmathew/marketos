@@ -60,8 +60,8 @@ from services.common.db import get_db
 
 logger = logging.getLogger(__name__)
 
-MIN_CHANGE_PCT = Decimal("0.005")  # ignore sub-0.5% wiggles
-ABS_MIN_FRESHNESS = timedelta(hours=24)
+# Note: MIN_CHANGE_PCT and ABS_MIN_FRESHNESS are now loaded from ShopSettings
+# minChangePctThreshold and minFreshnessHours respectively
 
 # Map frequencyUnit + interval to a timedelta for debounce + observation freshness.
 _UNIT_TO_SECONDS = {
@@ -166,30 +166,37 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                        "maxAutoApplyChangePct", "lifetimeCapPct",
                        "budgetUndercut", "premiumUplift",
                        "includeOosInPricing",
-                       "frequencyUnit", "frequencyInterval"
+                       "frequencyUnit", "frequencyInterval",
+                       "minChangePctThreshold", "minFreshnessHours"
                 FROM "ShopSettings" WHERE "shopDomain" = :sd
             """),
             {"sd": shop_domain},
         ).first()
 
-        markup       = Decimal(str(settings.markupPct))             if settings else Decimal("0.02")
-        min_comps    = settings.minCompetitorsToPrice                if settings else 4
-        top_k        = settings.topKCompetitors                      if settings else 4
+        # ShopSettings is required - all pricing config comes from there
+        if not settings:
+            return {"ok": False, "reason": "ShopSettings not found - merchant must configure pricing"}
+
+        markup       = Decimal(str(settings.markupPct))
+        min_comps    = settings.minCompetitorsToPrice
+        top_k        = settings.topKCompetitors
         per_round    = Decimal(str(product.maxAutoApplyChangePctOverride
                                    if product.maxAutoApplyChangePctOverride is not None
-                                   else (settings.maxAutoApplyChangePct if settings else 0.05)))
+                                   else settings.maxAutoApplyChangePct))
         lifetime_cap = Decimal(str(product.lifetimeCapPctOverride
                                    if product.lifetimeCapPctOverride is not None
-                                   else (settings.lifetimeCapPct if settings else 0.25)))
-        undercut     = Decimal(str(settings.budgetUndercut))         if settings else Decimal("0.05")
-        uplift       = Decimal(str(settings.premiumUplift))          if settings else Decimal("0.05")
-        shop_currency = (settings.currency or "INR")                 if settings else "INR"
-        include_oos   = bool(settings.includeOosInPricing)           if settings else False
+                                   else settings.lifetimeCapPct))
+        undercut     = Decimal(str(settings.budgetUndercut))
+        uplift       = Decimal(str(settings.premiumUplift))
+        shop_currency = settings.currency or "INR"
+        include_oos   = bool(settings.includeOosInPricing)
+        min_change_pct = Decimal(str(settings.minChangePctThreshold))
+        min_freshness_hours = settings.minFreshnessHours
         tier          = product.pricingTier or "COMPETITIVE"
 
         # ── Debounce: at most one decision per rescrape cycle.
-        freq_unit     = product.frequencyUnit     or (settings.frequencyUnit     if settings else None)
-        freq_interval = product.frequencyInterval or (settings.frequencyInterval if settings else None)
+        freq_unit     = product.frequencyUnit     or settings.frequencyUnit
+        freq_interval = product.frequencyInterval or settings.frequencyInterval
         interval      = _rescrape_interval(freq_unit, freq_interval)
         if interval and product.lastDecisionAt:
             last = product.lastDecisionAt
@@ -199,7 +206,8 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                 return {"ok": False, "reason": "debounced",
                         "wait_seconds": int((interval - (now - last)).total_seconds())}
 
-        freshness = max(interval * 2, ABS_MIN_FRESHNESS) if interval else ABS_MIN_FRESHNESS
+        min_freshness = timedelta(hours=min_freshness_hours)
+        freshness = max(interval * 2, min_freshness) if interval else min_freshness
         fresh_cutoff = now - freshness
 
         # ── Variants of the merchant product (we need basePrice + currentPrice).
@@ -406,8 +414,8 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                 new_price = _q(ceiling)
                 skip_reason = "clamped_lifetime_cap"
 
-            # No-op guard.
-            if cur > 0 and abs(new_price - cur) / cur < MIN_CHANGE_PCT:
+            # No-op guard: skip applying price if change is below threshold.
+            if cur > 0 and abs(new_price - cur) / cur < min_change_pct:
                 top_matches = [{"matchId": c["match_id"], "scrapedProductId": c["scraped_product_id"],
                                   "domain": c["domain"], "confidence": c["confidence"],
                                   "median": str(c["median"])} for c in top]
