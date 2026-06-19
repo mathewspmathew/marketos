@@ -192,7 +192,7 @@ def _tick_queued_discovery_jobs() -> None:
                     LIMIT 20
                     FOR UPDATE SKIP LOCKED
                 )
-                RETURNING id, "shopifyProductId", query, "numResults"
+                RETURNING id, "shopifyProductId", query
             """),
         ).all()
 
@@ -200,7 +200,7 @@ def _tick_queued_discovery_jobs() -> None:
         try:
             app.send_task(
                 "discovery.search_products",
-                args=[r.shopifyProductId, r.query, r.numResults, r.id],
+                args=[r.shopifyProductId, r.query, r.id],
                 queue="discovery_queue",
             )
             print(f"[Beat] enqueued discovery job {r.id[:8]} q={r.query!r}", flush=True)
