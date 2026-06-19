@@ -82,9 +82,7 @@ def get_dynamic_pricing_status(shop_domain: str, product_id: str) -> DynamicPric
         # Query this specific discovery job's candidates
         job_candidates_count = (
             s.query(CompetitorCandidate)
-            .filter(
-                CompetitorCandidate.discoveryJobId == (job.id if job else None),
-            )
+            .filter(CompetitorCandidate.discoveryJobId == job.id)
             .count()
             if job
             else 0
