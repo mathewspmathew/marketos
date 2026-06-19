@@ -79,6 +79,17 @@ def get_dynamic_pricing_status(shop_domain: str, product_id: str) -> DynamicPric
             .first()
         )
 
+        # Query this specific discovery job's candidates
+        job_candidates_count = (
+            s.query(CompetitorCandidate)
+            .filter(
+                CompetitorCandidate.discoveryJobId == (job.id if job else None),
+            )
+            .count()
+            if job
+            else 0
+        )
+
         if not p.dynamicPricingEnabled:
             status = "OFF"
         elif matches > 0:
@@ -89,7 +100,7 @@ def get_dynamic_pricing_status(shop_domain: str, product_id: str) -> DynamicPric
             status = "DISCOVERING"
         elif job.status == "FAILED":
             status = "NEEDS_ATTENTION"
-        elif job.status == "COMPLETED" and (job.candidateCount or 0) == 0 and competitors_found == 0:
+        elif job.status == "COMPLETED" and job_candidates_count == 0 and competitors_found == 0:
             status = "NEEDS_ATTENTION"
         else:
             status = "PROCESSING"

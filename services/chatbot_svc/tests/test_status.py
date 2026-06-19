@@ -69,19 +69,25 @@ def test_status_needs_attention_failed(seed_shop):
 def test_status_needs_attention_no_competitors(seed_shop):
     pid = _product_id(seed_shop); _enable(pid)
     with get_db() as s:
-        s.add(DiscoveryJob(shopDomain=seed_shop, shopifyProductId=pid,
-                           status="COMPLETED", candidateCount=0))
+        job = DiscoveryJob(shopDomain=seed_shop, shopifyProductId=pid,
+                           status="COMPLETED")
+        s.add(job)
+        s.flush()  # Flush to get the job ID
     st = get_dynamic_pricing_status(seed_shop, pid)
     assert st.status == "NEEDS_ATTENTION"
     assert "no competitors" in st.detail.lower()
 
 
 def test_status_processing(seed_shop):
+    import uuid
     pid = _product_id(seed_shop); _enable(pid)
     with get_db() as s:
-        s.add(DiscoveryJob(shopDomain=seed_shop, shopifyProductId=pid,
-                           status="COMPLETED", candidateCount=2))
-        s.add(CompetitorCandidate(shopDomain=seed_shop, shopifyProductId=pid,
+        job = DiscoveryJob(shopDomain=seed_shop, shopifyProductId=pid,
+                           status="COMPLETED")
+        s.add(job)
+        s.flush()  # Flush to get the job ID
+        s.add(CompetitorCandidate(id=str(uuid.uuid4()), discoveryJobId=job.id,
+                                  shopDomain=seed_shop, shopifyProductId=pid,
                                   url="https://comp.example/p", domain="comp.example",
                                   source="serper_search", status="PENDING"))
     st = get_dynamic_pricing_status(seed_shop, pid)
