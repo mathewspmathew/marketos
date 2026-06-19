@@ -106,13 +106,10 @@ model DiscoveryJob {
   shopDomain          String
   shopifyProductId    String
   status              DiscoveryStatus       @default(QUEUED)
-  candidateCount      Int                   @default(0)
   error               String?
   requestedAt         DateTime              @default(now())
   completedAt         DateTime?
   query               String?
-  numResults          Int                   @default(10)
-  listingExpansionCap Int?
   CompetitorCandidate CompetitorCandidate[]
   ShopifyUser         ShopifyUser           @relation(fields: [shopDomain], references: [shopDomain])
   ShopifyProduct      ShopifyProduct        @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
