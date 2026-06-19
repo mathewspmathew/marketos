@@ -200,7 +200,7 @@ def _tick_queued_discovery_jobs() -> None:
         try:
             app.send_task(
                 "discovery.search_products",
-                args=[r.shopifyProductId, r.query, r.id],
+                args=[r.shopifyProductId, r.query],
                 queue="discovery_queue",
             )
             print(f"[Beat] enqueued discovery job {r.id[:8]} q={r.query!r}", flush=True)
