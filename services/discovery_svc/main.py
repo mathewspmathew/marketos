@@ -169,14 +169,12 @@ def search_products(
                 shopifyProductId=product.id,
                 status="RUNNING",
                 query=query,
-                numResults=num_results,
             )
             db.add(job)
             db.flush()
         else:
             job.status     = "RUNNING"
             job.query      = query
-            job.numResults = num_results
 
         try:
             raw_hits = serper.search_web(
@@ -222,7 +220,6 @@ def search_products(
                 ).returning(models.CompetitorCandidate.id)
                 saved_ids.append(db.execute(stmt).scalar_one())
 
-            job.candidateCount = len(saved_ids)
             job.status         = "COMPLETED"
             job.completedAt    = now
             db.execute(
