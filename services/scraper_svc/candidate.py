@@ -403,11 +403,7 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
 # Task 3 — expand_listing
 # ─────────────────────────────────────────────────────────────────────────────
 def _resolve_listing_cap(db, cand: models.CompetitorCandidate) -> int:
-    """DiscoveryJob → ShopifyProduct → ShopSettings → DEFAULT_LISTING_EXPANSION_CAP."""
-    if cand.discoveryJobId:
-        job = db.get(models.DiscoveryJob, cand.discoveryJobId)
-        if job and job.listingExpansionCap is not None:
-            return int(job.listingExpansionCap)
+    """ShopifyProduct → ShopSettings → DEFAULT_LISTING_EXPANSION_CAP."""
     product = db.get(models.ShopifyProduct, cand.shopifyProductId)
     if product and product.listingExpansionCap is not None:
         return int(product.listingExpansionCap)
