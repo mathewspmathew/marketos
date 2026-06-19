@@ -25,6 +25,11 @@ export const loader = async ({ request, params }) => {
     orderBy: { requestedAt: "desc" },
   });
 
+  // Query candidate count from relation instead of denormalized field
+  const candidateCount = latestJob ? await db.competitorCandidate.count({
+    where: { discoveryJobId: latestJob.id },
+  }) : 0;
+
   const candidates = await db.competitorCandidate.findMany({
     where: { shopifyProductId: productId },
     orderBy: { discoveredAt: "desc" },
@@ -50,6 +55,7 @@ export const loader = async ({ request, params }) => {
       listingExpansionCap: listingExpansionCapDefault,
     },
     latestJob,
+    candidateCount: candidateCount,
     candidates: candidates.map((c) => ({
       id: c.id,
       url: c.url,
@@ -140,7 +146,7 @@ export const action = async ({ request, params }) => {
 };
 
 export default function DiscoverPage() {
-  const { product, latestJob, candidates } = useLoaderData();
+  const { product, latestJob, candidateCount, candidates } = useLoaderData();
   const refineFetcher = useFetcher();
   const searchFetcher = useFetcher();
   const toggleFetcher = useFetcher();
@@ -282,7 +288,7 @@ export default function DiscoverPage() {
             }>
               {latestJob.status}
             </s-badge>
-            <s-text>{latestJob.candidateCount} candidates</s-text>
+            <s-text>{candidateCount} candidates</s-text>
             {latestJob.query && <s-text tone="subdued">q: {latestJob.query}</s-text>}
             {latestJob.error && <s-text tone="critical">err: {latestJob.error}</s-text>}
           </s-stack>
