@@ -8,7 +8,7 @@ Single task (match_queue):
     computes scoped pairwise cosine between each merchant variant's
     ShopifyEmbedding and the scraped variants' ProductEmbeddings. Writes/
     updates ProductMatch + one ProductLevelMatch per (merchantProduct,
-    scrapedProduct) pair. Fans out stats + suggestion tasks for downstream.
+    scrapedProduct) pair. Fans out stats tasks for downstream pricing engine.
 
 Design:
   - Scope is the scraped product, not the shop. No HNSW, no per-domain
@@ -29,11 +29,8 @@ Design:
     at it (two merchant products independently discovered the same URL). We
     match against every non-rejected candidate's merchant product.
 """
-import os
 import uuid
 
-import redis
-from dotenv import load_dotenv
 from sqlalchemy import text
 
 from services.common.celery_app import app
@@ -47,24 +44,8 @@ from services.matcher_svc.scoring import (
     confidence_tier,
 )
 
-load_dotenv()
-
-_SUGGESTION_DEBOUNCE_SECONDS = 60  # one suggestion run per product per minute
-
 # Hybrid scoring: α·text_sim + (1-α)·img_sim when both vectors are available.
 _HYBRID_TEXT_WEIGHT = 0.6
-
-_redis_client: redis.Redis | None = None
-
-
-def _redis() -> redis.Redis:
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = redis.Redis.from_url(
-            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-            decode_responses=True,
-        )
-    return _redis_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -328,7 +309,6 @@ def match_for_scraped_product(self, scraped_product_id: str):
     triggered its discovery (via CompetitorCandidate)."""
     total_written = 0
     touched_variants: set[str] = set()
-    touched_products: set[str] = set()
     shop_domain: str | None = None
 
     try:
@@ -373,8 +353,6 @@ def match_for_scraped_product(self, scraped_product_id: str):
                 )
                 total_written += written
                 touched_variants.update(touched)
-                if written > 0:
-                    touched_products.add(mpid)
 
             # Mark this scrape's competitor embeddings as consumed by the matcher.
             session.execute(
@@ -400,7 +378,7 @@ def match_for_scraped_product(self, scraped_product_id: str):
     print(
         f"[matcher] scraped product {scraped_product_id[:8]} → "
         f"{total_written} ProductMatch row(s) across "
-        f"{len(touched_products)} merchant product(s)",
+        f"{len(touched_variants)} variant(s)",
         flush=True,
     )
 
@@ -415,17 +393,5 @@ def match_for_scraped_product(self, scraped_product_id: str):
             args=[shop_domain, svid],
             queue="stats_queue",
         )
-
-    # Suggestion fan-out per merchant product, Redis-debounced so sibling
-    # variants matching in the same window only fire one suggestion task.
-    for mpid in touched_products:
-        lock_key = f"suggestion:debounce:{mpid}"
-        if _redis().set(lock_key, "1", nx=True, ex=_SUGGESTION_DEBOUNCE_SECONDS):
-            app.send_task(
-                "suggestion.suggest_for_product",
-                args=[shop_domain, mpid],
-                queue="suggestion_queue",
-            )
-            print(f"[matcher] queued suggestion for product {mpid[:8]}", flush=True)
 
     return total_written

@@ -21,7 +21,6 @@ export default function App() {
         <s-link href="/app/matches">Matched competitors</s-link>
         <s-link href="/app/stats">Stats</s-link>
         <s-link href="/app/settings">Settings</s-link>
-        {/* <s-link href="/app/suggestions">Product suggestions</s-link> */}
       </s-app-nav>
       <Outlet />
       

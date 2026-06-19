@@ -37,9 +37,7 @@ uv run celery -A services.common.celery_app worker -Q semantic_queue       -n se
 uv run celery -A services.common.celery_app worker -Q shopify_semantic_queue -n shopify-semantic-worker
 uv run celery -A services.common.celery_app worker -Q embedding_queue      -n embedding-worker
 uv run celery -A services.common.celery_app worker -Q match_queue          -n matcher-worker
-uv run celery -A services.common.celery_app worker -Q suggestion_queue,shopify_sync_queue -n suggestion-worker
-uv run celery -A services.common.celery_app worker -Q stats_queue          -n elasticity-worker
-uv run celery -A services.common.celery_app worker -Q pricing_queue        -n pricing-worker
+uv run celery -A services.common.celery_app worker -Q stats_queue,pricing_queue,writer_queue,shopify_sync_queue -n pricing-worker
 uv run celery -A services.common.celery_app beat
 ```
 
@@ -69,9 +67,7 @@ Queue routing is the source of truth in `services/common/celery_app.py`. Workers
 | shopify-semantic-worker | `shopify_semantic_queue` | Semantic-text + product-level search-query generation for merchant's ShopifyProducts/Variants |
 | embedding-worker | `embedding_queue` | Vertex AI text & image embeddings → pgvector write (both merchant and competitor sides) |
 | matcher-worker | `match_queue` | Match scraped competitor variants/products to merchant variants/products via vector similarity |
-| suggestion-worker | `suggestion_queue`, `shopify_sync_queue` | Generate pricing suggestions; recompute Shopify sales aggregates |
-| elasticity-worker | `stats_queue` | Recompute per-variant competitor price stats and elasticity inputs |
-| pricing-worker | `pricing_queue` | Decide per-variant / per-product price (v1 is suggestion-only, no auto-apply) |
+| pricing-worker | `stats_queue`, `pricing_queue`, `writer_queue`, `shopify_sync_queue` | Recompute competitor stats, decide pricing, write decisions to Shopify, sync order/inventory |
 | celery-beat | — | Triggers `services.scraper_svc.celery_beat.check_idle_configs` every 30s |
 
 Shared utilities in `services/common/`: Celery app config (`celery_app.py`), Prisma Python client (`db.py`), GCS helpers (`gcs_utils.py`), Pydantic schemas (`schemas.py`).
@@ -106,9 +102,7 @@ Discovery + competitor side:
 
 Pricing:
   matcher-worker (vector sim) → ProductMatch
-    → elasticity-worker → VariantCompetitorStats
-    → pricing-worker → PriceDecision
-    → suggestion-worker → ProductSuggestion (surfaced in UI; v1 is suggestion-only)
+    → pricing-worker (stats + decision) → PriceDecision
 ```
 
 ## Environment Variables

@@ -13,7 +13,6 @@ class StatsMetric(str, enum.Enum):
     priced_above_competitor = "priced_above_competitor"
     priced_below_competitor = "priced_below_competitor"
     match_coverage = "match_coverage"
-    suggestion_counts = "suggestion_counts"
     recent_decisions = "recent_decisions"
 
 
@@ -21,7 +20,6 @@ class StatsMetric(str, enum.Enum):
 #   VariantCompetitorStats.shopifyVariantId  — PK (not "variantId")
 #   VariantCompetitorStats.median            — median competitor price column
 #   ProductMatch.shopifyVariantId            — FK to ShopifyVariant
-#   ProductSuggestion.shopDomain             — tenant key
 #   PriceDecision.newPrice                   — decided price column
 #   PriceDecision.decidedAt                  — timestamp column (not "createdAt")
 
@@ -62,12 +60,6 @@ _QUERIES: dict[StatsMetric, str] = {
              JOIN "ShopifyProduct" p3 ON p3.id = v3."productId"
              WHERE p3."shopDomain" = :shop) AS total
     """,
-    StatsMetric.suggestion_counts: """
-        SELECT status, COUNT(*) AS count
-        FROM "ProductSuggestion"
-        WHERE "shopDomain" = :shop
-        GROUP BY status
-    """,
     StatsMetric.recent_decisions: """
         SELECT id, "shopifyVariantId", "newPrice", "decidedAt"
         FROM "PriceDecision"
@@ -102,9 +94,6 @@ def get_stats(
     if metric == StatsMetric.match_coverage:
         r = rows[0]
         return {"matched": int(r["matched"]), "total": int(r["total"])}
-
-    if metric == StatsMetric.suggestion_counts:
-        return {"by_status": {r["status"]: int(r["count"]) for r in rows}}
 
     if metric == StatsMetric.recent_decisions:
         return {"items": [dict(r) for r in rows]}

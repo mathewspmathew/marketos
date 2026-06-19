@@ -21,13 +21,9 @@ products they want to compete on. From there the system runs an end-to-end loop:
    per-domain HNSW similarity + hybrid thresholds → `ProductMatch` (variant↔variant)
    and `ProductLevelMatch` (product↔product)
 8. **Measure the market** — roll matched competitor prices into per-variant
-   stats and elasticity inputs (`CompetitorPriceObservation`,
-   `VariantCompetitorStats`)
+   stats (`CompetitorPriceObservation`, `VariantCompetitorStats`)
 9. **Decide a price** per variant/product from the competitor reference and the
    product's pricing tier → `PriceDecision`
-10. **Suggest** new title / description / price per merchant product → `ProductSuggestion`
-11. **Apply** — merchant reviews and approves in the Shopify UI; approved values
-    are written back to Shopify via Admin API (v1 is suggestion-only — no
     auto-apply)
 
 A Pydantic-AI **chat assistant** sits alongside the UI and can answer questions
@@ -53,7 +49,6 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
 │    • app.discover.$id.jsx         accept / reject CompetitorCandidate      │
 │    • app.matches.jsx              view ProductMatch rows                   │
 │    • app.stats.*.jsx              competitor price picture + history       │
-│    • app.suggestions.jsx          review + Apply ProductSuggestion         │
 │    • app.pricing.*.jsx            per-variant price history / controls     │
 │    • app.approve.jsx / app.rules.jsx / app.alerts.jsx                     │
 │    • app.chatbot.jsx              chat assistant (SSE → chatbot_svc)       │
@@ -68,8 +63,8 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
 │  + pgvector                  │         │  FastAPI · port 8000              │
 │  shared via Prisma schema    │◀────────│  POST /internal/shopify/          │
 │  shopify_ui/prisma/          │  reads  │       product-updated             │
-│      schema.prisma           │         │  POST /internal/suggestion/       │
-└──────────────────────────────┘         │       regenerate[-product]        │
+│      schema.prisma           │         │  POST /internal/shopify/sync      │
+└──────────────────────────────┘         │  POST /internal/shopify/refresh   │
         ▲                                └───────────────────────────────────┘
         │                                              │
         │                                              │ celery_app.send_task(...)
@@ -80,8 +75,7 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
         │              │   extraction_queue, semantic_queue,               │
         │              │   shopify_semantic_queue, embedding_queue,        │
         │              │   match_queue, stats_queue, pricing_queue,        │
-        │              │   suggestion_queue, shopify_sync_queue,           │
-        │              │   writer_queue, scheduler_queue, maintenance_queue│
+        │              │   shopify_sync_queue, writer_queue, scheduler_queue│
         │              └───────────────────────────────────────────────────┘
         │                                              ▲
         │ celery-beat fires check_idle_configs every   │ send_task
@@ -212,26 +206,8 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
 │                                             │
 │  Decide per-variant / per-product price     │
 │  from competitor reference + PricingTier    │
-│  → UPSERT PriceDecision (v1: suggestion-only)│
+│  → UPSERT PriceDecision (v1: no auto-apply) │
 └─────────────────────────────────────────────┘
-        │ suggestion_queue
-        ▼
-┌─────────────────────────────────────────────┐
-│  suggestion-worker                          │
-│  services/suggestion_svc/main.py            │
-│    @task suggestion.suggest_for_shop        │
-│    @task suggestion.suggest_for_product     │
-│                                             │
-│  Aggregate matched competitors → Groq copy  │
-│  + price → UPSERT ProductSuggestion         │
-│  (suggestedTitle/Description, matchCount,    │
-│   avgMatchScore, SuggestionStatus;          │
-│   preserves edited* / applied* fields)      │
-└─────────────────────────────────────────────┘
-        │ merchant opens, approves
-        ▼
-┌───────────────────────────────────────────────────────────────────────────┐
-│  shopify_ui/app/routes/app.suggestions.jsx (+ internal.apply-price.jsx)   │
 │    • shows ProductSuggestion + competitor stats                           │
 │    • merchant edits or Approves                                           │
 │    • on Apply: writes back to Shopify Admin API (productVariantsBulkUpdate)│
@@ -279,7 +255,6 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
 | `match_queue`           | `matcher.match_for_scraped_product`               | `services/matcher_svc/main.py`        |
 | `stats_queue`           | `stats.recompute_for_variant` / `recompute_after_observation` | `services/pricing_svc/stats.py` |
 | `pricing_queue`         | `pricing.decide_for_product` / `apply_price`      | `services/pricing_svc/main.py`        |
-| `suggestion_queue`      | `suggestion.suggest_for_shop` / `suggest_for_product` | `services/suggestion_svc/main.py` |
 | `shopify_sync_queue`    | `shopify_sync.recompute_sales_aggregate` / `pull_products` | `services/shopify_svc/main.py`  |
 | `writer_queue`          | `shopify_writer.apply_decision` / `sweep_pending` | `services/shopify_svc/main.py`        |
 | `maintenance_queue`     | `chatbot.prune_old_sessions` (beat, daily 03:15)  | `services/chatbot_svc/prune.py`       |

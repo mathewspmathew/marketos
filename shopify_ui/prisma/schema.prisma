@@ -219,28 +219,6 @@ model ProductMatch {
   @@index([shopifyVariantId, matchScore(sort: Desc)], map: "idx_pm_shopify")
 }
 
-model ProductSuggestion {
-  id                       String           @id
-  shopDomain               String
-  shopifyProductId         String           @unique
-  suggestedTitle           String?
-  suggestedDescriptionHtml String?
-  contentRationale         String?
-  editedTitle              String?
-  editedDescriptionHtml    String?
-  appliedTitle             String?
-  appliedDescriptionHtml   String?
-  matchCount               Int              @default(0)
-  avgMatchScore            Decimal?         @db.Decimal(5, 2)
-  status                   SuggestionStatus @default(FIRST_TIME)
-  generatedAt              DateTime         @default(now())
-  updatedAt                DateTime
-  appliedAt                DateTime?
-  ShopifyProduct           ShopifyProduct   @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
-
-  @@index([shopDomain, status])
-}
-
 model ProductUrl {
   id                String          @id
   configId          String?
@@ -427,7 +405,6 @@ model ShopifyProduct {
   CompetitorCandidate           CompetitorCandidate[]
   DiscoveryJob                  DiscoveryJob[]
   ProductLevelMatch             ProductLevelMatch[]
-  ProductSuggestion             ProductSuggestion?
   ProductUrl                    ProductUrl[]
   ShopifyUser                   ShopifyUser           @relation(fields: [shopDomain], references: [shopDomain])
   ShopifyVariant                ShopifyVariant[]
@@ -538,13 +515,6 @@ enum ScrapeStatus {
   QUEUED
   RUNNING
   SCRAPED_FIRST
-}
-
-enum SuggestionStatus {
-  FIRST_TIME
-  SHOWED
-  SKIPPED
-  APPLIED
 }
 
 enum UrlStatus {

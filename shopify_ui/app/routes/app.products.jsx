@@ -366,11 +366,8 @@ export const action = async ({ request }) => {
         });
       }
 
-      // 3. Delete ProductLevelMatch and ProductSuggestion (product-level)
+      // 3. Delete ProductLevelMatch (product-level)
       await db.productLevelMatch.deleteMany({
-        where: { shopifyProductId: productId },
-      });
-      await db.productSuggestion.deleteMany({
         where: { shopifyProductId: productId },
       });
 

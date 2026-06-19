@@ -37,9 +37,3 @@ def test_recent_decisions_limited(seed_shop):
     res = get_stats(seed_shop, StatsMetric.recent_decisions)
     assert "items" in res
     assert len(res["items"]) <= 20
-
-
-def test_suggestion_counts_returns_by_status_dict(seed_shop):
-    res = get_stats(seed_shop, StatsMetric.suggestion_counts)
-    assert "by_status" in res
-    assert isinstance(res["by_status"], dict)
