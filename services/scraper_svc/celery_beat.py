@@ -149,8 +149,7 @@ def _tick_enabled_products_discovery() -> None:
                     FOR UPDATE SKIP LOCKED
                 )
                 RETURNING id,
-                          COALESCE("searchQueryOverride", "searchQuery") AS query,
-                          "discoveryNumResults"                          AS num_results
+                          COALESCE("searchQueryOverride", "searchQuery") AS query
             """),
         ).all()
 
@@ -158,12 +157,12 @@ def _tick_enabled_products_discovery() -> None:
         try:
             app.send_task(
                 "discovery.search_products",
-                args=[r.id, r.query, r.num_results or 10],
+                args=[r.id, r.query],
                 queue="discovery_queue",
             )
             print(
                 f"[Beat] enqueued discovery for product {r.id} "
-                f"(n={r.num_results}, q={r.query!r})",
+                f"(q={r.query!r})",
                 flush=True,
             )
         except Exception as exc:
