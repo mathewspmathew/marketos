@@ -30,6 +30,8 @@ const DEFAULTS = {
   lifetimeCapPct: 0.25,
   budgetUndercut: 0.05,
   premiumUplift: 0.05,
+  minChangePctThreshold: 0.005,
+  minFreshnessHours: 24,
   serperGl: "in",
   serperHl: "en",
   serperLocation: "Kochi, Kerala",
@@ -67,6 +69,8 @@ export const loader = async ({ request }) => {
       lifetimeCapPct:           Number(s.lifetimeCapPct), // "Don't drift more than (lifetime) - affects min and max prices"
       budgetUndercut:           Number(s.budgetUndercut), // "Discount applied to budget tier products"
       premiumUplift:            Number(s.premiumUplift), // "Markup applied to premium tier products"
+      minChangePctThreshold:    Number(s.minChangePctThreshold), // "Minimum price change to apply"
+      minFreshnessHours:        s.minFreshnessHours, // "Drop observations older than this"
       serperGl:                 s.serperGl, // "Country code"
       serperHl:                 s.serperHl, // "Language"
       serperLocation:           s.serperLocation, // "Search location"
@@ -118,6 +122,8 @@ export const action = async ({ request }) => {
     lifetimeCapPct:           parsePctish(formData.get("lifetimeCapPct"))        ?? DEFAULTS.lifetimeCapPct,
     budgetUndercut:           parsePctish(formData.get("budgetUndercut"))        ?? DEFAULTS.budgetUndercut,
     premiumUplift:            parsePctish(formData.get("premiumUplift"))         ?? DEFAULTS.premiumUplift,
+    minChangePctThreshold:    parsePctish(formData.get("minChangePctThreshold")) ?? DEFAULTS.minChangePctThreshold,
+    minFreshnessHours:        parsePositiveInt(formData.get("minFreshnessHours"), DEFAULTS.minFreshnessHours),
     serperGl:       ((formData.get("serperGl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperGl,
     serperHl:       ((formData.get("serperHl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperHl,
     serperLocation: ((formData.get("serperLocation") || "").toString().trim())               || DEFAULTS.serperLocation,
@@ -198,6 +204,8 @@ export default function SettingsPage() {
     topKCompetitors: String(settings.topKCompetitors),
     maxAutoApplyChangePct: toPercentageDisplay(settings.maxAutoApplyChangePct),
     lifetimeCapPct: toPercentageDisplay(settings.lifetimeCapPct),
+    minChangePctThreshold: toPercentageDisplay(settings.minChangePctThreshold),
+    minFreshnessHours: String(settings.minFreshnessHours),
     frequencyInterval: String(settings.frequencyInterval),
     frequencyUnit: settings.frequencyUnit,
     autoRescrapeEnabled: settings.autoRescrapeEnabled,
@@ -240,6 +248,8 @@ export default function SettingsPage() {
         lifetimeCapPct: form.lifetimeCapPct,
         budgetUndercut: form.budgetUndercut,
         premiumUplift: form.premiumUplift,
+        minChangePctThreshold: form.minChangePctThreshold,
+        minFreshnessHours: form.minFreshnessHours,
         serperGl: form.serperGl,
         serperHl: form.serperHl,
         serperLocation: form.serperLocation,
@@ -469,6 +479,37 @@ export default function SettingsPage() {
               <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
             </div>
             <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 25</s-text>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Minimum price change to apply</label>
+              <span title="Ignore price changes smaller than this threshold. Prevents applying tiny 0.1% wiggles. E.g., 0.5% = only apply if change is ≥0.5%." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <s-text-field
+                type="number"
+                value={form.minChangePctThreshold}
+                onInput={(e) => setField("minChangePctThreshold", e.currentTarget.value)}
+                placeholder="0.5"
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
+            </div>
+            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>Default: 0.5% (ignore changes smaller than this)</s-text>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Observation freshness requirement</label>
+              <span title="Drop competitor price observations older than this many hours. Ensures pricing is based on recent data. E.g., 24 = ignore prices older than 24 hours." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+            </div>
+            <s-text-field
+              type="number"
+              value={form.minFreshnessHours}
+              onInput={(e) => setField("minFreshnessHours", e.currentTarget.value)}
+              helpText="Default: 24 hours. Prices older than this are considered stale."
+            />
           </div>
         </s-stack>
       </s-section>
