@@ -2,22 +2,20 @@
 services/scraper_svc/celery_beat.py
 
 Beat tick (every 30s, see celery_app.beat_schedule):
-  - Reset stuck legacy ScrapingConfig rows (transient cleanup until that table is dropped).
-  - Tick product-rooted ProductUrl rows: dispatch scraper.rescrape_url for due URLs.
+  - Dispatch scraper.rescrape_url for product-rooted URLs that are due.
+  - Dispatch discovery.search_products for queued discovery jobs (UI-driven).
   - Backfill semantic generation for any ShopifyVariant missing semanticText.
 
-Legacy site-rooted listing scraping is no longer kicked off here — the
-discovery → scrape_candidate → ProductUrl path is the new flow. The old
-ScrapingConfig polling logic stays only for the transient stuck-config sweep.
+The discovery → scrape_candidate → extract_candidate → ProductUrl path is the
+primary flow. Beat dispatches rescraping based on ProductUrl.nextRunAt schedule.
 """
-from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
-from sqlalchemy import distinct, update as sa_update, func, text
+from sqlalchemy import update as sa_update, text
 
 from services.common.celery_app import app
 from services.common.db import get_db
-from services.common.models import ProductUrl, ScrapingConfig, ShopifyVariant
+from services.common.models import ProductUrl, ShopifyVariant
 
 _STUCK_TIMEOUT_HOURS    = 1
 _RESCRAPE_DOMAIN_GAP    = 30   # seconds between consecutive scrapes of the same domain
@@ -89,79 +87,9 @@ def _tick_product_urls() -> None:
 def check_idle_configs():
     """Beat entry point. Name kept for compatibility with existing schedule."""
     print("[Beat] tick", flush=True)
-    with get_db() as session:
-        # Reset legacy ScrapingConfig rows stuck in QUEUED/RUNNING for too long.
-        # The new flow doesn't use ScrapingConfig but this table still has live
-        # rows from the previous architecture; clean them up so nothing lingers.
-        stuck_cutoff = datetime.now(timezone.utc) - timedelta(hours=_STUCK_TIMEOUT_HOURS)
-        stuck = (
-            session.query(ScrapingConfig)
-            .filter(
-                ScrapingConfig.status.in_(["QUEUED", "RUNNING"]),
-                ScrapingConfig.isActive == True,  # noqa: E712
-                ScrapingConfig.updatedAt < stuck_cutoff,
-            )
-            .all()
-        )
-        for config in stuck:
-            print(f"[Beat] stuck ScrapingConfig {config.id} → IDLE", flush=True)
-            session.execute(
-                sa_update(ScrapingConfig)
-                .where(ScrapingConfig.id == config.id)
-                .values(status="IDLE", updatedAt=func.now())
-            )
-
     _tick_queued_discovery_jobs()
-    _tick_enabled_products_discovery()
     _tick_product_urls()
     _shopify_semantic_backfill()
-
-
-def _tick_enabled_products_discovery() -> None:
-    """First-time discovery for products newly toggled to dynamicPricingEnabled=TRUE.
-
-    Fires once per toggle-on: only picks products that have never been
-    discovered (lastDiscoveryAt IS NULL). To re-discover, the merchant must
-    toggle off → on (the off path clears lastDiscoveryAt), or use the manual
-    Discover page, which goes through DiscoveryJob + _tick_queued_discovery_jobs.
-    """
-    with get_db() as session:
-        # Atomic claim: stamp lastDiscoveryAt as we select, so an overlapping
-        # beat tick can't re-enqueue the same product before the discovery
-        # worker has had a chance to finish. Mirrors the nextRunAt-clearing
-        # pattern in _tick_product_urls.
-        rows = session.execute(
-            text("""
-                UPDATE "ShopifyProduct"
-                SET "lastDiscoveryAt" = NOW()
-                WHERE id IN (
-                    SELECT id FROM "ShopifyProduct"
-                    WHERE "dynamicPricingEnabled" = TRUE
-                      AND COALESCE("searchQueryOverride", "searchQuery") IS NOT NULL
-                      AND "lastDiscoveryAt" IS NULL
-                    ORDER BY "updatedAt" ASC
-                    LIMIT 20
-                    FOR UPDATE SKIP LOCKED
-                )
-                RETURNING id,
-                          COALESCE("searchQueryOverride", "searchQuery") AS query
-            """),
-        ).all()
-
-    for r in rows:
-        try:
-            app.send_task(
-                "discovery.search_products",
-                args=[r.id, r.query],
-                queue="discovery_queue",
-            )
-            print(
-                f"[Beat] enqueued discovery for product {r.id} "
-                f"(q={r.query!r})",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"[Beat] dispatch failed for discovery {r.id}: {exc}", flush=True)
 
 
 def _tick_queued_discovery_jobs() -> None:
