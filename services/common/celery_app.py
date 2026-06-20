@@ -24,7 +24,6 @@ app = Celery(
         'services.pricing_svc.stats',
         'services.pricing_svc.apply',
         'services.discovery_svc.main',
-        'services.chatbot_svc.prune',
     ]
 )
 
@@ -63,7 +62,6 @@ app.conf.update(
         'scraper.expand_listing':                       {'queue': 'extraction_queue'},
         'scraper.rescrape_url':                         {'queue': 'scraping_queue'},
         'services.scraper_svc.celery_beat.check_idle_configs': {'queue': 'scheduler_queue'},
-        'chatbot.prune_old_sessions':                   {'queue': 'maintenance_queue'},
     },
     beat_schedule={
         'check-idle-configs-every-30-seconds': {
@@ -74,10 +72,6 @@ app.conf.update(
         # removed when SalesAggregate / PricingRule were dropped in the
         # discovery_pivot migration. v1 pricing is suggestion-only (no
         # auto-apply), so the writer sweep has nothing to do.
-        'chatbot-prune-old-sessions': {
-            'task': 'chatbot.prune_old_sessions',
-            'schedule': crontab(hour=3, minute=15),
-        },
     }
 )
 
