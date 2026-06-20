@@ -32,21 +32,16 @@ def _tick_product_urls() -> None:
     tick so a sudden surge of due URLs doesn't dominate the queue.
     """
     with get_db() as session:
-        # Three gates layered on top of the schedule itself:
-        #   1. ShopifyProduct.dynamicPricingEnabled — per-product opt-in
-        #   2. ShopifyProduct.frequencyUnit != 'never' — rescrape on at the product
-        #   3. ShopSettings.autoRescrapeEnabled — shop-wide kill switch
-        # Toggling any of them off pauses the loop without losing the schedule.
         rows = session.execute(
             text("""
                 SELECT pu.id, pu.url, pu."nextRunAt"
                 FROM "ProductUrl" pu
-                JOIN "ShopifyProduct" sp ON sp.id = pu."shopifyProductId"
+                LEFT JOIN "ShopifyProduct" sp ON sp.id = pu."shopifyProductId"
                 LEFT JOIN "ShopSettings" ss ON ss."shopDomain" = pu."shopDomain"
-                WHERE pu."shopifyProductId" IS NOT NULL
-                  AND pu.status = 'ACTIVE'
+                WHERE pu.status = 'ACTIVE'
                   AND pu."nextRunAt" IS NOT NULL
                   AND pu."nextRunAt" <= NOW()
+                  AND pu."shopifyProductId" IS NOT NULL
                   AND sp."dynamicPricingEnabled" = TRUE
                   AND COALESCE(sp."frequencyUnit", 'never') <> 'never'
                   AND COALESCE(ss."autoRescrapeEnabled", TRUE) = TRUE
