@@ -1,17 +1,12 @@
 """
 services/pricing_svc/apply.py
 
-Apply a batch of PriceDecisions to Shopify via the React Router app's
-internal write proxy (/internal/apply-price).
+Apply a batch of PriceDecisions to Shopify via direct Token Exchange.
 
-Why through the proxy and not directly?
-    Shopify is migrating public apps to expiring offline access tokens.
-    The library handles Token Exchange refresh on every authenticated call —
-    but only when those calls go through the @shopify/shopify-app-react-router
-    library (the React Router server). Background Python workers don't have
-    access to that refresh machinery. So we treat the React Router app as
-    the single source of Shopify auth: workers POST {productId, variants}
-    over HTTP with a shared secret; the library does the rest.
+Token Exchange:
+    Workers read the refresh token from the Session table, exchange it for
+    an access token via Shopify's Token Exchange endpoint, then call the
+    Admin API directly. No React Router proxy needed.
 
 Idempotent: skips decisions that already have appliedAt set.
 Per-product advisory lock prevents concurrent apply for the same product.
@@ -20,13 +15,16 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 
-import requests
 from sqlalchemy import text
 
 from services.common.celery_app import app
 from services.common.db import get_db
+from services.common.shopify_auth import (
+    ShopifyAPIError,
+    ShopifyAuthError,
+    call_shopify_admin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,22 +49,6 @@ def _stamp_error(session, decision_ids: list[str], err: str, shop_domain: str = 
                     product_id = product_result if product_result else ""
                 except Exception as e:
                     logger.exception(f"Failed to update PriceDecision: {e}")
-
-
-def _post_to_proxy(shop_domain: str, product_id: str, variants_input: list[dict]) -> dict:
-    base_url = os.environ.get("REACT_ROUTER_INTERNAL_URL")
-    token    = os.environ.get("INTERNAL_API_TOKEN")
-    if not base_url or not token:
-        raise RuntimeError("REACT_ROUTER_INTERNAL_URL / INTERNAL_API_TOKEN not configured")
-    resp = requests.post(
-        f"{base_url.rstrip('/')}/internal/apply-price",
-        json={"shopDomain": shop_domain, "productId": product_id, "variants": variants_input},
-        headers={"X-Internal-Token": token, "Content-Type": "application/json"},
-        timeout=30,
-    )
-    if not resp.ok:
-        raise RuntimeError(f"proxy {resp.status_code}: {resp.text[:300]}")
-    return resp.json()
 
 
 def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) -> dict:
@@ -104,24 +86,35 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
             for (_, vid, price) in pending
         ]
 
+        # GraphQL mutation for updating variant prices
+        mutation = """
+            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                    productVariants { id price }
+                    userErrors { field message }
+                }
+            }
+        """
+
+        # Call Shopify Admin API directly with Token Exchange
         try:
-            proxy_result = _post_to_proxy(shop_domain, shopify_product_id, variants_input)
-        except Exception as exc:
-            msg = str(exc)
-            _stamp_error(session, [d for d, _, _ in pending], f"proxy_failed: {msg}", shop_domain, pending)
-            # 401 from the proxy → no Session row exists; pointless to retry
-            # until the merchant reopens the app.
-            if "401" in msg or "no_session_for_shop" in msg:
-                return {"ok": False, "reason": "unauthorized"}
-            raise
+            result = call_shopify_admin(
+                shop_domain,
+                mutation,
+                {"productId": shopify_product_id, "variants": variants_input},
+                session,
+            )
+        except ShopifyAuthError as exc:
+            msg = f"auth_error: {str(exc)}"
+            _stamp_error(session, [d for d, _, _ in pending], msg, shop_domain, pending)
+            return {"ok": False, "reason": "unauthorized", "error": msg}
+        except ShopifyAPIError as exc:
+            msg = f"api_error: {str(exc)}"
+            _stamp_error(session, [d for d, _, _ in pending], msg, shop_domain, pending)
+            return {"ok": False, "reason": "api_error", "error": msg}
 
-        if not proxy_result.get("ok"):
-            err = proxy_result.get("error") or proxy_result.get("reason") or "unknown"
-            _stamp_error(session, [d for d, _, _ in pending], f"proxy_returned_not_ok: {err}"[:500], shop_domain, pending)
-            return {"ok": False, "reason": err}
-
-        # The proxy returns { ok: true, data: { productVariantsBulkUpdate: {...} } }
-        bulk = (proxy_result.get("data") or {}).get("productVariantsBulkUpdate") or {}
+        # Extract response data (GraphQL response format)
+        bulk = (result.get("data") or {}).get("productVariantsBulkUpdate") or {}
         user_errors = bulk.get("userErrors") or []
         if user_errors:
             _stamp_error(
