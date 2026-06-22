@@ -497,30 +497,3 @@ class ChatPreview(Base):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Activity event log for pipeline visibility
-# ─────────────────────────────────────────────────────────────────────────────
-
-class ActivityEvent(Base):
-    __tablename__ = "ActivityEvent"
-
-    id                  = Column(String, primary_key=True)
-    shopDomain          = Column(String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
-    eventType           = Column(String, nullable=False)
-    occurredAt          = Column(DateTime(timezone=True), server_default=func.now())
-    summary             = Column(String, nullable=False)
-    details             = Column(JSONB, nullable=False)
-    competitorVariantId = Column(String, ForeignKey("ScrapedVariant.id"), nullable=True)
-    competitorProductId = Column(String, ForeignKey("ScrapedProduct.id"), nullable=True)
-    competitorPrice     = Column(Numeric(10, 2), nullable=True)
-    competitorIsInStock = Column(Boolean, nullable=True)
-    priceDecisionId     = Column(String, ForeignKey("PriceDecision.id"), nullable=True)
-    shopifyProductId    = Column(String, ForeignKey("ShopifyProduct.id"), nullable=True)
-    shopifyVariantId    = Column(String, ForeignKey("ShopifyVariant.id"), nullable=True)
-    oldPrice            = Column(Numeric(10, 2), nullable=True)
-    newPrice            = Column(Numeric(10, 2), nullable=True)
-    changePct           = Column(Float, nullable=True)
-    refPrice            = Column(Numeric(10, 2), nullable=True)
-    competitorsUsed     = Column(Integer, nullable=True)
-    tierAtDecision      = Column(String, nullable=True)
-    topMatchesJson      = Column(JSONB, nullable=True)
-    applyError          = Column(String, nullable=True)
-    skipReason          = Column(String, nullable=True)

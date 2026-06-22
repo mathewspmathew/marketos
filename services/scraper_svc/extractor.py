@@ -198,8 +198,6 @@ def _record_observations(
     Also queues a stats fan-out task per competitor variant so any matched
     merchant variant gets its VariantCompetitorStats recomputed. Safe no-op
     when no matches exist yet (e.g. first-time scrape before matcher runs).
-
-    Logs each observation as an ActivityEvent for audit trail visibility.
     """
     if not rows:
         return
