@@ -25,7 +25,6 @@ import os
 import requests
 from sqlalchemy import text
 
-from services.common.activity_logger import log_decision_applied, log_decision_failed
 from services.common.celery_app import app
 from services.common.db import get_db
 
@@ -50,15 +49,8 @@ def _stamp_error(session, decision_ids: list[str], err: str, shop_domain: str = 
                         {"v": vid},
                     ).scalar()
                     product_id = product_result if product_result else ""
-                    log_decision_failed(
-                        shop_domain=shop_domain,
-                        price_decision_id=did,
-                        shopify_product_id=product_id,
-                        shopify_variant_id=vid,
-                        error_message=err[:500],
-                    )
                 except Exception as e:
-                    logger.exception(f"Failed to log decision failure: {e}")
+                    logger.exception(f"Failed to update PriceDecision: {e}")
 
 
 def _post_to_proxy(shop_domain: str, product_id: str, variants_input: list[dict]) -> dict:
@@ -166,14 +158,8 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
                     {"v": vid},
                 ).scalar()
                 product_id = product_result if product_result else ""
-                log_decision_applied(
-                    shop_domain=shop_domain,
-                    price_decision_id=did,
-                    shopify_product_id=product_id,
-                    shopify_variant_id=vid,
-                )
             except Exception as e:
-                logger.exception(f"Failed to log decision applied: {e}")
+                logger.exception(f"Failed to update PriceDecision: {e}")
 
     return {"ok": True, "applied": len(pending), "decisionIds": decision_ids}
 

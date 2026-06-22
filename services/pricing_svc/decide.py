@@ -54,7 +54,6 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import text
 
-from services.common.activity_logger import log_decision_made
 from services.common.celery_app import app
 from services.common.db import get_db
 
@@ -326,20 +325,6 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                 top_matches=[], tier=tier,
                 skip_reason="below_min_competitors", auto_applied=False, now=now,
             )
-            log_decision_made(
-                shop_domain=shop_domain,
-                price_decision_id=decision_id,
-                shopify_product_id=shopify_product_id,
-                shopify_variant_id=v0.id,
-                old_price=Decimal(str(v0.currentPrice)),
-                new_price=Decimal(str(v0.currentPrice)),
-                change_pct=0.0,
-                ref_price=None,
-                competitors_used=len(candidates),
-                tier_at_decision=tier,
-                top_matches_json=[],
-                skip_reason="below_min_competitors",
-            )
             return {"ok": False, "reason": "below_min_competitors",
                     "have": len(candidates), "need": min_comps}
 
@@ -428,20 +413,6 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                     top_matches=top_matches,
                     tier=tier, skip_reason="no_change", auto_applied=False, now=now,
                 )
-                log_decision_made(
-                    shop_domain=shop_domain,
-                    price_decision_id=decision_id,
-                    shopify_product_id=shopify_product_id,
-                    shopify_variant_id=v.id,
-                    old_price=cur,
-                    new_price=cur,
-                    change_pct=0.0,
-                    ref_price=ref_price,
-                    competitors_used=len(top),
-                    tier_at_decision=tier,
-                    top_matches_json=top_matches,
-                    skip_reason="no_change",
-                )
                 written += 1
                 continue
 
@@ -458,20 +429,6 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                 competitors_used=len(top), oos_observations=oos_count, currency_drops=currency_drops,
                 top_matches=top_matches,
                 tier=tier, skip_reason=skip_reason, auto_applied=True, now=now,
-            )
-            log_decision_made(
-                shop_domain=shop_domain,
-                price_decision_id=decision_id,
-                shopify_product_id=shopify_product_id,
-                shopify_variant_id=v.id,
-                old_price=cur,
-                new_price=new_price,
-                change_pct=change_pct,
-                ref_price=ref_price,
-                competitors_used=len(top),
-                tier_at_decision=tier,
-                top_matches_json=top_matches,
-                skip_reason=skip_reason,
             )
             if first_decision_id is None:
                 first_decision_id = decision_id

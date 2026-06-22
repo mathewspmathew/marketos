@@ -11,7 +11,7 @@ import json
 import os
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -21,7 +21,6 @@ from services.common.groq_client import make_groq_client
 from sqlalchemy import select, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from services.common.activity_logger import log_competitor_observation
 from services.common.celery_app import app
 from services.common.db import get_db
 from services.common.gcs_utils import download_markdown_from_gcs, upload_image_to_gcs
@@ -30,6 +29,7 @@ from services.common.models import (
     ProductUrl,
     ScrapedProduct,
     ScrapedVariant,
+    ScrapingConfig,
 )
 from services.common.schemas import ProductSchema
 from services.scraper_svc.helpers import log_error, mark_task_done, set_next_scrap_at
@@ -37,6 +37,26 @@ from services.scraper_svc.helpers import log_error, mark_task_done, set_next_scr
 load_dotenv()
 
 _groq_client = make_groq_client()
+
+_UNIT_TO_SECONDS = {"min": 60, "hr": 3600, "day": 86400}
+
+
+def _compute_next_run_at(config_id: str | None) -> datetime | None:
+    """Compute next rescrap time from ScrapingConfig frequency. Returns None if no valid config."""
+    if not config_id:
+        return None
+    try:
+        with get_db() as session:
+            config = session.query(ScrapingConfig).filter(ScrapingConfig.id == config_id).first()
+            if not config:
+                return None
+            unit = config.frequencyUnit or "nofreq"
+            interval = config.frequencyInterval or 1
+            if unit not in _UNIT_TO_SECONDS:
+                return None
+            return datetime.now(timezone.utc) + timedelta(seconds=interval * _UNIT_TO_SECONDS[unit])
+    except Exception:
+        return None
 
 GROQ_EXTRACT_PROMPT = """You are a professional e-commerce data extractor.
 Extract structured product data from the markdown of this product page: {url}
@@ -200,17 +220,6 @@ def _record_observations(
         ],
     )
     for r in rows:
-        # Log this observation as an ActivityEvent
-        log_competitor_observation(
-            shop_domain=shop_domain,
-            competitor_variant_id=r["competitorVariantId"],
-            competitor_product_id=r["competitorProductId"],
-            price=r["price"],
-            is_in_stock=r.get("isInStock", True),
-            competitor_title=r.get("competitorTitle"),
-            competitor_domain=r.get("competitorDomain"),
-        )
-
         app.send_task(
             "stats.recompute_after_observation",
             args=[shop_domain, r["competitorVariantId"]],
