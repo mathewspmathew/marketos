@@ -163,28 +163,16 @@ rules — for example, "never go below this floor", "don't change a price
 by more than this much in one step" — and decide whether suggestions
 should apply automatically or always wait for human approval. An
 approval screen collects anything that needs a human decision in one
-place.
+place. Pricing thresholds are configured per shop and control the bounds
+on any price decision.
 
-Alerts
-------
-When something noteworthy happens in the market — a competitor drops
-their price sharply, a new rival listing appears, a match needs review —
-the merchant sees it on an alerts screen so nothing important is missed.
-
-Chat assistant
---------------
-The merchant also has a chat assistant inside the app. They can ask
-questions in plain language about their store and their competitors
+Chat assistant (in progress)
+----------------------------
+MarketOS includes an in-app chat assistant that lets merchants ask
+questions about their store and competitors in plain language
 ("what are my five most undercut products this week?", "show me how this
-product's price has moved"), and the assistant answers using live data
-from the system. It can also take simple actions on the merchant's
-behalf, such as flipping dynamic pricing on or off for a product or
-applying a suggested price, with the merchant's confirmation.
+product's price has moved"). The assistant answers using live data from
+the system. Future versions will support quick actions like flipping
+dynamic pricing on or off for a product or applying a suggested price
+with merchant confirmation.
 
-Where things stand
-------------------
-The end-to-end loop — connect store, pick products, find competitors,
-watch them, match them, build market stats, suggest prices, and let the
-merchant apply changes — is in place. The current version is intentionally
-suggestion-first: MarketOS recommends, the merchant decides, and only then
-are prices written back to Shopify.

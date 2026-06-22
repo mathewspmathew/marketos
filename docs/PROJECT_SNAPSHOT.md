@@ -48,10 +48,14 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
 │    • app.dynamic.jsx              toggle dynamicPricingEnabled per product │
 │    • app.discover.$id.jsx         accept / reject CompetitorCandidate      │
 │    • app.matches.jsx              view ProductMatch rows                   │
-│    • app.stats.*.jsx              competitor price picture + history       │
+│    • app.stats.*.jsx / app.history.$id.jsx  competitor stats + history    │
 │    • app.pricing.*.jsx            per-variant price history / controls     │
 │    • app.approve.jsx / app.rules.jsx / app.alerts.jsx                     │
 │    • app.chatbot.jsx              chat assistant (SSE → chatbot_svc)       │
+│    • app.query-studio.jsx / api.query-studio.jsx  chat Query Studio       │
+│    • app.additional.jsx           manage scraping configs                  │
+│    • app.apply-preview.jsx        proxy for chat-driven actions           │
+│    • internal.apply-chat-*.jsx    accept price/flag updates from chatbot  │
 │    • webhooks.products.{create,update,delete}.jsx                         │
 └───────────────────────────────────────────────────────────────────────────┘
         │                                              │
@@ -84,9 +88,8 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
 ┌───────────────────────────────────────────────────────────────────────────┐
 │  scheduler-worker  —  services/scraper_svc/celery_beat.py                 │
 │    check_idle_configs (every 30s):                                        │
-│    • _tick_enabled_products_discovery  → discovery.search_products        │
-│        for dynamicPricingEnabled products needing candidates              │
 │    • _tick_queued_discovery_jobs       → discovery.search_products        │
+│        (merchant-driven discovery requests queued from UI)                │
 │    • _tick_product_urls                → scraper.rescrape_url (due URLs,   │
 │                                          domain-spaced countdown)         │
 │    • _shopify_semantic_backfill        → catch ShopifyVariants missing    │
@@ -208,12 +211,11 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
 │  from competitor reference + PricingTier    │
 │  → UPSERT PriceDecision (v1: no auto-apply) │
 └─────────────────────────────────────────────┘
-│    • shows ProductSuggestion + competitor stats                           │
-│    • merchant edits or Approves                                           │
-│    • on Apply: writes back to Shopify Admin API (productVariantsBulkUpdate)│
-│      via the merchant's session token                                     │
-│  Write-back jobs: services/shopify_svc/main.py (writer_queue):            │
-│    @task shopify_writer.apply_decision / sweep_pending                    │
+│    Dashboard: shows ProductSuggestion + competitor stats; merchant approves
+│    Chat: Query Studio generates ChatPreview rows; chatbot apply-price tool
+│      writes internal.apply-chat-price route + UPSERT PriceDecision
+│    Write-back jobs: services/shopify_svc/main.py (writer_queue):          │
+│    @task shopify_writer.apply_decision (merchant-approved prices)        │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -257,7 +259,6 @@ over this data and take guarded actions (toggle dynamic pricing, apply a price).
 | `pricing_queue`         | `pricing.decide_for_product` / `apply_price`      | `services/pricing_svc/main.py`        |
 | `shopify_sync_queue`    | `shopify_sync.recompute_sales_aggregate` / `pull_products` | `services/shopify_svc/main.py`  |
 | `writer_queue`          | `shopify_writer.apply_decision` / `sweep_pending` | `services/shopify_svc/main.py`        |
-| `maintenance_queue`     | `chatbot.prune_old_sessions` (beat, daily 03:15)  | `services/chatbot_svc/prune.py`       |
 
 Queue routing and the beat schedule are defined in `services/common/celery_app.py`.
 Docker containers per worker are declared in `docker-compose.yml`. On the dev

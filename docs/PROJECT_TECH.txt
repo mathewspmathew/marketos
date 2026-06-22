@@ -21,6 +21,7 @@ Frontend stack (shopify_ui/):
   - Prisma JS client
   - Shopify Polaris (UI), Shopify CLI (dev tunnel)
   - ESLint + TypeScript
+  - Query Studio (SSE chat UI + Query Studio side panel for chatbot integration)
 
 Backend stack (services/):
   - Celery (queue routing in services/common/celery_app.py)
@@ -59,8 +60,7 @@ Services (queue → responsibility):
   suggestion_svc     suggestion_queue     ProductSuggestion fan-out
   shopify_svc        shopify_sync_queue   merchant orders/inventory + sales-aggregate rebuild
                      writer_queue         write approved price back to Shopify Admin
-  chatbot_svc        HTTP/SSE             Pydantic-AI agent (search/stats/preview/apply tools)
-                     maintenance_queue    prune_old_sessions (beat, daily 03:15)
+  chatbot_svc        HTTP/SSE             Pydantic-AI agent (Query Studio: search/stats/preview/apply)
   guardian_svc       —                    (stub) safety/rule enforcement
   observability_mcp  —                    (stub) MCP server for ops introspection
   common             —                    shared: Celery app, db, models, GCS, embed, Groq, Shopify
@@ -91,6 +91,7 @@ Pipeline (one line each):
   chat                 → FastAPI SSE → Pydantic-AI agent → tools → DB
 
 Run:
+Run:
   Frontend: cd shopify_ui && npm run dev
-  Backend : docker-compose up         (redis + all workers + beat + api_gateway)
+  Backend : docker-compose up         (redis + all workers + beat + api_gateway + chatbot_svc)
   Schema  : cd shopify_ui && npm run setup   (prisma generate + migrate)
