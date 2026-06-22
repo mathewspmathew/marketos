@@ -48,7 +48,7 @@ def log_error(
 
 
 def set_next_scrap_at(config_id: str, product_url: str) -> None:
-    """Set ProductUrl.nextScrapAt based on config frequency. No-op if nofreq."""
+    """Set ProductUrl.nextRunAt based on config frequency. No-op if nofreq."""
     try:
         with get_db() as session:
             config = session.query(ScrapingConfig).filter(ScrapingConfig.id == config_id).first()
@@ -62,9 +62,9 @@ def set_next_scrap_at(config_id: str, product_url: str) -> None:
             session.execute(
                 sa_update(ProductUrl)
                 .where(ProductUrl.url == product_url)
-                .values(nextScrapAt=next_at)
+                .values(nextRunAt=next_at)
             )
-            print(f"    [>] nextScrapAt set to {next_at.isoformat()} for {product_url[:60]}", flush=True)
+            print(f"    [>] nextRunAt set to {next_at.isoformat()} for {product_url[:60]}", flush=True)
     except Exception as e:
         print(f"    [!] set_next_scrap_at failed for {product_url[:60]}: {e}", flush=True)
 
