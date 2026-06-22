@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "ShopSettings" ADD COLUMN     "minChangePctThreshold" DOUBLE PRECISION NOT NULL DEFAULT 0.005,
+ADD COLUMN     "minFreshnessHours" INTEGER NOT NULL DEFAULT 24;
