@@ -317,6 +317,27 @@ export const action = async ({ request }) => {
         },
         data: { nextRunAt: new Date() },
       });
+
+      // Auto-queue discovery on saveAndEnable if this product has never been discovered.
+      if (intent === "saveAndEnable") {
+        const shopDomain = session.shop;
+        const product = await db.shopifyProduct.findUnique({
+          where: { id: productId },
+          select: { lastDiscoveryAt: true, searchQueryOverride: true, searchQuery: true },
+        });
+        const query = product?.searchQueryOverride || product?.searchQuery;
+
+        if (product?.lastDiscoveryAt === null && query) {
+          await db.discoveryJob.create({
+            data: {
+              shopDomain,
+              shopifyProductId: productId,
+              status: "QUEUED",
+              query,
+            },
+          });
+        }
+      }
     }
   } else if (intent === "pauseDynamic") {
     // Pause DP but keep all config intact — just disable the flag.

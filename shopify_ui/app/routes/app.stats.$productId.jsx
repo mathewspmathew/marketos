@@ -104,7 +104,7 @@ export const loader = async ({ request, params }) => {
       title: product.title,
       dynamicPricingEnabled: product.dynamicPricingEnabled,
       tier: product.pricingTier,
-      basePrice: product.basePrice?.toString() ?? null,
+      basePrice: product.basePrice ? Number(product.basePrice) : null,
       adminProductUrl,
       variants: product.ShopifyVariant.map((v) => ({
         id: v.id, title: v.title,

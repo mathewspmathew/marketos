@@ -119,14 +119,7 @@ export const action = async ({ request, params }) => {
   }
 
   if (intent === "search") {
-    const query      = (form.get("query") || "").toString().trim();
-    const numResults = Math.max(1, Math.min(parseInt(form.get("numResults") || "10", 10) || 10, 50));
-    // listingCap is optional; null lets the resolver fall back to ShopifyProduct/ShopSettings.
-    const rawCap = form.get("listingExpansionCap");
-    const listingExpansionCap =
-      rawCap == null || rawCap === ""
-        ? null
-        : Math.max(1, Math.min(parseInt(rawCap, 10) || 5, 50));
+    const query = (form.get("query") || "").toString().trim();
     if (!query) return { error: "empty_query" };
 
     const job = await db.discoveryJob.create({
@@ -135,8 +128,6 @@ export const action = async ({ request, params }) => {
         shopifyProductId: productId,
         status: "QUEUED",
         query,
-        numResults,
-        listingExpansionCap,
       },
     });
     return { queued: true, jobId: job.id };

@@ -62,8 +62,8 @@ export const loader = async ({ request }) => {
         title: p.title,
         imageUrl: p.imageUrl,
         tier: p.pricingTier,
-        currentPrice: p.ShopifyVariant[0]?.currentPrice?.toString() ?? null,
-        basePrice: p.basePrice?.toString() ?? null,
+        currentPrice: p.ShopifyVariant[0]?.currentPrice ? Number(p.ShopifyVariant[0].currentPrice) : null,
+        basePrice: p.basePrice ? Number(p.basePrice) : null,
         lastDecisionAt: r?.decidedAt ? new Date(r.decidedAt).toISOString() : null,
         lastChangePct: r?.changePct ?? null,
         lastStatus:    status,
@@ -93,43 +93,41 @@ export default function StatsIndex() {
           <s-resource-list>
             {products.map((p) => (
               <s-resource-item key={p.id} id={p.id}>
-                <Link to={`/app/stats/${encodeURIComponent(p.id)}`}
-                      style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-                  <s-stack direction="inline" gap="base" align="center">
-                    {p.imageUrl && (
-                      <img src={p.imageUrl} alt={p.title} width="48" height="48"
-                           style={{ objectFit: "cover", borderRadius: 4 }} />
-                    )}
-                    <s-stack direction="block" gap="tight">
-                      <s-text emphasis="bold">{p.title}</s-text>
-                      <s-text tone="subdued">
-                        Tier {p.tier} · current ₹{p.currentPrice ?? "—"} · base ₹{p.basePrice ?? "—"}
-                      </s-text>
-                    </s-stack>
-                    <s-stack direction="block" gap="tight">
-                      {p.lastDecisionAt ? (
-                        <>
-                          <s-text>
-                            Last: {new Date(p.lastDecisionAt).toLocaleString()}
-                          </s-text>
-                          <s-stack direction="inline" gap="tight" align="center">
-                            <s-text tone={p.lastChangePct < 0 ? "critical" : "success"}>
-                              {p.lastChangePct != null
-                                ? `${(p.lastChangePct * 100).toFixed(2)}%`
-                                : "no change"}
-                            </s-text>
-                            {p.lastStatus === "applied"  && <s-badge tone="success">Applied</s-badge>}
-                            {p.lastStatus === "failed"   && <s-badge tone="critical">Push failed</s-badge>}
-                            {p.lastStatus === "pending"  && <s-badge tone="warning">Pending push</s-badge>}
-                            {p.lastStatus === "skipped"  && <s-badge tone="subdued">Skipped</s-badge>}
-                          </s-stack>
-                        </>
-                      ) : (
-                        <s-text tone="subdued">No decisions yet</s-text>
+                <s-stack direction="block" gap="tight" style={{ width: "100%" }}>
+                  <Link to={`/app/stats/${encodeURIComponent(p.id)}`}
+                        style={{ textDecoration: "none", color: "inherit", display: "block" }}>
+                    <s-stack direction="inline" gap="base" align="center">
+                      {p.imageUrl && (
+                        <img src={p.imageUrl} alt={p.title} width="48" height="48"
+                             style={{ objectFit: "cover", borderRadius: 4 }} />
                       )}
+                      <s-stack direction="block" gap="tight" style={{ flex: 1 }}>
+                        <s-text emphasis="bold">{p.title}</s-text>
+                        <s-text tone="subdued">
+                          Tier {p.tier} · current ₹{p.currentPrice != null ? Number(p.currentPrice).toFixed(2) : "—"} · base ₹{p.basePrice != null ? Number(p.basePrice).toFixed(2) : "—"}
+                        </s-text>
+                      </s-stack>
                     </s-stack>
-                  </s-stack>
-                </Link>
+                  </Link>
+                  {p.lastDecisionAt ? (
+                    <s-stack direction="inline" gap="tight" align="center">
+                      <s-text>
+                        Last: {new Date(p.lastDecisionAt).toLocaleString()}
+                      </s-text>
+                      <s-text tone={p.lastChangePct < 0 ? "critical" : "success"}>
+                        {p.lastChangePct != null
+                          ? `${(p.lastChangePct * 100).toFixed(2)}%`
+                          : "no change"}
+                      </s-text>
+                      {p.lastStatus === "applied"  && <s-badge tone="success">Applied</s-badge>}
+                      {p.lastStatus === "failed"   && <s-badge tone="critical">Push failed</s-badge>}
+                      {p.lastStatus === "pending"  && <s-badge tone="warning">Pending push</s-badge>}
+                      {p.lastStatus === "skipped"  && <s-badge tone="subdued">Skipped</s-badge>}
+                    </s-stack>
+                  ) : (
+                    <s-text tone="subdued">No decisions yet</s-text>
+                  )}
+                </s-stack>
               </s-resource-item>
             ))}
           </s-resource-list>

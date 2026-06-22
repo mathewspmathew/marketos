@@ -483,8 +483,8 @@ export default function SettingsPage() {
 
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Minimum price change to apply</label>
-              <span title="Ignore price changes smaller than this threshold. Prevents applying tiny 0.1% wiggles. E.g., 0.5% = only apply if change is ≥0.5%." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+              <label style={{ fontWeight: "500" }}>Minimum price change to apply in a single run</label>
+              <span title="Ignore price changes smaller than this threshold. Prevents applying tiny 0.1% wiggles. E.g., 0.5% = only apply if change is ≥0.5%. The goal is to avoid quick apply of prices when competitors matched. Don't change if you don't understand" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
               <s-text-field
