@@ -4,6 +4,7 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { getCurrencySymbol } from "../lib/currencyFormatter";
+import { computeNextRunAt } from "../lib/frequency.server";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
@@ -135,7 +136,7 @@ export const action = async ({ request }) => {
       // so the lifetime cap has a stable anchor. Preserved across toggle off→on.
       const product = await db.shopifyProduct.findUnique({
         where: { id: productId },
-        select: { basePrice: true, ShopifyVariant: { select: { id: true, currentPrice: true, basePrice: true } } },
+        select: { basePrice: true, frequencyUnit: true, frequencyInterval: true, ShopifyVariant: { select: { id: true, currentPrice: true, basePrice: true } } },
       });
       if (product && product.basePrice == null) {
         const minVariantPrice = product.ShopifyVariant
@@ -180,13 +181,14 @@ export const action = async ({ request }) => {
       // rescrape loop on the next beat tick. Only touches active rows whose
       // current schedule has gone stale (nextRunAt NULL or in the past) so
       // we don't trample a healthy upcoming schedule.
+      const nextRunAt = computeNextRunAt(product.frequencyInterval, product.frequencyUnit);
       await db.productUrl.updateMany({
         where: {
           shopifyProductId: productId,
           status: "ACTIVE",
           OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
         },
-        data: { nextRunAt: new Date() },
+        data: { nextRunAt: nextRunAt ?? new Date() },
       });
     }
   } else if (intent === "toggleRescrape") {
@@ -208,13 +210,16 @@ export const action = async ({ request }) => {
           : {},
       });
       // Re-arm stale schedules so beat picks the URLs up on the next tick.
+      const effectiveUnit = defaultsNeeded ? "hour" : current.frequencyUnit;
+      const effectiveInterval = defaultsNeeded ? 6 : current.frequencyInterval;
+      const nextRunAt = computeNextRunAt(effectiveInterval, effectiveUnit);
       await db.productUrl.updateMany({
         where: {
           shopifyProductId: productId,
           status: "ACTIVE",
           OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
         },
-        data: { nextRunAt: new Date() },
+        data: { nextRunAt: nextRunAt ?? new Date() },
       });
     } else {
       await db.shopifyProduct.update({
@@ -287,35 +292,43 @@ export const action = async ({ request }) => {
       data.dynamicPricingEnabled = true;
     }
 
-    // Detect a "rescrape just got turned on" transition so we can re-arm
-    // ProductUrl.nextRunAt afterwards. Triggers when frequencyUnit moves
-    // from null/'never' to a real cadence.
+    // Detect frequency changes and rescrape state transitions
     const prior = await db.shopifyProduct.findUnique({
       where: { id: productId },
-      select: { frequencyUnit: true },
+      select: { frequencyUnit: true, frequencyInterval: true },
     });
     const priorUnit = prior?.frequencyUnit ?? null;
-    const newUnit   = data.frequencyUnit ?? priorUnit;
+    const priorInterval = prior?.frequencyInterval ?? null;
+    const newUnit = data.frequencyUnit ?? priorUnit;
+    const newInterval = data.frequencyInterval ?? priorInterval;
+
+    // Re-arm triggers on:
+    // 1. Frequency change (unit or interval) while rescraping is/will be active
+    // 2. Rescraping just enabled (null/'never' → real cadence)
     const rescrapeJustEnabled =
       (priorUnit === null || priorUnit === "never") &&
       newUnit && newUnit !== "never";
+
+    const frequencyChanged =
+      newUnit && newUnit !== "never" &&
+      (newUnit !== priorUnit || newInterval !== priorInterval);
 
     await db.shopifyProduct.update({
       where: { id: productId },
       data,
     });
 
-    if (rescrapeJustEnabled || intent === "saveAndEnable") {
-      // Re-arm existing URLs so they enter the rescrape loop without
-      // waiting for a fresh discovery pass. Same conservative filter as
-      // toggleDynamic — only touches stale/missing schedules.
+    // Re-arm ProductUrl entries when frequency changes or rescraping enables
+    if (rescrapeJustEnabled || frequencyChanged || intent === "saveAndEnable") {
+      // When frequency changes, re-arm ALL active URLs to pick up new schedule immediately.
+      // Scheduler will query nextRunAt <= NOW on next tick and dispatch tasks.
+      const nextRunAt = computeNextRunAt(newInterval, newUnit);
       await db.productUrl.updateMany({
         where: {
           shopifyProductId: productId,
           status: "ACTIVE",
-          OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
         },
-        data: { nextRunAt: new Date() },
+        data: { nextRunAt: nextRunAt ?? new Date() },
       });
 
       // Auto-queue discovery on saveAndEnable if this product has never been discovered.
@@ -353,13 +366,18 @@ export const action = async ({ request }) => {
       data: { dynamicPricingEnabled: true },
     });
     // Re-arm any URLs with stale schedules so beat picks them up on next tick.
+    const product = await db.shopifyProduct.findUnique({
+      where: { id: productId },
+      select: { frequencyUnit: true, frequencyInterval: true },
+    });
+    const nextRunAt = computeNextRunAt(product?.frequencyInterval, product?.frequencyUnit);
     await db.productUrl.updateMany({
       where: {
         shopifyProductId: productId,
         status: "ACTIVE",
         OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
       },
-      data: { nextRunAt: new Date() },
+      data: { nextRunAt: nextRunAt ?? new Date() },
     });
   } else if (intent === "deleteDynamicWithData") {
     try {

@@ -4,6 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { computeNextRunAt } from "../lib/frequency.server";
 
 // Keep in sync with services/common/frequency.py::CANONICAL_UNITS.
 const FREQ_UNITS = [
@@ -148,6 +149,7 @@ export const action = async ({ request }) => {
   if (autoRescrapeTurnedOn) {
     // Resume the rescrape loop for every product that's still opted in with
     // a real frequency. Beat will pick them up on the next tick.
+    const nextRunAt = computeNextRunAt(data.frequencyInterval, data.frequencyUnit);
     await db.productUrl.updateMany({
       where: {
         shopDomain,
@@ -158,7 +160,7 @@ export const action = async ({ request }) => {
           frequencyUnit: { not: "never" },
         },
       },
-      data: { nextRunAt: new Date() },
+      data: { nextRunAt: nextRunAt ?? new Date() },
     });
   }
 

@@ -266,8 +266,6 @@ class ProductUrl(Base):
     url               = Column("url",               String, unique=True, nullable=False)
     status            = Column("status",            _url_status, nullable=False, default="ACTIVE")
     failCount         = Column("failCount",         Integer, default=0)
-    frequencyInterval = Column("frequencyInterval", Integer)
-    frequencyUnit     = Column("frequencyUnit",     String, default="daily")
     lastScrapedAt     = Column("lastScrapedAt",     DateTime(timezone=True))
     nextRunAt         = Column("nextRunAt",         DateTime(timezone=True))
     createdAt         = Column("createdAt",         DateTime(timezone=True), server_default=func.now())

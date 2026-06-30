@@ -5,6 +5,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { refineQuery } from "../lib/queryRefiner.server";
+import { computeNextRunAt } from "../lib/frequency.server";
 
 export const loader = async ({ request, params }) => {
   const { session } = await authenticate.admin(request);
@@ -106,13 +107,14 @@ export const action = async ({ request, params }) => {
       data: { dynamicPricingEnabled: enabled },
     });
     if (enabled) {
+      const nextRunAt = computeNextRunAt(product.frequencyInterval, product.frequencyUnit);
       await db.productUrl.updateMany({
         where: {
           shopifyProductId: productId,
           status: "ACTIVE",
           OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
         },
-        data: { nextRunAt: new Date() },
+        data: { nextRunAt: nextRunAt ?? new Date() },
       });
     }
     return { toggled: enabled };

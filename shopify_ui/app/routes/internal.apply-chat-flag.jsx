@@ -14,6 +14,7 @@
  */
 import prisma from "../db.server";
 import { deleteCompetitorData } from "../lib/competitorTeardown.server";
+import { computeNextRunAt } from "../lib/frequency.server";
 
 export const action = async ({ request }) => {
   if (request.method !== "POST") {
@@ -105,27 +106,7 @@ export const action = async ({ request }) => {
   });
 
   if (enabled) {
-    // Re-arm known ProductUrls so the rescrape loop resumes (mirrors the
-    // discover page's toggle-on behavior).
-    await prisma.productUrl.updateMany({
-      where: {
-        shopifyProductId: { in: productIds },
-        status: "ACTIVE",
-        OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
-      },
-      data: { nextRunAt: new Date() },
-    });
-    // Persist the merchant's chosen/edited search query so discovery — this run
-    // and future rescrapes — uses it. The DiscoveryJob query computation below
-    // reads searchQueryOverride first.
-    if (typeof body.query === "string" && body.query.trim()) {
-      await prisma.shopifyProduct.updateMany({
-        where: { id: { in: productIds }, shopDomain },
-        data: { searchQueryOverride: body.query.trim() },
-      });
-    }
-    // Resume cadence chosen on the card (paused-with-data). Null clears any
-    // per-product override and falls back to ShopSettings cadence.
+    // Set frequency FIRST so re-arm below uses the correct interval.
     if (body.frequencyInterval != null) {
       const VALID_UNITS = ["never", "minute", "hour", "day"];
       const unit = VALID_UNITS.includes(body.frequencyUnit) ? body.frequencyUnit : "day";
@@ -135,6 +116,28 @@ export const action = async ({ request }) => {
           frequencyInterval: parseInt(body.frequencyInterval, 10),
           frequencyUnit: unit,
         },
+      });
+    }
+    // Re-arm known ProductUrls so the rescrape loop resumes (mirrors the
+    // discover page's toggle-on behavior).
+    const nextRunAt = body.frequencyInterval != null
+      ? computeNextRunAt(parseInt(body.frequencyInterval), body.frequencyUnit ?? "day")
+      : new Date();
+    await prisma.productUrl.updateMany({
+      where: {
+        shopifyProductId: { in: productIds },
+        status: "ACTIVE",
+        OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+      },
+      data: { nextRunAt: nextRunAt ?? new Date() },
+    });
+    // Persist the merchant's chosen/edited search query so discovery — this run
+    // and future rescrapes — uses it. The DiscoveryJob query computation below
+    // reads searchQueryOverride first.
+    if (typeof body.query === "string" && body.query.trim()) {
+      await prisma.shopifyProduct.updateMany({
+        where: { id: { in: productIds }, shopDomain },
+        data: { searchQueryOverride: body.query.trim() },
       });
     }
     // "Rescrape now" gates the immediate, credit-spending discovery. When off,

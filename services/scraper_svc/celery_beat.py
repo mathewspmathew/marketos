@@ -28,25 +28,50 @@ def _tick_product_urls() -> None:
     Ordering: oldest nextRunAt first (FIFO on staleness). Per-domain
     countdown preserves the same-site request gap. Fan-out is capped per
     tick so a sudden surge of due URLs doesn't dominate the queue.
+
+    Dead-row recovery: URLs that are stuck with nextRunAt=NULL (worker crashed
+    after the dispatch-guard NULL write) are recovered after _STUCK_TIMEOUT_HOURS
+    have passed since lastScrapedAt. This timeout matches the Redis broker's
+    default visibility timeout, ensuring we only retry after Celery's own
+    auto-redelivery window has closed.
     """
     with get_db() as session:
+        # Atomic UPDATE...WHERE IN (SELECT...FOR UPDATE SKIP LOCKED) pattern.
+        # This atomically claims rows for dispatch (sets nextRunAt=NULL) while
+        # avoiding double-dispatch under concurrent beat ticks.
         rows = session.execute(
             text("""
-                SELECT pu.id, pu.url, pu."nextRunAt"
-                FROM "ProductUrl" pu
-                LEFT JOIN "ShopifyProduct" sp ON sp.id = pu."shopifyProductId"
-                LEFT JOIN "ShopSettings" ss ON ss."shopDomain" = pu."shopDomain"
-                WHERE pu.status = 'ACTIVE'
-                  AND pu."nextRunAt" IS NOT NULL
-                  AND pu."nextRunAt" <= NOW()
-                  AND pu."shopifyProductId" IS NOT NULL
-                  AND sp."dynamicPricingEnabled" = TRUE
-                  AND COALESCE(sp."frequencyUnit", 'never') <> 'never'
-                  AND COALESCE(ss."autoRescrapeEnabled", TRUE) = TRUE
-                ORDER BY pu."nextRunAt" ASC
-                LIMIT :lim
+                UPDATE "ProductUrl" pu
+                SET "nextRunAt" = NULL
+                FROM (
+                    SELECT pu2.id, pu2.url, pu2."nextRunAt"
+                    FROM "ProductUrl" pu2
+                    LEFT JOIN "ShopifyProduct" sp ON sp.id = pu2."shopifyProductId"
+                    LEFT JOIN "ShopSettings"   ss ON ss."shopDomain" = pu2."shopDomain"
+                    WHERE pu2.status = 'ACTIVE'
+                      AND pu2."shopifyProductId" IS NOT NULL
+                      AND sp."dynamicPricingEnabled" = TRUE
+                      AND COALESCE(sp."frequencyUnit", 'never') <> 'never'
+                      AND COALESCE(ss."autoRescrapeEnabled", TRUE) = TRUE
+                      AND (
+                          -- Normal path: scheduled and due
+                          (pu2."nextRunAt" IS NOT NULL AND pu2."nextRunAt" <= NOW())
+                          OR
+                          -- Recovery path: worker crashed after NULL was written.
+                          -- lastScrapedAt IS NOT NULL guards fresh discovery URLs.
+                          -- Only recover if the last attempt is stale (> _STUCK_TIMEOUT_HOURS).
+                          (pu2."nextRunAt" IS NULL
+                           AND pu2."lastScrapedAt" IS NOT NULL
+                           AND pu2."lastScrapedAt" < NOW() - INTERVAL ':stuck_hours hours')
+                      )
+                    ORDER BY pu2."nextRunAt" ASC NULLS LAST
+                    LIMIT :lim
+                    FOR UPDATE SKIP LOCKED
+                ) AS due
+                WHERE pu.id = due.id
+                RETURNING pu.id, due.url, due."nextRunAt"
             """),
-            {"lim": _MAX_RESCRAPES_PER_TICK},
+            {"lim": _MAX_RESCRAPES_PER_TICK, "stuck_hours": _STUCK_TIMEOUT_HOURS},
         ).all()
 
         if not rows:
@@ -71,14 +96,8 @@ def _tick_product_urls() -> None:
                     queue="scraping_queue",
                     countdown=countdown,
                 )
-                # Clear nextRunAt so a second beat firing within the dispatch
-                # window doesn't double-queue the same URL. rescrape_url
-                # resets nextRunAt on success.
-                session.execute(
-                    sa_update(ProductUrl)
-                    .where(ProductUrl.id == r.id)
-                    .values(nextRunAt=None)
-                )
+                # nextRunAt was already set to NULL by the atomic UPDATE above.
+                # No per-row NULL update needed.
             except Exception as exc:
                 print(f"[Beat] dispatch failed for ProductUrl {r.id}: {exc}", flush=True)
 

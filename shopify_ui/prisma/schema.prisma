@@ -226,8 +226,6 @@ model ProductUrl {
   lastScrapedAt     DateTime?
   createdAt         DateTime        @default(now())
   shopDomain        String
-  frequencyInterval Int?
-  frequencyUnit     String?         @default("day")
   nextRunAt         DateTime?
   shopifyProductId  String?
   ScrapingConfig    ScrapingConfig? @relation(fields: [configId], references: [id])

@@ -297,8 +297,6 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
                     url=url,
                     status="ACTIVE",
                     failCount=0,
-                    frequencyInterval=(shopify_product.frequencyInterval if shopify_product else None),
-                    frequencyUnit=(shopify_product.frequencyUnit if shopify_product else None),
                     lastScrapedAt=now,
                     nextRunAt=next_run,
                 )
