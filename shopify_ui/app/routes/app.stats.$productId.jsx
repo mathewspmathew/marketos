@@ -364,7 +364,16 @@ export default function ProductStatsPage() {
                     <s-stack direction="block" gap="tight">
                       <StatusBadge status={d.status} />
                       {d.clampReason && (
-                        <s-text tone="subdued">{d.clampReason}</s-text>
+                        (() => {
+                          const explanation = getClampExplanation(d.clampReason, d);
+                          if (!explanation) return d.clampReason;
+                          return (
+                            <s-stack direction="block" gap="tight">
+                              <s-text tone="subdued">{explanation.line1}</s-text>
+                              <s-text tone="subdued" size="small">{explanation.line2}</s-text>
+                            </s-stack>
+                          );
+                        })()
                       )}
                       {d.skipReason && (
                         <s-text tone="subdued">{d.skipReason}</s-text>
