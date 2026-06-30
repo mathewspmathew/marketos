@@ -179,6 +179,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: pricing_worker
+    env_file: .env
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -186,6 +187,8 @@ services:
       # On Linux Docker, host.docker.internal needs the extra_hosts mapping below.
       - REACT_ROUTER_INTERNAL_URL=${REACT_ROUTER_INTERNAL_URL}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
+      - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

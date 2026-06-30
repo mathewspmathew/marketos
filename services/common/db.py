@@ -28,11 +28,12 @@ def _build_engine():
             break
     return create_engine(
         url,
-        pool_size=5,        # connections kept open per worker process
-        max_overflow=10,    # extra connections allowed under burst load
+        pool_size=2,        # reduced from 5 to minimize total connections across workers
+        max_overflow=1,     # reduced from 10 to prevent connection explosion
         pool_pre_ping=True, # discard stale connections before use
-        pool_recycle=1800,  # recycle connections every 30 min (avoids TCP timeouts)
-        pool_timeout=30,    # raise after 30 s if no connection is available
+        pool_recycle=900,   # recycle connections every 15 min (avoids TCP timeouts)
+        pool_timeout=10,    # raise after 10 s if no connection is available
+        echo_pool=True,     # log pool events for debugging
     )
 
 

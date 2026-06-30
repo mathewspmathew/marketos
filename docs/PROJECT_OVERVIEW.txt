@@ -47,18 +47,14 @@ How a merchant uses it (the journey)
 
 The main pages the merchant sees
 --------------------------------
-- Dashboard       : a quick health view of the store vs the market.
-- Dynamic pricing : browse the catalog and switch competitive pricing on or
+- Products : browse the catalog and switch competitive pricing on or
                     off per product.
-- Discovery       : per-product list of auto-found competitor candidates to
-                    accept or reject.
-- Matches         : merchant products paired with their competitor
+- Matches         : merchant products paired with their competitor, per-product list of auto-found competitor candidates to
+                    accept or reject. merchant also has option to accept competitors which are not  perfectly matched.
                     equivalents, with a review screen for uncertain matches.
 - Stats           : the competitor price picture per product, plus history.
-- Suggestions     : recommended price changes, accept / reject.
 - Pricing         : per-product price history and controls.
-- Approvals & rules : pricing guardrails and anything awaiting a decision.
-- Alerts          : notable market events worth the merchant's attention.
+
 - Assistant       : in-app chat to ask questions and take quick actions.
 
 
