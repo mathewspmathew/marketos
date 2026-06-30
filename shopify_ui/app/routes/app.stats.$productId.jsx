@@ -150,6 +150,40 @@ export const loader = async ({ request, params }) => {
   };
 };
 
+/**
+ * Parse pricing reason and clamp type to generate merchant-friendly explanation.
+ * Returns {line1, line2} or null if reason format doesn't match or clampReason is unknown.
+ */
+function getClampExplanation(clampReason, decision) {
+  if (!clampReason) return null;
+
+  // Parse reason string: "ref=X target=Y tier=Z comps=N"
+  const reasonMatch = decision.reason.match(
+    /ref=([\d.]+)\s+target=([\d.]+)\s+tier=(\w+)\s+comps=(\d+)/
+  );
+  if (!reasonMatch) return null;
+
+  const [, ref, target, tier, comps] = reasonMatch;
+  const targetPrice = parseFloat(target);
+  const appliedPrice = decision.newPrice;
+
+  if (clampReason === 'clamped_per_round') {
+    return {
+      line1: `Target ₹${targetPrice.toFixed(2)} → ₹${appliedPrice.toFixed(2)} (per-round cap)`,
+      line2: `Limited by maximum change per cycle. Reference: ₹${ref} from ${comps} competitors (${tier} tier).`,
+    };
+  }
+
+  if (clampReason === 'clamped_lifetime_cap') {
+    return {
+      line1: `Target ₹${targetPrice.toFixed(2)} → ₹${appliedPrice.toFixed(2)} (lifetime cap)`,
+      line2: `Price adjusted to stay within allowed range. Reference: ₹${ref} from ${comps} competitors (${tier} tier).`,
+    };
+  }
+
+  return null;
+}
+
 // ─── SVG line chart (Polaris has no built-in chart primitive) ─────────────
 function PriceChart({ competitorSeries, productPrice }) {
   const W = 720;
@@ -227,6 +261,8 @@ function StatusBadge({ status }) {
       return <s-badge tone="subdued">Skipped</s-badge>;
   }
 }
+
+export { getClampExplanation };
 
 export default function ProductStatsPage() {
   const { product, decisions, competitorSeries, waiting } = useLoaderData();
