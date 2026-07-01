@@ -75,10 +75,11 @@ shopify_ui/.react-router/
 
 CLAUDE.md
 docs/superpowers/
+docs/rollout
+docs/evals
 
 .superpowers
 .logfire
 .pytest_cache
 
-/scripts
 shopify_ui/prisma/dev.db
