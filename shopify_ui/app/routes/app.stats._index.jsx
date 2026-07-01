@@ -16,7 +16,7 @@ export const loader = async ({ request }) => {
   const shopDomain = session.shop;
 
   const products = await db.shopifyProduct.findMany({
-    where: { shopDomain, dynamicPricingEnabled: true },
+    where: { shopDomain, lastDecisionAt: { not: null } },
     select: {
       id: true,
       title: true,
