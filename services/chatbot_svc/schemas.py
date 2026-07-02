@@ -111,3 +111,33 @@ class ApplyResult(BaseModel):
 class ChatEvent(BaseModel):
     type: Literal["text", "tool_start", "tool_end", "ask", "preview", "applied", "done", "error"]
     data: dict
+
+
+class CandidateCountByStatus(BaseModel):
+    """Breakdown of competitor candidates by pipeline status."""
+    pending: int
+    scraped: int
+    verified: int
+    rejected: int
+    dead: int
+
+
+class DiscoveryDebugInfo(BaseModel):
+    """Detailed discovery pipeline diagnostics for a product."""
+    product_id: str
+    product_title: str
+    latest_job_id: str
+    job_status: Literal["QUEUED", "RUNNING", "COMPLETED", "FAILED"]
+    query_used: str
+    num_results_requested: int
+    listing_expansion_cap: int
+    job_requested_at: str
+    job_completed_at: Optional[str] = None
+    candidate_counts: CandidateCountByStatus
+    total_candidates_found: int
+    verified_candidates: int
+    matched_variants: int
+    unmatched_verified: int
+    job_error: Optional[str] = None
+    hint: str
+    recommended_action: str

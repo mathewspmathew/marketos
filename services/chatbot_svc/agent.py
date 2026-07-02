@@ -45,11 +45,13 @@ from services.chatbot_svc.schemas import (
     VariantSummary,
     ResolvedProduct,
     DynamicPricingStatus,
+    DiscoveryDebugInfo,
 )
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
 from services.chatbot_svc.tools import preview as t_preview
 from services.chatbot_svc.tools import status as t_status
+from services.chatbot_svc.tools import debug as t_debug
 from services.chatbot_svc.tools.ask import ask_user as _ask_user_raw
 
 
@@ -164,3 +166,14 @@ def ask_user(
 ) -> str:
     """Pause the agent and surface a clarification question to the merchant."""
     return _ask_user_raw(question, options)
+
+
+@agent.tool
+def debug_discovery(
+    ctx: RunContext[AgentDeps],
+    product_id: str,
+) -> DiscoveryDebugInfo | None:
+    """Troubleshoot discovery for a product. Shows: candidates found/scraped/verified/rejected/dead,
+    matches made, errors, and recommended next action. Use this when a product has no competitors
+    or discovery is stuck. Returns None if the product has no discovery job."""
+    return t_debug.debug_discovery(ctx.deps.shop_domain, product_id)
