@@ -11,11 +11,11 @@ primary flow. Beat dispatches rescraping based on ProductUrl.nextRunAt schedule.
 """
 from urllib.parse import urlparse
 
-from sqlalchemy import update as sa_update, text
+from sqlalchemy import text
 
 from services.common.celery_app import app
 from services.common.db import get_db
-from services.common.models import ProductUrl, ShopifyVariant
+# from services.common.models import ProductUrl, ShopifyVariant
 
 _STUCK_TIMEOUT_HOURS    = 1
 _RESCRAPE_DOMAIN_GAP    = 30   # seconds between consecutive scrapes of the same domain
@@ -62,11 +62,11 @@ def _tick_product_urls() -> None:
                           -- Only recover if the last attempt is stale (> _STUCK_TIMEOUT_HOURS).
                           (pu2."nextRunAt" IS NULL
                            AND pu2."lastScrapedAt" IS NOT NULL
-                           AND pu2."lastScrapedAt" < NOW() - INTERVAL ':stuck_hours hours')
+                           AND pu2."lastScrapedAt" < NOW() - make_interval(hours => :stuck_hours))
                       )
                     ORDER BY pu2."nextRunAt" ASC NULLS LAST
                     LIMIT :lim
-                    FOR UPDATE SKIP LOCKED
+                    FOR UPDATE OF pu2 SKIP LOCKED
                 ) AS due
                 WHERE pu.id = due.id
                 RETURNING pu.id, due.url, due."nextRunAt"
