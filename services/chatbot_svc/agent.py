@@ -19,9 +19,9 @@ import sys
 import logfire
 from pydantic_ai import Agent, RunContext
 
-# Observability: write the agent's span tree to chatbot_svc stdout. Cloud
-# upload (logfire.dev) disabled because this venv's OpenSSL can't TLS-handshake
-# with logfire-eu.pydantic.dev; revisit if/when that env is fixed.
+# Observability: write the agent's span tree to stderr, and upload to Logfire
+# when LOGFIRE_TOKEN is set (see .env / docker-compose). Environments without
+# the token (CI, teammates) fall back to console-only.
 logfire.configure(
     send_to_logfire="if-token-present",
     service_name="chatbot_svc",

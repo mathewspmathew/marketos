@@ -254,6 +254,8 @@ services:
       - VERTEX_LOCATION=${VERTEX_LOCATION}
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      # Uploads agent traces to Logfire; unset token = console-only (if-token-present).
+      - LOGFIRE_TOKEN=${LOGFIRE_TOKEN}
     ports:
       - "8088:8088"
     extra_hosts:
