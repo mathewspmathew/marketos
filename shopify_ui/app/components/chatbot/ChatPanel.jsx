@@ -137,23 +137,39 @@ export default function ChatPanel() {
 
         <div style={{ flexGrow: 1, minWidth: 0 }}>
           <s-stack direction="block" gap="base">
-            {turns.map((t, i) => (
-              <div key={i}>
-                {t.text && (
-                  t.role === "user" ? (
-                    <s-paragraph tone="subdued">You: {t.text}</s-paragraph>
-                  ) : (
-                    <div className="chat-md">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.text}</ReactMarkdown>
-                    </div>
-                  )
-                )}
-                {t.preview && (
-                  <PreviewCard preview={t.preview} onApply={applyPreview} onCancel={() => {}} busy={busy} /> // TODO: wire cancel
-                )}
-                {t.ask && <AskCard ask={t.ask} onAnswer={send} />}
+            {turns.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                {turns.map((t, i) => (
+                  <div key={i}>
+                    {t.text && (
+                      t.role === "user" ? (
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <div
+                            style={{
+                              background: "var(--p-color-bg-surface-secondary, #f1f1f1)",
+                              borderRadius: "12px",
+                              padding: "8px 12px",
+                              maxWidth: "75%",
+                              overflowWrap: "anywhere",
+                            }}
+                          >
+                            {t.text}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="chat-md">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.text}</ReactMarkdown>
+                        </div>
+                      )
+                    )}
+                    {t.preview && (
+                      <PreviewCard preview={t.preview} onApply={applyPreview} onCancel={() => {}} busy={busy} /> // TODO: wire cancel
+                    )}
+                    {t.ask && <AskCard ask={t.ask} onAnswer={send} />}
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
             <s-stack direction="inline" gap="base">
               <s-text-field
                 label=""
