@@ -141,3 +141,27 @@ class DiscoveryDebugInfo(BaseModel):
     job_error: Optional[str] = None
     hint: str
     recommended_action: str
+
+
+class CompetitorPricingContext(BaseModel):
+    """Competitor price statistics for a variant."""
+    median: float
+    mean: float
+    min_price: float
+    max_price: float
+    count: int
+    last_observed: Optional[str] = None
+
+
+class PriceExplanation(BaseModel):
+    """Explanation of why a price was recommended for a variant."""
+    variant_id: str
+    variant_title: str
+    current_price: float
+    recommended_price: float
+    price_delta: float
+    delta_percent: float
+    decided_at: str
+    competitor_pricing: Optional[CompetitorPricingContext] = None
+    primary_factor: str
+    explanation: str

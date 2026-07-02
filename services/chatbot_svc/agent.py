@@ -46,12 +46,14 @@ from services.chatbot_svc.schemas import (
     ResolvedProduct,
     DynamicPricingStatus,
     DiscoveryDebugInfo,
+    PriceExplanation,
 )
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
 from services.chatbot_svc.tools import preview as t_preview
 from services.chatbot_svc.tools import status as t_status
 from services.chatbot_svc.tools import debug as t_debug
+from services.chatbot_svc.tools import price_explanation as t_price_explanation
 from services.chatbot_svc.tools.ask import ask_user as _ask_user_raw
 
 
@@ -177,3 +179,14 @@ def debug_discovery(
     matches made, errors, and recommended next action. Use this when a product has no competitors
     or discovery is stuck. Returns None if the product has no discovery job."""
     return t_debug.debug_discovery(ctx.deps.shop_domain, product_id)
+
+
+@agent.tool
+def explain_price_decision(
+    ctx: RunContext[AgentDeps],
+    variant_id: str,
+) -> PriceExplanation | None:
+    """Explain why a price was recommended for a variant. Returns competitor context (median/mean/min/max prices),
+    the price delta, and human-readable explanation. Call this when a merchant asks 'why was this price recommended?'
+    Returns None if no price decision exists for this variant."""
+    return t_price_explanation.explain_price_decision(ctx.deps.shop_domain, variant_id)
