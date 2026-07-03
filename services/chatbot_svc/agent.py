@@ -47,6 +47,7 @@ from services.chatbot_svc.schemas import (
     DynamicPricingStatus,
     DiscoveryDebugInfo,
     PriceExplanation,
+    MatchExplanation,
 )
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
@@ -54,6 +55,7 @@ from services.chatbot_svc.tools import preview as t_preview
 from services.chatbot_svc.tools import status as t_status
 from services.chatbot_svc.tools import debug as t_debug
 from services.chatbot_svc.tools import price_explanation as t_price_explanation
+from services.chatbot_svc.tools import match_explanation as t_match_explanation
 from services.chatbot_svc.tools.ask import ask_user as _ask_user_raw
 
 
@@ -190,3 +192,15 @@ def explain_price_decision(
     the price delta, and human-readable explanation. Call this when a merchant asks 'why was this price recommended?'
     Returns None if no price decision exists for this variant."""
     return t_price_explanation.explain_price_decision(ctx.deps.shop_domain, variant_id)
+
+
+@agent.tool
+def explain_product_match(
+    ctx: RunContext[AgentDeps],
+    variant_id: str,
+) -> MatchExplanation | None:
+    """Explain how a competitor was matched to your product. Shows: competitor details,
+    confidence tier (CONFIRMED/LIKELY/WEAK), match score, and reasoning. Use this when a merchant
+    asks 'how did you find this competitor?' or 'why is this match valid?'
+    Returns None if no match exists for this variant."""
+    return t_match_explanation.explain_product_match(ctx.deps.shop_domain, variant_id)

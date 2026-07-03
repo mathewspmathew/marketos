@@ -165,3 +165,18 @@ class PriceExplanation(BaseModel):
     competitor_pricing: Optional[CompetitorPricingContext] = None
     primary_factor: str
     explanation: str
+
+
+class MatchExplanation(BaseModel):
+    """Explanation of how a competitor variant was matched to a merchant variant."""
+    variant_id: str
+    variant_title: str
+    competitor_variant_title: str
+    competitor_url: Optional[str] = None
+    confidence_tier: Literal["CONFIRMED", "LIKELY", "WEAK"]
+    match_score: float
+    vector_distance: float
+    matched_at: str
+    explanation: str
+    other_candidates_evaluated: int
+    recommended_action: str
