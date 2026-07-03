@@ -152,6 +152,18 @@ export const action = async ({ request }) => {
       if (bases.length > 0) {
         updateData.avgBasePrice = bases.reduce((a, b) => a + b, 0) / bases.length;
       }
+      // An ON product must always carry a concrete cadence — the plain toggle
+      // never opens the pane, so copy the shop defaults when nothing is saved.
+      if (!product?.frequencyUnit) {
+        const settings = await db.shopSettings.findUnique({
+          where: { shopDomain: session.shop },
+          select: { frequencyUnit: true, frequencyInterval: true },
+        });
+        if (settings?.frequencyUnit) {
+          updateData.frequencyUnit = settings.frequencyUnit;
+          updateData.frequencyInterval = settings.frequencyInterval;
+        }
+      }
     } else {
       // When turning off DP, clear all product-specific setting overrides
       // so they revert to shop defaults when re-enabled.
@@ -175,7 +187,10 @@ export const action = async ({ request }) => {
       // rescrape loop on the next beat tick. Only touches active rows whose
       // current schedule has gone stale (nextRunAt NULL or in the past) so
       // we don't trample a healthy upcoming schedule.
-      const nextRunAt = computeNextRunAt(product.frequencyInterval, product.frequencyUnit);
+      const nextRunAt = computeNextRunAt(
+        updateData.frequencyInterval ?? product.frequencyInterval,
+        updateData.frequencyUnit ?? product.frequencyUnit,
+      );
       await db.productUrl.updateMany({
         where: {
           shopifyProductId: productId,
@@ -659,8 +674,10 @@ export default function HomePage() {
         pricingTier:         local.pricingTier ?? "COMPETITIVE",
         minPriceOverride:    local.minPriceOverride ?? "",
         maxPriceOverride:    local.maxPriceOverride ?? "",
-        frequencyInterval:   local.frequencyInterval ?? "",
-        frequencyUnit:       local.frequencyUnit ?? "",
+        // Persist what the pane displays: the product's own frequency, else
+        // the shop default the fields are showing. "never" passes through.
+        frequencyInterval:   String(local.frequencyInterval || getCurrentDefaults().frequencyInterval || ""),
+        frequencyUnit:       local.frequencyUnit || getCurrentDefaults().frequencyUnit || "",
         discoveryNumResults: String(local.discoveryNumResults ?? ""),
         listingExpansionCap: String(local.listingExpansionCap ?? ""),
       },
