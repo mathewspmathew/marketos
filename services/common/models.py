@@ -12,7 +12,7 @@ because SQLAlchemy has no native pgvector type; all vector reads/writes use raw 
 """
 import uuid
 
-from sqlalchemy import BIGINT, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, func, UniqueConstraint
+from sqlalchemy import BIGINT, Boolean, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM as PgEnum, JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -103,8 +103,7 @@ class ShopifyProduct(Base):
     searchQuery               = Column("searchQuery",               String,  nullable=True)
     searchQueryOverride       = Column("searchQueryOverride",       String,  nullable=True)
     dynamicPricingEnabled     = Column("dynamicPricingEnabled",     Boolean, nullable=False, default=False)
-    floorPrice                = Column("floorPrice",                Numeric(10, 2))
-    ceilingPrice              = Column("ceilingPrice",              Numeric(10, 2))
+    avgBasePrice              = Column("avgBasePrice",              Numeric(10, 2))
     frequencyInterval         = Column("frequencyInterval",         Integer)
     frequencyUnit             = Column("frequencyUnit",             String)
     lastDiscoveryAt           = Column("lastDiscoveryAt",           DateTime(timezone=True), nullable=True)
@@ -130,6 +129,7 @@ class ShopifyVariant(Base):
     imageUrl       = Column("imageUrl",       String)
     currentPrice   = Column("currentPrice",   Numeric(10, 2), nullable=False)
     compareAtPrice = Column("compareAtPrice", Numeric(10, 2))
+    basePrice      = Column("basePrice",      Numeric(10, 2))
     isInStock      = Column("isInStock",      Boolean, default=True)
     stockQuantity  = Column("stockQuantity",  Integer)
     semanticText   = Column("semanticText",   Text)

@@ -104,7 +104,7 @@ export const loader = async ({ request, params }) => {
       title: product.title,
       dynamicPricingEnabled: product.dynamicPricingEnabled,
       tier: product.pricingTier,
-      basePrice: product.basePrice ? Number(product.basePrice) : null,
+      avgBasePrice: product.avgBasePrice ? Number(product.avgBasePrice) : null,
       adminProductUrl,
       variants: product.ShopifyVariant.map((v) => ({
         id: v.id, title: v.title,
@@ -280,7 +280,7 @@ export default function ProductStatsPage() {
           <s-badge tone="info">Tier: {product.tier}</s-badge>
           <s-text tone="subdued">
             Current ₹{primaryVariantPrice?.toFixed(2) ?? "—"}
-            {product.basePrice && ` · Base ₹${Number(product.basePrice).toFixed(2)}`}
+            {product.avgBasePrice && ` · Base ₹${Number(product.avgBasePrice).toFixed(2)}`}
           </s-text>
         </s-stack>
       </s-section>

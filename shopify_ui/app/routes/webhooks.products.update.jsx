@@ -48,13 +48,21 @@ export const action = async ({ request }) => {
     },
   });
 
+  // Snapshot the bounds inputs BEFORE any re-anchor, so we can later tell
+  // whether the stored min/max were auto-derived from the old anchor.
+  const priorProduct = await db.shopifyProduct.findUnique({
+    where: { id: shopifyId },
+    select: { avgBasePrice: true, minPriceOverride: true, maxPriceOverride: true },
+  });
+
   // 3. Upsert ShopifyVariants with manual-price-edit detection.
-  // If currentPrice changes and no PriceDecision wrote it in the last 60s,
-  // treat as a merchant manual edit: re-anchor basePrice to the new value
-  // so the lifetime cap respects the merchant's new intent.
-  const MANUAL_EDIT_WINDOW_MS = 60 * 1000;
-  const manualEditCutoff = new Date(Date.now() - MANUAL_EDIT_WINDOW_MS);
+  // A price change is the pricing engine's own write-back iff it equals the
+  // latest applied PriceDecision.newPrice — webhook delivery can lag, so
+  // price identity (not a time window) is the signal. Anything else is a
+  // merchant manual edit: re-anchor basePrice so the lifetime cap follows
+  // the merchant's new intent.
   let anyManualEdit = false;
+  const manualEdits = []; // { variantId, oldPrice, newPrice }
 
   if (Array.isArray(product.variants)) {
     for (const v of product.variants) {
@@ -75,15 +83,14 @@ export const action = async ({ request }) => {
 
       let isManualEdit = false;
       if (priceChanged) {
-        // Did the pricing pipeline write this in the last 60s? If so it's ours.
-        const recent = await db.priceDecision.findFirst({
-          where: {
-            shopifyVariantId: variantId,
-            appliedAt: { gte: manualEditCutoff },
-          },
-          select: { id: true },
+        const latest = await db.priceDecision.findFirst({
+          where: { shopifyVariantId: variantId, appliedAt: { not: null } },
+          orderBy: { decidedAt: "desc" },
+          select: { newPrice: true },
         });
-        isManualEdit = !recent;
+        const engineWrote = latest != null
+          && Math.abs(Number(latest.newPrice) - newPrice) <= 0.005;
+        isManualEdit = !engineWrote;
       }
 
       await db.shopifyVariant.upsert({
@@ -110,30 +117,81 @@ export const action = async ({ request }) => {
           barcode:           v.barcode ?? null,
           options,
           inventoryQuantity: v.inventory_quantity ?? null,
+          basePrice:         v.price ?? null,
           updatedAt:         new Date(),
         },
       });
 
       if (isManualEdit) {
         anyManualEdit = true;
+        manualEdits.push({ variantId, oldPrice: priorPrice, newPrice });
         console.log(`[webhook] manual price edit detected on ${variantId}: ${priorPrice} → ${newPrice}. basePrice re-anchored.`);
       }
     }
   }
 
-  // If any variant was re-anchored, recompute product basePrice = min variant base.
-  // Also clear lastDecisionAt so the next rescrape cycle re-evaluates immediately
-  // against the new anchor instead of waiting out the debounce.
+  // avgBasePrice is derived (average of variant anchors) — recompute every
+  // time so it tracks variant adds/removals and re-anchors. On a manual edit
+  // also clear lastDecisionAt so the next rescrape cycle re-evaluates
+  // immediately against the new anchor instead of waiting out the debounce.
+  const avgBase = await db.shopifyVariant.aggregate({
+    where: { productId: shopifyId },
+    _avg:  { basePrice: true },
+  });
+  await db.shopifyProduct.update({
+    where: { id: shopifyId },
+    data: {
+      avgBasePrice: avgBase._avg.basePrice,
+      ...(anyManualEdit ? { lastDecisionAt: null, semanticStatus: "PENDING" } : {}),
+    },
+  });
+
   if (anyManualEdit) {
-    const newMin = await db.shopifyVariant.aggregate({
-      where: { productId: shopifyId },
-      _min:  { basePrice: true },
+    // Stored min/max that EQUAL the formula output from the old anchor were
+    // auto-derived — recompute them from the new anchor so the cap follows
+    // the merchant's manual re-price. Merchant-typed bounds won't match the
+    // formula and are left untouched.
+    const settings = await db.shopSettings.findUnique({
+      where: { shopDomain: shop },
+      select: { lifetimeCapPct: true },
     });
-    if (newMin._min.basePrice != null) {
+    const cap = settings?.lifetimeCapPct != null ? Number(settings.lifetimeCapPct) : 0.25;
+    const oldAvg    = priorProduct?.avgBasePrice     != null ? Number(priorProduct.avgBasePrice)     : null;
+    const newAvg    = avgBase._avg.basePrice          != null ? Number(avgBase._avg.basePrice)        : null;
+    const storedMin = priorProduct?.minPriceOverride != null ? Number(priorProduct.minPriceOverride) : null;
+    const storedMax = priorProduct?.maxPriceOverride != null ? Number(priorProduct.maxPriceOverride) : null;
+    const close = (a, b) => a != null && b != null && Math.abs(a - b) <= 0.011;
+    if (oldAvg != null && newAvg != null && storedMin != null && storedMax != null
+        && close(storedMin, oldAvg * (1 - cap)) && close(storedMax, oldAvg * (1 + cap))) {
       await db.shopifyProduct.update({
         where: { id: shopifyId },
-        data: { basePrice: newMin._min.basePrice, lastDecisionAt: null, semanticStatus: "PENDING" },
+        data: {
+          minPriceOverride: (newAvg * (1 - cap)).toFixed(2),
+          maxPriceOverride: (newAvg * (1 + cap)).toFixed(2),
+        },
       });
+      console.log(`[webhook] auto-derived bounds recomputed from new anchor ${newAvg} for ${shopifyId}`);
+    }
+
+    // Merchant edits on tracked variants become part of the price history so
+    // the stats page (and chatbot) can show "merchant changed the price".
+    for (const edit of manualEdits) {
+      const tracked =
+        (await db.productMatch.count({ where: { shopifyVariantId: edit.variantId } })) > 0 ||
+        (await db.priceDecision.count({ where: { shopifyVariantId: edit.variantId } })) > 0;
+      if (tracked && edit.oldPrice != null && Number.isFinite(edit.newPrice)) {
+        await db.priceDecision.create({
+          data: {
+            shopDomain:       shop,
+            shopifyVariantId: edit.variantId,
+            oldPrice:         edit.oldPrice,
+            newPrice:         edit.newPrice,
+            reason:           "manual price edit by merchant",
+            appliedAt:        new Date(),
+            autoApplied:      false,
+          },
+        });
+      }
     }
   }
 

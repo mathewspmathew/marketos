@@ -79,13 +79,24 @@ export const action = async ({ request }) => {
           barcode:           v.barcode ?? null,
           options,
           inventoryQuantity: v.inventory_quantity ?? null,
+          basePrice:         v.price ?? null,
           updatedAt:         new Date(),
         },
       });
     }
   }
 
-  // 4. Trigger semantic + embedding pipeline via the internal API gateway
+  // 4. avgBasePrice is derived: average of the variants' basePrice anchors.
+  const avgBase = await db.shopifyVariant.aggregate({
+    where: { productId: shopifyId },
+    _avg:  { basePrice: true },
+  });
+  await db.shopifyProduct.update({
+    where: { id: shopifyId },
+    data: { avgBasePrice: avgBase._avg.basePrice },
+  });
+
+  // 5. Trigger semantic + embedding pipeline via the internal API gateway
   try {
     await fetch(`${PYTHON_API_URL}/internal/shopify/product-updated?product_id=${encodeURIComponent(shopifyId)}`, {
       method: "POST",

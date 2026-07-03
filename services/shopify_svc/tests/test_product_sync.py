@@ -88,6 +88,7 @@ def test_map_variant_node():
         "barcode": None,
         "imageUrl": "https://img/v.jpg",
         "options": {"Size": "Short"},
+        "basePrice": "145.00",
     }
 
 
@@ -97,6 +98,8 @@ def test_map_variant_node_defaults_title_and_price():
     assert out["title"] == "Default Title"
     assert out["currentPrice"] == "0"
     assert out["options"] == {}
+    # No price from Shopify → no anchor; basePrice stays NULL, never 0.
+    assert out["basePrice"] is None
 
 
 def test_diff_new_ids():

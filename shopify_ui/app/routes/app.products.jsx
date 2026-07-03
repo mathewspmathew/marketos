@@ -39,10 +39,8 @@ export const loader = async ({ request }) => {
     syncPrice: p.syncPrice,
     searchQuery: p.searchQuery ?? "",
     searchQueryOverride: p.searchQueryOverride ?? "",
-    floorPrice: p.floorPrice?.toString() ?? "",
-    ceilingPrice: p.ceilingPrice?.toString() ?? "",
     pricingTier: p.pricingTier ?? "COMPETITIVE",
-    basePrice: p.basePrice?.toString() ?? null,
+    avgBasePrice: p.avgBasePrice?.toString() ?? null,
     minPriceOverride: p.minPriceOverride?.toString() ?? "",
     maxPriceOverride: p.maxPriceOverride?.toString() ?? "",
     frequencyInterval: p.frequencyInterval ?? "",
@@ -131,23 +129,15 @@ export const action = async ({ request }) => {
 
     const updateData = { dynamicPricingEnabled: enabled };
 
+    let product = null;
     if (enabled) {
-      // Snapshot basePrice on FIRST enable (both at product- and variant-level)
-      // so the lifetime cap has a stable anchor. Preserved across toggle off→on.
-      const product = await db.shopifyProduct.findUnique({
+      // Snapshot variant basePrice on enable (fills nulls only — the anchor
+      // is first-seen price, preserved across toggle off→on), then refresh
+      // the derived product avgBasePrice.
+      product = await db.shopifyProduct.findUnique({
         where: { id: productId },
-        select: { basePrice: true, frequencyUnit: true, frequencyInterval: true, ShopifyVariant: { select: { id: true, currentPrice: true, basePrice: true } } },
+        select: { frequencyUnit: true, frequencyInterval: true, ShopifyVariant: { select: { id: true, currentPrice: true, basePrice: true } } },
       });
-      if (product && product.basePrice == null) {
-        const minVariantPrice = product.ShopifyVariant
-          .map((v) => Number(v.currentPrice))
-          .filter((n) => Number.isFinite(n) && n > 0)
-          .reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
-        if (Number.isFinite(minVariantPrice)) {
-          updateData.basePrice = minVariantPrice;
-        }
-      }
-      // Per-variant snapshot — only fills nulls.
       for (const v of product?.ShopifyVariant ?? []) {
         if (v.basePrice == null && Number(v.currentPrice) > 0) {
           await db.shopifyVariant.update({
@@ -156,13 +146,17 @@ export const action = async ({ request }) => {
           });
         }
       }
+      const bases = (product?.ShopifyVariant ?? [])
+        .map((v) => Number(v.basePrice ?? v.currentPrice))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (bases.length > 0) {
+        updateData.avgBasePrice = bases.reduce((a, b) => a + b, 0) / bases.length;
+      }
     } else {
       // When turning off DP, clear all product-specific setting overrides
       // so they revert to shop defaults when re-enabled.
       updateData.frequencyInterval = null;
       updateData.frequencyUnit = null;
-      updateData.floorPrice = null;
-      updateData.ceilingPrice = null;
       updateData.pricingTier = "COMPETITIVE";
       updateData.minPriceOverride = null;
       updateData.maxPriceOverride = null;
@@ -233,8 +227,6 @@ export const action = async ({ request }) => {
     const allowedUnits = new Set(["never", "minute", "hour", "day"]);
     const rawUnit     = formData.get("frequencyUnit") || "";
     const rawInterval = formData.get("frequencyInterval");
-    const rawFloor    = formData.get("floorPrice");
-    const rawCeiling  = formData.get("ceilingPrice");
     const rawOverride = (formData.get("searchQueryOverride") || "").toString().trim();
     const rawNumResults = formData.get("discoveryNumResults");
     const rawListingCap = formData.get("listingExpansionCap");
@@ -262,11 +254,6 @@ export const action = async ({ request }) => {
       return Number.isFinite(n) && n >= 0 ? n : undefined;
     };
 
-    const floor   = parseDecimal(rawFloor);
-    const ceiling = parseDecimal(rawCeiling);
-    if (floor   !== undefined) data.floorPrice   = floor;
-    if (ceiling !== undefined) data.ceilingPrice = ceiling;
-
     // Auto-pricing per-product overrides. Tier is an enum; min/max override
     // win over the basePrice × lifetimeCapPct fallback when present.
     const rawTier = (formData.get("pricingTier") || "").toString();
@@ -275,6 +262,14 @@ export const action = async ({ request }) => {
     }
     const minOverride = parseDecimal(formData.get("minPriceOverride"));
     const maxOverride = parseDecimal(formData.get("maxPriceOverride"));
+    // Hard bounds validation (server-side safety net; the pane validates too):
+    // a persisted 0 would clamp every variant's price to 0 on the next cycle.
+    if ((minOverride != null && minOverride <= 0) || (maxOverride != null && maxOverride <= 0)) {
+      return { ok: false, error: "Price bounds must be greater than 0." };
+    }
+    if (minOverride != null && maxOverride != null && minOverride >= maxOverride) {
+      return { ok: false, error: "Minimum price must be below the maximum." };
+    }
     if (minOverride !== undefined) data.minPriceOverride = minOverride;
     if (maxOverride !== undefined) data.maxPriceOverride = maxOverride;
 
@@ -461,15 +456,13 @@ export const action = async ({ request }) => {
           dynamicPricingEnabled: false,
           frequencyInterval: null,
           frequencyUnit: null,
-          floorPrice: null,
-          ceilingPrice: null,
           pricingTier: "COMPETITIVE",
           minPriceOverride: null,
           maxPriceOverride: null,
           searchQueryOverride: null,
           listingExpansionCap: null,
           discoveryNumResults: null,
-          basePrice: null,
+          avgBasePrice: null,
         },
       });
     } catch (error) {
@@ -511,10 +504,8 @@ export default function HomePage() {
         dynamicPricingEnabled: p.dynamicPricingEnabled,
         syncPrice: p.syncPrice,
         searchQueryOverride: p.searchQueryOverride,
-        floorPrice: p.floorPrice,
-        ceilingPrice: p.ceilingPrice,
         pricingTier: p.pricingTier ?? "COMPETITIVE",
-        basePrice: p.basePrice,
+        avgBasePrice: p.avgBasePrice,
         minPriceOverride: p.minPriceOverride,
         maxPriceOverride: p.maxPriceOverride,
         frequencyInterval: p.frequencyInterval === "" ? "" : String(p.frequencyInterval),
@@ -533,16 +524,25 @@ export default function HomePage() {
     if (expandedId) {
       const product = products.find((p) => p.id === expandedId);
       const local = getLocal(expandedId);
-      const priceForCalculation = local.basePrice || local.price;
+      const priceForCalculation = local.avgBasePrice || local.price;
       if (product && priceForCalculation) {
         const lifetimeCapPct = shopDefaults?.lifetimeCapPct ?? 0.25;
         const { min, max } = calculateMinMaxPrices(Number(priceForCalculation), lifetimeCapPct);
+        // Pre-fill the editable Min/Max fields with the live-computed band
+        // when the merchant hasn't saved bounds yet. Saved (or typed) values
+        // are never touched — Save & Enable persists whatever is in the
+        // fields.
+        const prefill = local.minPriceOverride === "" && local.maxPriceOverride === ""
+          && min != null && max != null;
         setLocalState((prev) => ({
           ...prev,
           [expandedId]: {
             ...prev[expandedId],
             calculatedMinPrice: min,
             calculatedMaxPrice: max,
+            ...(prefill
+              ? { minPriceOverride: min.toFixed(2), maxPriceOverride: max.toFixed(2) }
+              : {}),
           },
         }));
       }
@@ -591,10 +591,8 @@ export default function HomePage() {
       dynamicPricingEnabled: false,
       syncPrice: true,
       searchQueryOverride: "",
-      floorPrice: "",
-      ceilingPrice: "",
       pricingTier: "COMPETITIVE",
-      basePrice: null,
+      avgBasePrice: null,
       minPriceOverride: "",
       maxPriceOverride: "",
       frequencyInterval: "",
@@ -631,6 +629,20 @@ export default function HomePage() {
 
   const submitOverrides = (productId, opts = {}) => {
     const local = getLocal(productId);
+    // Bounds sanity: both must be > 0 and min strictly below max. A max of 0
+    // would make the pricing engine clamp every variant to 0.
+    const minB = local.minPriceOverride === "" || local.minPriceOverride == null ? null : Number(local.minPriceOverride);
+    const maxB = local.maxPriceOverride === "" || local.maxPriceOverride == null ? null : Number(local.maxPriceOverride);
+    let boundsError = null;
+    if (minB != null && (!Number.isFinite(minB) || minB <= 0)) {
+      boundsError = "Minimum price must be greater than 0.";
+    } else if (maxB != null && (!Number.isFinite(maxB) || maxB <= 0)) {
+      boundsError = "Maximum price must be greater than 0.";
+    } else if (minB != null && maxB != null && minB >= maxB) {
+      boundsError = "Minimum price must be below the maximum.";
+    }
+    setOverrideField(productId, "boundsError", boundsError);
+    if (boundsError) return;
     const intent = opts.enable ? "saveAndEnable" : "updateOverrides";
     if (opts.enable) {
       // Reflect the enabled state locally so the UI flips immediately.
@@ -644,8 +656,6 @@ export default function HomePage() {
         intent,
         productId,
         searchQueryOverride: local.searchQueryOverride ?? "",
-        floorPrice:          local.floorPrice ?? "",
-        ceilingPrice:        local.ceilingPrice ?? "",
         pricingTier:         local.pricingTier ?? "COMPETITIVE",
         minPriceOverride:    local.minPriceOverride ?? "",
         maxPriceOverride:    local.maxPriceOverride ?? "",
@@ -670,8 +680,6 @@ export default function HomePage() {
           dynamicPricingEnabled: false,
           frequencyInterval: "",
           frequencyUnit: "",
-          floorPrice: "",
-          ceilingPrice: "",
           pricingTier: "COMPETITIVE",
           minPriceOverride: "",
           maxPriceOverride: "",
@@ -730,8 +738,6 @@ export default function HomePage() {
         dynamicPricingEnabled: false,
         frequencyInterval: "",
         frequencyUnit: "",
-        floorPrice: "",
-        ceilingPrice: "",
         pricingTier: "COMPETITIVE",
         minPriceOverride: "",
         maxPriceOverride: "",
@@ -1123,7 +1129,7 @@ export default function HomePage() {
                               </s-text>
                               {local.calculatedMinPrice !== null && local.calculatedMaxPrice !== null && (
                                 <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "12px" }}>
-                                  {local.basePrice ? `Base price: ${getCurrencySymbol(shopDefaults?.currency)}${Number(local.basePrice).toFixed(2)}.` : `Current price: ${getCurrencySymbol(shopDefaults?.currency)}${Number(local.price).toFixed(2)}.`}
+                                  {local.avgBasePrice ? `Base price: ${getCurrencySymbol(shopDefaults?.currency)}${Number(local.avgBasePrice).toFixed(2)}.` : `Current price: ${getCurrencySymbol(shopDefaults?.currency)}${Number(local.price).toFixed(2)}.`}
                                   Auto-calculated bounds (±{Math.round((shopDefaults?.lifetimeCapPct ?? 0.25) * 100)}%): ${getCurrencySymbol(shopDefaults?.currency)}${local.calculatedMinPrice.toFixed(2)} to ${getCurrencySymbol(shopDefaults?.currency)}${local.calculatedMaxPrice.toFixed(2)}
                                 </s-text>
                               )}
@@ -1147,6 +1153,19 @@ export default function HomePage() {
                                   }
                                 />
                               </s-stack>
+                              {local.boundsError && (
+                                <s-text tone="critical" style={{ fontSize: "0.85em" }}>
+                                  {local.boundsError}
+                                </s-text>
+                              )}
+                              {!local.boundsError &&
+                                Number(local.maxPriceOverride) > 0 &&
+                                Number(local.price) > 0 &&
+                                Number(local.maxPriceOverride) < Number(local.price) && (
+                                <s-text tone="caution" style={{ fontSize: "0.85em" }}>
+                                  Maximum ({getCurrencySymbol(shopDefaults?.currency)}{Number(local.maxPriceOverride).toFixed(2)}) is below the current price ({getCurrencySymbol(shopDefaults?.currency)}{Number(local.price).toFixed(2)}) — saving will force a price drop on the next cycle.
+                                </s-text>
+                              )}
                             </div>
                           </div>
 

@@ -380,15 +380,13 @@ model ShopifyProduct {
   productGender                 String?
   lastDiscoveryAt               DateTime?
   searchQuery                   String?
-  ceilingPrice                  Decimal?              @db.Decimal(10, 2)
-  floorPrice                    Decimal?              @db.Decimal(10, 2)
   frequencyInterval             Int?
   frequencyUnit                 String?
   searchQueryOverride           String?
   discoveryNumResults           Int?
   listingExpansionCap           Int?
   pricingTier                   PricingTier           @default(COMPETITIVE)
-  basePrice                     Decimal?              @db.Decimal(10, 2)
+  avgBasePrice                  Decimal?              @db.Decimal(10, 2)
   minPriceOverride              Decimal?              @db.Decimal(10, 2)
   maxPriceOverride              Decimal?              @db.Decimal(10, 2)
   maxAutoApplyChangePctOverride Float?

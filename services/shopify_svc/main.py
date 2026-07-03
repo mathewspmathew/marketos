@@ -182,6 +182,9 @@ def _map_variant_node(vnode: dict, product_id: str) -> dict:
         "barcode":        vnode.get("barcode"),
         "imageUrl":       (vnode.get("image") or {}).get("url"),
         "options":        options,
+        # First-seen store price = the anchor dynamic pricing measures drift
+        # from. NULL when Shopify sends no price — never anchor at 0.
+        "basePrice":      vnode.get("price") or None,
     }
 
 
@@ -252,9 +255,9 @@ ON CONFLICT (id) DO UPDATE SET
 
 _UPSERT_VARIANT_SQL = text("""
 INSERT INTO "ShopifyVariant"
-  (id, "productId", title, "currentPrice", "compareAtPrice", sku, barcode, "imageUrl", options, "updatedAt")
+  (id, "productId", title, "currentPrice", "compareAtPrice", sku, barcode, "imageUrl", options, "basePrice", "updatedAt")
 VALUES
-  (:id, :productId, :title, :currentPrice, :compareAtPrice, :sku, :barcode, :imageUrl, CAST(:options AS jsonb), NOW())
+  (:id, :productId, :title, :currentPrice, :compareAtPrice, :sku, :barcode, :imageUrl, CAST(:options AS jsonb), :basePrice, NOW())
 ON CONFLICT (id) DO UPDATE SET
   title            = EXCLUDED.title,
   "currentPrice"   = EXCLUDED."currentPrice",
@@ -263,7 +266,17 @@ ON CONFLICT (id) DO UPDATE SET
   barcode          = EXCLUDED.barcode,
   "imageUrl"       = EXCLUDED."imageUrl",
   options          = EXCLUDED.options,
+  "basePrice"      = COALESCE("ShopifyVariant"."basePrice", EXCLUDED."basePrice"),
   "updatedAt"      = NOW()
+""")
+
+# avgBasePrice is a derived display value: average of the product's variant
+# anchors. Recomputed after every variant upsert batch so it tracks variant
+# adds/removals and basePrice fills.
+_RECOMPUTE_AVG_BASE_SQL = text("""
+UPDATE "ShopifyProduct" SET "avgBasePrice" = (
+  SELECT AVG("basePrice") FROM "ShopifyVariant" WHERE "productId" = :pid
+) WHERE id = :pid
 """)
 
 
@@ -313,6 +326,7 @@ def pull_products(shop_domain: str) -> dict:
                     v = _map_variant_node(vedge["node"], node["id"])
                     v["options"] = json.dumps(v["options"])
                     session.execute(_UPSERT_VARIANT_SQL, v)
+                session.execute(_RECOMPUTE_AVG_BASE_SQL, {"pid": node["id"]})
 
             _set_sync_state(session, shop_domain, "SYNCED", synced=True)
 

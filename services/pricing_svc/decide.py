@@ -142,10 +142,9 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
         product = session.execute(
             text("""
                 SELECT id, "dynamicPricingEnabled", "syncPrice", "pricingTier",
-                       "basePrice", "minPriceOverride", "maxPriceOverride",
+                       "minPriceOverride", "maxPriceOverride",
                        "maxAutoApplyChangePctOverride", "lifetimeCapPctOverride",
-                       "lastDecisionAt", "frequencyUnit", "frequencyInterval",
-                       "floorPrice", "ceilingPrice"
+                       "lastDecisionAt", "frequencyUnit", "frequencyInterval"
                 FROM "ShopifyProduct"
                 WHERE id = :pid AND "shopDomain" = :sd
             """),
@@ -332,7 +331,8 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
         top = candidates[:max(1, top_k)]
         conf_sum = sum(c["confidence"] for c in top) or 1.0
-        ref_price = sum(c["median"] * Decimal(str(c["confidence"] / conf_sum)) for c in top)
+        ref_price = sum((c["median"] * Decimal(str(c["confidence"] / conf_sum)) for c in top),
+                        Decimal("0"))
         ref_price = _q(ref_price)
 
         formula_target = _q(_tier_target(ref_price, tier,
@@ -342,11 +342,11 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
         # the product-level reference; each variant's desired price is scaled
         # by (variant.basePrice / anchor) so variant relative pricing is
         # preserved across cycles instead of every variant drifting to one
-        # uniform number.
-        product_anchor = (Decimal(str(product.basePrice))
-                          if product.basePrice is not None
-                          else min((Decimal(str(v.basePrice or v.currentPrice))
-                                    for v in variants), default=Decimal("1")))
+        # uniform number. Anchor = cheapest variant base, so that variant maps
+        # 1:1 onto the formula target. (ShopifyProduct.avgBasePrice is display
+        # only — the engine anchors on variant basePrice.)
+        product_anchor = min((Decimal(str(v.basePrice or v.currentPrice))
+                              for v in variants), default=Decimal("1"))
         if product_anchor <= 0:
             product_anchor = Decimal("1")
 
@@ -386,12 +386,6 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
             ceiling = (Decimal(str(product.maxPriceOverride))
                        if product.maxPriceOverride is not None
                        else v_base * (Decimal("1") + lifetime_cap))
-            # Legacy floorPrice/ceilingPrice on ShopifyProduct still respected.
-            if product.floorPrice is not None:
-                floor = max(floor, Decimal(str(product.floorPrice)))
-            if product.ceilingPrice is not None:
-                ceiling = min(ceiling, Decimal(str(product.ceilingPrice)))
-
             if new_price < floor:
                 new_price = _q(floor)
                 skip_reason = "clamped_lifetime_cap"

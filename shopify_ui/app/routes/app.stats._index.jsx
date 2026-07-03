@@ -22,7 +22,7 @@ export const loader = async ({ request }) => {
       title: true,
       imageUrl: true,
       pricingTier: true,
-      basePrice: true,
+      avgBasePrice: true,
       ShopifyVariant: { select: { currentPrice: true }, take: 1 },
     },
     orderBy: { lastDecisionAt: "desc" },
@@ -63,7 +63,7 @@ export const loader = async ({ request }) => {
         imageUrl: p.imageUrl,
         tier: p.pricingTier,
         currentPrice: p.ShopifyVariant[0]?.currentPrice ? Number(p.ShopifyVariant[0].currentPrice) : null,
-        basePrice: p.basePrice ? Number(p.basePrice) : null,
+        avgBasePrice: p.avgBasePrice ? Number(p.avgBasePrice) : null,
         lastDecisionAt: r?.decidedAt ? new Date(r.decidedAt).toISOString() : null,
         lastChangePct: r?.changePct ?? null,
         lastStatus:    status,
@@ -104,7 +104,7 @@ export default function StatsIndex() {
                       <s-stack direction="block" gap="tight" style={{ flex: 1 }}>
                         <s-text emphasis="bold">{p.title}</s-text>
                         <s-text tone="subdued">
-                          Tier {p.tier} · current ₹{p.currentPrice != null ? Number(p.currentPrice).toFixed(2) : "—"} · base ₹{p.basePrice != null ? Number(p.basePrice).toFixed(2) : "—"}
+                          Tier {p.tier} · current ₹{p.currentPrice != null ? Number(p.currentPrice).toFixed(2) : "—"} · base ₹{p.avgBasePrice != null ? Number(p.avgBasePrice).toFixed(2) : "—"}
                         </s-text>
                       </s-stack>
                     </s-stack>
