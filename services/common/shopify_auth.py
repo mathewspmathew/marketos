@@ -46,9 +46,21 @@ class ShopifyTokenExpiredError(ShopifyAuthError):
     pass
 
 
+# How close to expiry a stored access token is still considered usable.
+# Matches the JS library's WITHIN_MILLISECONDS_OF_EXPIRY (5 min) so both
+# sides of the shared Session row refresh in step.
+TOKEN_EXPIRY_MARGIN = timedelta(seconds=300)
+
+
 def get_access_token(shop_domain: str, session) -> tuple[str, datetime]:
     """
-    Get a fresh access token by exchanging the refresh token with Shopify.
+    Get a valid access token for the shop's offline session.
+
+    Reuses the access token stored on the Session row while it is still valid
+    (refresh tokens are single-use, so needless exchanges rotate them and can
+    race with other workers or the React Router side). When expired, exchanges
+    the refresh token with Shopify and persists the new accessToken/expires
+    (and rotated refresh token) back to the row so all consumers see fresh state.
 
     Args:
         shop_domain: e.g., "fabric-dressing.myshopify.com"
@@ -67,22 +79,31 @@ def get_access_token(shop_domain: str, session) -> tuple[str, datetime]:
     if not api_key or not api_secret:
         raise ShopifyAuthError("SHOPIFY_API_KEY or SHOPIFY_API_SECRET not configured")
 
-    # Read refresh token from Session table
+    # The offline row only — the UPDATE below must never stomp online sessions.
     result = session.execute(
         text("""
-            SELECT "refreshToken", "refreshTokenExpires"
+            SELECT "accessToken", expires, "refreshToken", "refreshTokenExpires"
             FROM "Session"
-            WHERE shop = :shop
-            ORDER BY "refreshTokenExpires" DESC NULLS LAST
+            WHERE shop = :shop AND "isOnline" = false
             LIMIT 1
         """),
         {"shop": shop_domain},
     ).first()
 
-    if not result or not result[0]:
-        raise ShopifyAuthError(f"No refresh token found for shop {shop_domain}")
+    if not result:
+        raise ShopifyAuthError(f"No offline session found for shop {shop_domain}")
 
-    refresh_token, token_expires = result
+    stored_token, stored_expires, refresh_token, token_expires = result
+
+    # Reuse the stored token while it is comfortably within its lifetime.
+    if stored_token and stored_expires:
+        if stored_expires.tzinfo is None:
+            stored_expires = stored_expires.replace(tzinfo=timezone.utc)
+        if stored_expires - TOKEN_EXPIRY_MARGIN > datetime.now(timezone.utc):
+            return stored_token, stored_expires
+
+    if not refresh_token:
+        raise ShopifyAuthError(f"No refresh token found for shop {shop_domain}")
 
     # Check if refresh token itself is expired (Shopify refresh tokens last 6 months)
     if token_expires:
@@ -122,34 +143,45 @@ def get_access_token(shop_domain: str, session) -> tuple[str, datetime]:
     access_token = data.get("access_token")
     new_refresh_token = data.get("refresh_token")
     expires_in = data.get("expires_in", 3600)  # Default to 1 hour
+    refresh_expires_in = data.get("refresh_token_expires_in")
 
     if not access_token:
         raise ShopifyAuthError("No access token in Shopify response")
 
-    # Calculate when this access token expires
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=expires_in)
 
-    # If Shopify returned a new refresh token, update Session table
-    if new_refresh_token and new_refresh_token != refresh_token:
-        try:
-            new_refresh_expires = datetime.now(timezone.utc) + timedelta(days=180)
-            session.execute(
-                text("""
-                    UPDATE "Session"
-                    SET "refreshToken" = :rt, "refreshTokenExpires" = :rte
-                    WHERE shop = :shop
-                """),
-                {
-                    "rt": new_refresh_token,
-                    "rte": new_refresh_expires,
-                    "shop": shop_domain,
-                },
+    # Persist the new access token (and rotated refresh token) on the offline
+    # row so subsequent calls reuse it and the React Router side sees fresh
+    # state. Columns are timestamp-without-tz, hence the naive UTC values.
+    try:
+        set_clauses = ['"accessToken" = :t', "expires = :e"]
+        params = {
+            "t": access_token,
+            "e": expires_at.replace(tzinfo=None),
+            "shop": shop_domain,
+        }
+        if new_refresh_token and new_refresh_token != refresh_token:
+            new_refresh_expires = (
+                now + timedelta(seconds=refresh_expires_in)
+                if refresh_expires_in
+                else now + timedelta(days=180)
             )
-            session.commit()
-            logger.info(f"Updated refresh token for {shop_domain}")
-        except Exception as e:
-            logger.error(f"Failed to update refresh token: {e}")
-            # Don't fail - token exchange succeeded, just couldn't persist new token
+            set_clauses += ['"refreshToken" = :rt', '"refreshTokenExpires" = :rte']
+            params["rt"] = new_refresh_token
+            params["rte"] = new_refresh_expires.replace(tzinfo=None)
+        session.execute(
+            text(
+                f'UPDATE "Session" SET {", ".join(set_clauses)} '
+                'WHERE shop = :shop AND "isOnline" = false'
+            ),
+            params,
+        )
+        session.commit()
+        logger.info(f"Persisted refreshed access token for {shop_domain}")
+    except Exception as e:
+        logger.error(f"Failed to persist refreshed token: {e}")
+        # Don't fail - token exchange succeeded, just couldn't persist new token
 
     return access_token, expires_at
 

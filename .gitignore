@@ -76,6 +76,8 @@ shopify_ui/.react-router/
 CLAUDE.md
 docs/superpowers/
 docs/rollout
+docs/evals
+reports/
 
 .superpowers
 .logfire

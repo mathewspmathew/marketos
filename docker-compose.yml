@@ -232,6 +232,36 @@ services:
       - ./services:/app/services
     command: ["uv", "run", "uvicorn", "services.api_gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
+  # Production build of the React Router app (embedded UI + internal apply
+  # routes). Browser-based dev keeps using `npm run dev` on host port 3000;
+  # this instance serves the in-stack consumers (chatbot apply tools, evals)
+  # and is published on host port 3300 to avoid clashing with the dev server.
+  web:
+    build:
+      context: ./shopify_ui
+    container_name: marketos_web
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
+      - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
+      # Must be a valid URL for shopifyApp(); OAuth through this instance is
+      # not used (browser dev flow stays on the Shopify CLI tunnel).
+      - SHOPIFY_APP_URL=${SHOPIFY_APP_URL:-http://localhost:3300}
+      - SCOPES=read_analytics,read_inventory,read_orders,read_product_listings,read_products,write_inventory,write_product_listings,write_products
+      # Base URL app.apply-preview uses to call its own /internal/* routes.
+      - APP_URL=http://localhost:3000
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      - CHATBOT_SVC_URL=http://chatbot-svc:8088
+      - PYTHON_API_URL=http://api-gateway:8000
+      - MARKETOS_DEMO_TENANT_ID=${MARKETOS_DEMO_TENANT_ID}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_REFINER_MODEL=${GROQ_REFINER_MODEL:-}
+    ports:
+      - "3300:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
   chatbot-svc:
     build:
       context: .
@@ -242,10 +272,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - GROQ_API_KEY=${GROQ_API_KEY}
       - CHATBOT_MODEL=${CHATBOT_MODEL:-groq:llama-3.3-70b-versatile}
-      # Apply actions POST to the React Router app, which runs on the host
-      # (npm run dev), not in this stack. Reach it via host.docker.internal —
-      # same pattern as the workers (REACT_ROUTER_INTERNAL_URL / pricing_worker).
-      - CHATBOT_RR_URL=${REACT_ROUTER_INTERNAL_URL:-http://host.docker.internal:3000}
+      # Apply actions POST to the React Router app's internal routes. Defaults
+      # to the in-stack web service; set REACT_ROUTER_INTERNAL_URL to
+      # http://host.docker.internal:3000 to target `npm run dev` instead
+      # (e.g. when live-editing RR internal routes).
+      - CHATBOT_RR_URL=${REACT_ROUTER_INTERNAL_URL:-http://web:3000}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
       # Query Studio grounding fetches real competitor brands via Serper when the
       # product has no already-scraped competitors.

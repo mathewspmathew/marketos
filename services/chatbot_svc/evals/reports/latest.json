@@ -1,8 +1,8 @@
 {
-  "run_at": "2026-06-13T05:46:58+00:00",
+  "run_at": "2026-07-05T19:02:20+00:00",
   "model": "groq:openai/gpt-oss-120b",
   "cases_total": 12,
-  "overall_pass_rate_pct": 0.0,
+  "overall_pass_rate_pct": 25.0,
   "layers": {
     "output_correctness": {
       "pass": 7,
@@ -10,14 +10,14 @@
       "rate_pct": 58.3
     },
     "structured_output": {
-      "pass": 0,
-      "fail": 12,
-      "rate_pct": 0.0
+      "pass": 3,
+      "fail": 9,
+      "rate_pct": 25.0
     },
     "tool_selection": {
-      "pass": 1,
-      "fail": 11,
-      "rate_pct": 8.3
+      "pass": 3,
+      "fail": 9,
+      "rate_pct": 25.0
     },
     "hallucination": {
       "pass": 12,
@@ -35,16 +35,16 @@
     "scale": "0-1"
   },
   "latency_ms": {
-    "p50": 41286,
-    "p95": 94580
+    "p50": 42161,
+    "p95": 69840
   },
   "tokens": {
-    "input": 0,
-    "output": 0,
-    "est_cost_usd": 0.0
+    "input": 25312,
+    "output": 1166,
+    "est_cost_usd": 0.0159
   },
   "failures": {
-    "exceptions": 12,
+    "exceptions": 9,
     "validation_errors": 0,
     "timeouts": 0
   },
@@ -64,10 +64,10 @@
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 28.972090838,
+      "duration_s": 9.447242806,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "error": "AskUserRequested",
       "retries": 0
     },
     {
@@ -85,14 +85,14 @@
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 56.991167134,
+      "duration_s": 36.109930609,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "error": "AskUserRequested",
       "retries": 0
     },
     {
-      "case_id": "price_query_unknown_056114",
+      "case_id": "price_query_casio_056114",
       "prompt": "What is the price of the Casio FX-82MS 2nd?",
       "expected_tools": [
         "resolve_product"
@@ -106,7 +106,7 @@
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 29.775169949,
+      "duration_s": 44.351360849,
       "input_tokens": 0,
       "output_tokens": 0,
       "error": "AskUserRequested",
@@ -127,10 +127,10 @@
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 41.285627269,
+      "duration_s": 44.342536185,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "ModelAPIError",
+      "error": "AskUserRequested",
       "retries": 0
     },
     {
@@ -148,10 +148,10 @@
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 27.467634504,
+      "duration_s": 64.593804118,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "error": "AskUserRequested",
       "retries": 0
     },
     {
@@ -170,10 +170,10 @@
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 48.251453297,
+      "duration_s": 35.350740625,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "error": "AskUserRequested",
       "retries": 0
     },
     {
@@ -192,10 +192,10 @@
         "business_logic": false
       },
       "judge_score": 0.0,
-      "duration_s": 94.579510861,
+      "duration_s": 34.167240354,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "error": "AskUserRequested",
       "retries": 0
     },
     {
@@ -214,10 +214,10 @@
         "business_logic": false
       },
       "judge_score": 0.0,
-      "duration_s": 54.5975999,
+      "duration_s": 7.871467321,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "error": "AskUserRequested",
       "retries": 0
     },
     {
@@ -226,19 +226,21 @@
       "expected_tools": [
         "get_stats"
       ],
-      "actual_tools": [],
+      "actual_tools": [
+        "get_stats"
+      ],
       "assertions": {
         "output_correctness": true,
-        "structured_output": false,
-        "tool_selection": false,
+        "structured_output": true,
+        "tool_selection": true,
         "hallucination": true,
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 57.259919109,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "duration_s": 66.915307442,
+      "input_tokens": 8428,
+      "output_tokens": 899,
+      "error": null,
       "retries": 0
     },
     {
@@ -247,19 +249,22 @@
       "expected_tools": [
         "resolve_product"
       ],
-      "actual_tools": [],
+      "actual_tools": [
+        "resolve_product",
+        "resolve_product"
+      ],
       "assertions": {
         "output_correctness": true,
-        "structured_output": false,
-        "tool_selection": false,
+        "structured_output": true,
+        "tool_selection": true,
         "hallucination": true,
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 36.506083653,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "duration_s": 42.160666484,
+      "input_tokens": 12684,
+      "output_tokens": 175,
+      "error": null,
       "retries": 0
     },
     {
@@ -269,16 +274,16 @@
       "actual_tools": [],
       "assertions": {
         "output_correctness": true,
-        "structured_output": false,
+        "structured_output": true,
         "tool_selection": true,
         "hallucination": true,
         "business_logic": true
       },
       "judge_score": 0.0,
-      "duration_s": 17.341544826,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "duration_s": 31.09623185,
+      "input_tokens": 4200,
+      "output_tokens": 92,
+      "error": null,
       "retries": 0
     },
     {
@@ -296,10 +301,10 @@
         "business_logic": false
       },
       "judge_score": 0.0,
-      "duration_s": 13.292883876,
+      "duration_s": 69.84008915,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "ModelHTTPError",
+      "error": "AskUserRequested",
       "retries": 0
     }
   ]
