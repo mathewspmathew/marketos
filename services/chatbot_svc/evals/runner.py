@@ -6,15 +6,18 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic_ai import capture_run_messages
 from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart
 
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.deps import build_deps
+from services.chatbot_svc.tools.ask import AskUserRequested
 
 
 @dataclass
 class ChatRunOutput:
     reply: str = ""
+    ask: str | None = None  # set when the agent paused to ask a clarifying question
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     retries: int = 0
     input_tokens: int = 0
@@ -52,12 +55,22 @@ def count_retries(messages: list) -> int:
 
 
 async def run_chat_case(prompt: str, shop_domain: str, session_id: str) -> ChatRunOutput:
-    """Run the agent on one prompt. Never raises — failures land in .error."""
+    """Run the agent on one prompt. Never raises — asks land in .ask,
+    crashes in .error."""
     out = ChatRunOutput()
     deps = None
     try:
         deps = build_deps(shop_domain=shop_domain, user_id=None, session_id=session_id)
-        result = await agent.run(prompt, deps=deps)
+        # capture_run_messages keeps the message log even when agent.run raises,
+        # so tool calls made before an ask_user are not lost
+        with capture_run_messages() as messages:
+            try:
+                result = await agent.run(prompt, deps=deps)
+            except AskUserRequested as ask:
+                out.ask = ask.question
+                out.tool_calls = extract_tool_calls(messages)
+                out.retries = count_retries(messages)
+                return out
         messages = result.all_messages()
         usage = result.usage()
         out.reply = result.output

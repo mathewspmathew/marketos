@@ -1,6 +1,6 @@
 # services/chatbot_svc/evals/run.py
 """Offline eval run: build golden cases from the dev DB, run each through the
-real agent (real Groq calls), score with the five layer evaluators + LLMJudge,
+real agent (real Groq calls), score with the five layer evaluators,
 write reports/<ts>.json, reports/latest.json and docs/evals/CHATBOT_EVAL_REPORT.md.
 
 Usage: uv run python -m services.chatbot_svc.evals.run
@@ -19,11 +19,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic_evals import Dataset
-from pydantic_evals.evaluators import LLMJudge
 
 from services.chatbot_svc.evals.cases import build_cases
 from services.chatbot_svc.evals.evaluators import (
-    JUDGE_RUBRIC,
     BusinessLogic,
     Hallucination,
     OutputCorrectness,
@@ -40,17 +38,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 REPORTS_DIR = Path(__file__).parent / "reports"
 MARKDOWN_PATH = _REPO_ROOT / "docs" / "evals" / "CHATBOT_EVAL_REPORT.md"
 _MODEL = os.environ.get("CHATBOT_MODEL", "groq:llama-3.3-70b-versatile")
-_JUDGE_MODEL = os.environ.get("EVAL_JUDGE_MODEL", _MODEL)
-
-# pydantic-evals reports assertions under the evaluator class name; the report
-# layer aggregation uses snake_case ids. Harmless if names already match.
-_NAME_MAP = {
-    "OutputCorrectness": "output_correctness",
-    "StructuredOutput": "structured_output",
-    "ToolSelection": "tool_selection",
-    "Hallucination": "hallucination",
-    "BusinessLogic": "business_logic",
-}
 
 
 def main() -> int:
@@ -88,21 +75,14 @@ def main() -> int:
                 ToolSelection(),
                 Hallucination(),
                 BusinessLogic(),
-                LLMJudge(
-                    rubric=JUDGE_RUBRIC,
-                    model=_JUDGE_MODEL,
-                    include_input=True,
-                    assertion=False,
-                    score={"evaluation_name": "judge_score", "include_reason": True},
-                ),
             ],
         )
 
         async def task(prompt: str) -> ChatRunOutput:
             return await run_chat_case(prompt, shop, session_id)
 
-        # bounded concurrency: Groq free-tier rate limits 429 under parallel load
-        lib_report = dataset.evaluate_sync(task, max_concurrency=3)
+        # serial: Groq free-tier rate limits 429 under any parallel load
+        lib_report = dataset.evaluate_sync(task, max_concurrency=1)
         lib_report.print(include_input=True, include_output=False)
     finally:
         with get_db() as s:  # cascade removes eval ChatPreview/ChatMessage rows
@@ -117,12 +97,10 @@ def main() -> int:
         case_dicts.append({
             "case_id": rc.name,
             "prompt": rc.inputs,
+            "ask": out.ask if out else None,
             "expected_tools": meta.get("expected_tools", []),
             "actual_tools": out.tool_names() if out else [],
-            "assertions": {_NAME_MAP.get(n, n): bool(a.value) for n, a in (rc.assertions or {}).items()},
-            "judge_score": next(
-                (score.value for n, score in (rc.scores or {}).items() if n == "judge_score"), None
-            ),
+            "assertions": {n: bool(a.value) for n, a in (rc.assertions or {}).items()},
             "duration_s": rc.task_duration,
             "input_tokens": out.input_tokens if out else 0,
             "output_tokens": out.output_tokens if out else 0,

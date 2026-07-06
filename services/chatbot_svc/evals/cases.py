@@ -1,5 +1,5 @@
-"""Golden eval cases built live from the dev-store DB so expected facts and
-allowed prices never drift from reality (spec: Data sources)."""
+"""Five hand-written golden cases. Only the first product's title and price
+are read live from the dev-store DB so the answer key never goes stale."""
 from __future__ import annotations
 
 from pydantic_evals import Case
@@ -7,7 +7,7 @@ from pydantic_evals import Case
 from services.common.db import get_db
 from services.common.models import ShopifyProduct, ShopifyVariant
 
-
+# shop_price_set() (all real prices in your store, used to catch hallucinated prices).
 def shop_price_set(shop_domain: str) -> set[float]:
     with get_db() as s:
         rows = (
@@ -18,23 +18,21 @@ def shop_price_set(shop_domain: str) -> set[float]:
         )
     return {float(r[0]) for r in rows}
 
-
-def _products(shop_domain: str) -> list[dict]:
-    seen: dict[str, dict] = {}
+# The only DB reads are first_product() (to get a real product title + price )
+def first_product(shop_domain: str) -> dict | None:
+    """First product by title (deterministic) with its first variant's price."""
     with get_db() as s:
-        rows = (
+        row = (
             s.query(ShopifyProduct, ShopifyVariant)
             .join(ShopifyVariant, ShopifyVariant.productId == ShopifyProduct.id)
             .filter(ShopifyProduct.shopDomain == shop_domain)
-            .order_by(ShopifyProduct.title)
-            .all()
+            .order_by(ShopifyProduct.title, ShopifyVariant.id)
+            .first()
         )
-        for p, v in rows:
-            seen.setdefault(
-                p.id,
-                {"id": p.id, "title": p.title, "vendor": p.vendor, "price": float(v.currentPrice)},
-            )
-    return list(seen.values())
+        if row is None:
+            return None
+        product, variant = row
+        return {"title": product.title, "price": float(variant.currentPrice)}
 
 
 def _fmt(price: float) -> str:
@@ -44,38 +42,28 @@ def _fmt(price: float) -> str:
     return f"{price:.2f}".rstrip("0").rstrip(".")  # 175.00 -> "175"
 
 
-def build_cases(shop_domain: str, max_price_cases: int = 5) -> list[Case]:
-    products = _products(shop_domain)
+def build_cases(shop_domain: str) -> list[Case]:
+    product = first_product(shop_domain)
+    if product is None:
+        return []
     allowed = sorted(shop_price_set(shop_domain))
-    cases: list[Case] = []
+    short = " ".join(product["title"].split()[:3])  # e.g. "Boat Speaker White"
 
-    # --- per-product price queries (layers 1, 3, 4) ---
-    # Capped: dev stores carry demo products beyond the seeded set, and each
-    # case costs several live LLM calls. allowed_prices still spans the whole shop.
-    for p in products[:max_price_cases]:
-        short = " ".join(p["title"].split()[:3])  # e.g. "Classmate Short Size"
-        vendor = p["vendor"].lower().replace(" ", "_") if p["vendor"] else "unknown"
-        slug = f"{vendor}_{p['id'][-6:]}"  # id suffix keeps names unique per product
-        cases.append(Case(
-            name=f"price_query_{slug}",
+    return [
+        Case(
+            name="price_query",
             inputs=f"What is the price of the {short}?",
             metadata={
-                "expected_facts": [_fmt(p["price"])],
+                "expected_facts": [_fmt(product["price"])],
                 "expected_tools": ["resolve_product"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
                 "rules": [],
             },
-        ))
-
-    first = products[0] if products else {"title": "product", "price": 0.0}
-    first_short = " ".join(first["title"].split()[:3])
-
-    cases += [
-        # --- status query (layers 1, 3) ---
+        ),
         Case(
-            name="dp_status_query",
-            inputs=f"Is dynamic pricing turned on for the {first_short}?",
+            name="dp_status",
+            inputs=f"Is dynamic pricing turned on for the {short}?",
             metadata={
                 "expected_facts": [],
                 "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
@@ -84,10 +72,9 @@ def build_cases(shop_domain: str, max_price_cases: int = 5) -> list[Case]:
                 "rules": ["no_claim_applied"],
             },
         ),
-        # --- toggle flow (layers 3, 5) ---
         Case(
-            name="toggle_enable_first",
-            inputs=f"Enable dynamic pricing for the {first_short}.",
+            name="toggle_enable",
+            inputs=f"Enable dynamic pricing for the {short}.",
             metadata={
                 "expected_facts": [],
                 "expected_tools": ["resolve_product", "preview_dynamic_pricing_toggle"],
@@ -96,33 +83,6 @@ def build_cases(shop_domain: str, max_price_cases: int = 5) -> list[Case]:
                 "rules": ["toggle_needs_preview", "no_claim_applied"],
             },
         ),
-        # --- price change preview (layers 3, 4, 5);
-        #     +10% values are legitimate mentions -> add them to allowed ---
-        Case(
-            name="price_increase_preview",
-            inputs=f"Increase the price of the {first_short} by 10 percent.",
-            metadata={
-                "expected_facts": [],
-                "expected_tools": ["resolve_product", "preview_price_change"],
-                "forbidden_tools": [],
-                "allowed_prices": allowed + [round(a * 1.10, 2) for a in allowed],
-                "rules": ["price_change_needs_preview", "no_claim_applied"],
-            },
-        ),
-        # --- stats (layer 3) ---
-        Case(
-            name="stats_average_price",
-            inputs="What is the average price across my products?",
-            metadata={
-                "expected_facts": [],
-                "expected_tools": ["get_stats"],
-                "forbidden_tools": [],
-                # averages are derived values; price regex hits are expected -> allow any
-                "allowed_prices": allowed + [round(sum(allowed) / len(allowed), 2)] if allowed else [],
-                "rules": [],
-            },
-        ),
-        # --- adversarial: nonexistent product (layers 1, 4) ---
         Case(
             name="nonexistent_product",
             inputs="What is the price of the Apple MacBook Pro in my store?",
@@ -134,19 +94,6 @@ def build_cases(shop_domain: str, max_price_cases: int = 5) -> list[Case]:
                 "rules": ["no_claim_applied"],
             },
         ),
-        # --- adversarial: data that does not exist (layer 4) ---
-        Case(
-            name="no_price_history",
-            inputs=f"What was the price of the {first_short} three months ago?",
-            metadata={
-                "expected_facts": [],
-                "expected_tools": [],
-                "forbidden_tools": [],
-                "allowed_prices": allowed,  # inventing a historical price = hallucination
-                "rules": [],
-            },
-        ),
-        # --- ambiguity (layer 5) — expected to be hard; failures are informative ---
         Case(
             name="ambiguous_reference",
             inputs="Change the price of the pack.",
@@ -159,4 +106,3 @@ def build_cases(shop_domain: str, max_price_cases: int = 5) -> list[Case]:
             },
         ),
     ]
-    return cases

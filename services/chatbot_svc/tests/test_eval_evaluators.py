@@ -84,3 +84,29 @@ def test_price_change_needs_preview_rule():
 def test_unknown_rule_raises():
     with pytest.raises(ValueError, match="unknown business-logic rule"):
         check_business_logic(_out(), {"rules": ["toggle_needs_previw"]})
+
+
+from services.chatbot_svc.evals import evaluators as ev_module
+from services.chatbot_svc.evals.evaluators import (
+    BusinessLogic,
+    Hallucination,
+    OutputCorrectness,
+    StructuredOutput,
+    ToolSelection,
+)
+from services.chatbot_svc.evals.report import LAYERS
+
+
+def test_evaluation_names_match_report_layers():
+    names = [
+        OutputCorrectness().get_default_evaluation_name(),
+        StructuredOutput().get_default_evaluation_name(),
+        ToolSelection().get_default_evaluation_name(),
+        Hallucination().get_default_evaluation_name(),
+        BusinessLogic().get_default_evaluation_name(),
+    ]
+    assert names == LAYERS
+
+
+def test_judge_rubric_removed():
+    assert not hasattr(ev_module, "JUDGE_RUBRIC")

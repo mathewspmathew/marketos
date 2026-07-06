@@ -1,14 +1,14 @@
 from services.chatbot_svc.evals.report import LAYERS, build_report, render_markdown
 
 
-def _case(name, assertions, duration=1.0, in_tok=100, out_tok=20, error=None, judge=0.9):
+def _case(name, assertions, duration=1.0, in_tok=100, out_tok=20, error=None):
     return {
         "case_id": name,
         "prompt": f"prompt for {name}",
         "expected_tools": ["resolve_product"],
         "actual_tools": ["resolve_product"],
         "assertions": assertions,       # {layer_name: bool}
-        "judge_score": judge,           # 0.0-1.0 or None
+        "ask": None,
         "duration_s": duration,
         "input_tokens": in_tok,
         "output_tokens": out_tok,
@@ -41,7 +41,7 @@ def test_build_report_cross_cutting_metrics():
     assert r["tokens"]["est_cost_usd"] > 0
     assert r["latency_ms"]["p50"] <= r["latency_ms"]["p95"]
     assert r["failures"] == {"exceptions": 0, "validation_errors": 0, "timeouts": 1}
-    assert r["llm_judge"]["avg_score"] == 0.9
+    assert "llm_judge" not in r
 
 
 def test_render_markdown_contains_scoreboard_and_failures():
@@ -55,6 +55,5 @@ def test_build_report_handles_zero_cases():
     r = build_report([], model="m")
     assert r["cases_total"] == 0
     assert r["overall_pass_rate_pct"] == 0.0
-    assert r["llm_judge"]["avg_score"] is None
     assert r["latency_ms"] == {"p50": 0, "p95": 0}
     render_markdown(r)  # must not raise

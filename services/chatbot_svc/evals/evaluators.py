@@ -81,38 +81,44 @@ def check_business_logic(out: ChatRunOutput, meta: dict) -> bool:
 
 @dataclass
 class OutputCorrectness(Evaluator):
+    def get_default_evaluation_name(self) -> str:
+        return "output_correctness"
+
     def evaluate(self, ctx: EvaluatorContext) -> bool:
         return check_output_correctness(ctx.output, ctx.metadata or {})
 
 
 @dataclass
 class StructuredOutput(Evaluator):
+    def get_default_evaluation_name(self) -> str:
+        return "structured_output"
+
     def evaluate(self, ctx: EvaluatorContext) -> bool:
         return check_structured_output(ctx.output, ctx.metadata or {})
 
 
 @dataclass
 class ToolSelection(Evaluator):
+    def get_default_evaluation_name(self) -> str:
+        return "tool_selection"
+
     def evaluate(self, ctx: EvaluatorContext) -> bool:
         return check_tool_selection(ctx.output, ctx.metadata or {})
 
 
 @dataclass
 class Hallucination(Evaluator):
+    def get_default_evaluation_name(self) -> str:
+        return "hallucination"
+
     def evaluate(self, ctx: EvaluatorContext) -> bool:
         return check_hallucination(ctx.output, ctx.metadata or {})
 
 
 @dataclass
 class BusinessLogic(Evaluator):
+    def get_default_evaluation_name(self) -> str:
+        return "business_logic"
+
     def evaluate(self, ctx: EvaluatorContext) -> bool:
         return check_business_logic(ctx.output, ctx.metadata or {})
-
-
-JUDGE_RUBRIC = """The output is a shopping-assistant reply about a merchant's own
-Shopify products. Judge ONLY groundedness and helpfulness:
-1. Every factual claim (prices, product names, counts, statuses) must be
-   plausible given the conversation — no invented products or numbers.
-2. The reply must address the user's question directly.
-3. If the assistant could not find something, it must say so rather than guess.
-"""

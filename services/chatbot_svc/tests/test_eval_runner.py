@@ -38,3 +38,41 @@ def test_count_retries():
 def test_extract_tool_calls_unparseable_string_args_kept_raw():
     msgs = [ModelResponse(parts=[ToolCallPart(tool_name="get_stats", args="not-json", tool_call_id="c3")])]
     assert extract_tool_calls(msgs) == [{"tool_name": "get_stats", "args": {"_raw": "not-json"}}]
+
+
+from services.chatbot_svc.evals import runner as runner_module
+from services.chatbot_svc.evals.runner import ChatRunOutput, run_chat_case
+from services.chatbot_svc.tools.ask import AskUserRequested
+
+
+class _FakeDeps:
+    class _Http:
+        async def aclose(self):
+            pass
+
+    http = _Http()
+
+
+async def test_run_chat_case_records_ask_as_outcome_not_error(monkeypatch):
+    async def fake_run(prompt, deps=None):
+        raise AskUserRequested(question="Which pack did you mean?", options=["A", "B"])
+
+    monkeypatch.setattr(runner_module.agent, "run", fake_run)
+    monkeypatch.setattr(runner_module, "build_deps", lambda **kw: _FakeDeps())
+
+    out = await run_chat_case("change the price of the pack", "shop.example", "s1")
+    assert out.ask == "Which pack did you mean?"
+    assert out.error is None
+    assert out.reply == ""
+
+
+async def test_run_chat_case_still_records_real_crashes(monkeypatch):
+    async def fake_run(prompt, deps=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runner_module.agent, "run", fake_run)
+    monkeypatch.setattr(runner_module, "build_deps", lambda **kw: _FakeDeps())
+
+    out = await run_chat_case("hi", "shop.example", "s1")
+    assert out.error == "RuntimeError"
+    assert out.ask is None

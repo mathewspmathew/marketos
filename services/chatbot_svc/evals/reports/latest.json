@@ -1,310 +1,173 @@
 {
-  "run_at": "2026-07-05T19:02:20+00:00",
+  "run_at": "2026-07-05T20:52:46+00:00",
   "model": "groq:openai/gpt-oss-120b",
-  "cases_total": 12,
-  "overall_pass_rate_pct": 25.0,
+  "cases_total": 5,
+  "overall_pass_rate_pct": 20.0,
   "layers": {
     "output_correctness": {
-      "pass": 7,
-      "fail": 5,
-      "rate_pct": 58.3
+      "pass": 4,
+      "fail": 1,
+      "rate_pct": 80.0
     },
     "structured_output": {
-      "pass": 3,
-      "fail": 9,
-      "rate_pct": 25.0
+      "pass": 4,
+      "fail": 1,
+      "rate_pct": 80.0
     },
     "tool_selection": {
       "pass": 3,
-      "fail": 9,
-      "rate_pct": 25.0
+      "fail": 2,
+      "rate_pct": 60.0
     },
     "hallucination": {
-      "pass": 12,
+      "pass": 5,
       "fail": 0,
       "rate_pct": 100.0
     },
     "business_logic": {
-      "pass": 9,
-      "fail": 3,
-      "rate_pct": 75.0
+      "pass": 4,
+      "fail": 1,
+      "rate_pct": 80.0
     }
   },
-  "llm_judge": {
-    "avg_score": 0.0,
-    "scale": "0-1"
-  },
   "latency_ms": {
-    "p50": 42161,
-    "p95": 69840
+    "p50": 65357,
+    "p95": 170410
   },
   "tokens": {
-    "input": 25312,
-    "output": 1166,
-    "est_cost_usd": 0.0159
+    "input": 30182,
+    "output": 623,
+    "est_cost_usd": 0.0183
   },
   "failures": {
-    "exceptions": 9,
-    "validation_errors": 0,
+    "exceptions": 0,
+    "validation_errors": 1,
     "timeouts": 0
   },
   "case_results": [
     {
-      "case_id": "price_query_camlin_663538",
+      "case_id": "price_query",
       "prompt": "What is the price of the Camlin Scholar Pro?",
+      "ask": "Did you mean **Camlin Scholar Pro Geometry Box - 12-Piece Set**?",
       "expected_tools": [
         "resolve_product"
-      ],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": false,
-        "structured_output": false,
-        "tool_selection": false,
-        "hallucination": true,
-        "business_logic": true
-      },
-      "judge_score": 0.0,
-      "duration_s": 9.447242806,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "AskUserRequested",
-      "retries": 0
-    },
-    {
-      "case_id": "price_query_driftwood_&_co_883442",
-      "prompt": "What is the price of the Canvas Weekender Duffle?",
-      "expected_tools": [
-        "resolve_product"
-      ],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": false,
-        "structured_output": false,
-        "tool_selection": false,
-        "hallucination": true,
-        "business_logic": true
-      },
-      "judge_score": 0.0,
-      "duration_s": 36.109930609,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "AskUserRequested",
-      "retries": 0
-    },
-    {
-      "case_id": "price_query_casio_056114",
-      "prompt": "What is the price of the Casio FX-82MS 2nd?",
-      "expected_tools": [
-        "resolve_product"
-      ],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": false,
-        "structured_output": false,
-        "tool_selection": false,
-        "hallucination": true,
-        "business_logic": true
-      },
-      "judge_score": 0.0,
-      "duration_s": 44.351360849,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "AskUserRequested",
-      "retries": 0
-    },
-    {
-      "case_id": "price_query_apex_athletic_228402",
-      "prompt": "What is the price of the Charcoal Tapered Jogger?",
-      "expected_tools": [
-        "resolve_product"
-      ],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": false,
-        "structured_output": false,
-        "tool_selection": false,
-        "hallucination": true,
-        "business_logic": true
-      },
-      "judge_score": 0.0,
-      "duration_s": 44.342536185,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "AskUserRequested",
-      "retries": 0
-    },
-    {
-      "case_id": "price_query_northcoast_basics_097330",
-      "prompt": "What is the price of the Classic Crewneck Cotton?",
-      "expected_tools": [
-        "resolve_product"
-      ],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": false,
-        "structured_output": false,
-        "tool_selection": false,
-        "hallucination": true,
-        "business_logic": true
-      },
-      "judge_score": 0.0,
-      "duration_s": 64.593804118,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "AskUserRequested",
-      "retries": 0
-    },
-    {
-      "case_id": "dp_status_query",
-      "prompt": "Is dynamic pricing turned on for the Camlin Scholar Pro?",
-      "expected_tools": [
-        "resolve_product",
-        "get_dynamic_pricing_status"
-      ],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": true,
-        "structured_output": false,
-        "tool_selection": false,
-        "hallucination": true,
-        "business_logic": true
-      },
-      "judge_score": 0.0,
-      "duration_s": 35.350740625,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "AskUserRequested",
-      "retries": 0
-    },
-    {
-      "case_id": "toggle_enable_first",
-      "prompt": "Enable dynamic pricing for the Camlin Scholar Pro.",
-      "expected_tools": [
-        "resolve_product",
-        "preview_dynamic_pricing_toggle"
-      ],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": true,
-        "structured_output": false,
-        "tool_selection": false,
-        "hallucination": true,
-        "business_logic": false
-      },
-      "judge_score": 0.0,
-      "duration_s": 34.167240354,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "AskUserRequested",
-      "retries": 0
-    },
-    {
-      "case_id": "price_increase_preview",
-      "prompt": "Increase the price of the Camlin Scholar Pro by 10 percent.",
-      "expected_tools": [
-        "resolve_product",
-        "preview_price_change"
-      ],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": true,
-        "structured_output": false,
-        "tool_selection": false,
-        "hallucination": true,
-        "business_logic": false
-      },
-      "judge_score": 0.0,
-      "duration_s": 7.871467321,
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "error": "AskUserRequested",
-      "retries": 0
-    },
-    {
-      "case_id": "stats_average_price",
-      "prompt": "What is the average price across my products?",
-      "expected_tools": [
-        "get_stats"
       ],
       "actual_tools": [
-        "get_stats"
+        "resolve_product",
+        "ask_user"
       ],
       "assertions": {
-        "output_correctness": true,
+        "output_correctness": false,
         "structured_output": true,
         "tool_selection": true,
         "hallucination": true,
         "business_logic": true
       },
-      "judge_score": 0.0,
-      "duration_s": 66.915307442,
-      "input_tokens": 8428,
-      "output_tokens": 899,
+      "duration_s": 1.904899725,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": null,
+      "retries": 0
+    },
+    {
+      "case_id": "dp_status",
+      "prompt": "Is dynamic pricing turned on for the Camlin Scholar Pro?",
+      "ask": "Did you mean **Camlin Scholar Pro Geometry Box - 12-Piece Set**?",
+      "expected_tools": [
+        "resolve_product",
+        "get_dynamic_pricing_status"
+      ],
+      "actual_tools": [
+        "resolve_product",
+        "ask_user"
+      ],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": true,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": true
+      },
+      "duration_s": 39.315499254,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": null,
+      "retries": 0
+    },
+    {
+      "case_id": "toggle_enable",
+      "prompt": "Enable dynamic pricing for the Camlin Scholar Pro.",
+      "ask": "Did you mean **Camlin Scholar Pro Geometry Box - 12-Piece Set**?",
+      "expected_tools": [
+        "resolve_product",
+        "preview_dynamic_pricing_toggle"
+      ],
+      "actual_tools": [
+        "resolve_product",
+        "ask_user"
+      ],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": true,
+        "tool_selection": false,
+        "hallucination": true,
+        "business_logic": false
+      },
+      "duration_s": 65.356964933,
+      "input_tokens": 0,
+      "output_tokens": 0,
       "error": null,
       "retries": 0
     },
     {
       "case_id": "nonexistent_product",
       "prompt": "What is the price of the Apple MacBook Pro in my store?",
+      "ask": null,
       "expected_tools": [
         "resolve_product"
       ],
       "actual_tools": [
         "resolve_product",
+        "resolve_product",
+        "get_variant",
+        "resolve_product",
         "resolve_product"
       ],
       "assertions": {
         "output_correctness": true,
-        "structured_output": true,
+        "structured_output": false,
         "tool_selection": true,
         "hallucination": true,
         "business_logic": true
       },
-      "judge_score": 0.0,
-      "duration_s": 42.160666484,
-      "input_tokens": 12684,
-      "output_tokens": 175,
+      "duration_s": 170.410451575,
+      "input_tokens": 30182,
+      "output_tokens": 623,
       "error": null,
-      "retries": 0
-    },
-    {
-      "case_id": "no_price_history",
-      "prompt": "What was the price of the Camlin Scholar Pro three months ago?",
-      "expected_tools": [],
-      "actual_tools": [],
-      "assertions": {
-        "output_correctness": true,
-        "structured_output": true,
-        "tool_selection": true,
-        "hallucination": true,
-        "business_logic": true
-      },
-      "judge_score": 0.0,
-      "duration_s": 31.09623185,
-      "input_tokens": 4200,
-      "output_tokens": 92,
-      "error": null,
-      "retries": 0
+      "retries": 1
     },
     {
       "case_id": "ambiguous_reference",
       "prompt": "Change the price of the pack.",
+      "ask": "I found multiple products matching \"the pack\". Which one did you mean?",
       "expected_tools": [
         "resolve_product"
       ],
-      "actual_tools": [],
+      "actual_tools": [
+        "resolve_product",
+        "ask_user"
+      ],
       "assertions": {
         "output_correctness": true,
-        "structured_output": false,
-        "tool_selection": false,
+        "structured_output": true,
+        "tool_selection": true,
         "hallucination": true,
-        "business_logic": false
+        "business_logic": true
       },
-      "judge_score": 0.0,
-      "duration_s": 69.84008915,
+      "duration_s": 66.866218129,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": "AskUserRequested",
+      "error": null,
       "retries": 0
     }
   ]
