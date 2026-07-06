@@ -17,7 +17,9 @@ from pathlib import Path
 
 import sys
 import logfire
+from dotenv import load_dotenv
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.fallback import FallbackModel
 
 # Observability: write the agent's span tree to stderr, and upload to Logfire
 # when LOGFIRE_TOKEN is set (see .env / docker-compose). Environments without
@@ -60,10 +62,22 @@ from services.chatbot_svc.tools.ask import ask_user as _ask_user_raw
 
 
 _PROMPT = (Path(__file__).parent / "prompts" / "system.md").read_text()
-_MODEL = os.environ.get("CHATBOT_MODEL", "groq:llama-3.3-70b-versatile")
+
+# Both models come from .env — no model names are hardcoded here.
+#   CHATBOT_MODEL          (required)  e.g. groq:openai/gpt-oss-120b
+#   CHATBOT_FALLBACK_MODEL (optional)  requests that fail on the primary
+#                          (429 quota, 5xx) transparently retry on this model.
+#                          Leave unset for eval runs (single-model scoring).
+load_dotenv()
+_MODEL = os.environ.get("CHATBOT_MODEL")
+if not _MODEL:
+    raise RuntimeError("CHATBOT_MODEL is not set — add it to .env, e.g. CHATBOT_MODEL=groq:openai/gpt-oss-120b")
+_FALLBACK_MODEL = os.environ.get("CHATBOT_FALLBACK_MODEL")
+
+_model = FallbackModel(_MODEL, _FALLBACK_MODEL) if _FALLBACK_MODEL else _MODEL
 
 agent: Agent[AgentDeps, str] = Agent(
-    _MODEL,
+    _model,
     deps_type=AgentDeps,
     system_prompt=_PROMPT,
 )
