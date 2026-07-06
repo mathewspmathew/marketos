@@ -11,11 +11,6 @@ LAYERS = [
     "business_logic",
 ]
 
-# Groq pricing for llama-3.3-70b-versatile (USD per 1M tokens, 2026-06 list price)
-_INPUT_USD_PER_M = 0.59
-_OUTPUT_USD_PER_M = 0.79
-
-
 def _pct(n: int, total: int) -> float:
     return round(100.0 * n / total, 1) if total else 0.0
 
@@ -65,13 +60,8 @@ def build_report(cases: list[dict], *, model: str) -> dict:
             "p50": round(_percentile(durations_ms, 0.50)),
             "p95": round(_percentile(durations_ms, 0.95)),
         },
-        "tokens": {
-            "input": in_tok,
-            "output": out_tok,
-            "est_cost_usd": round(
-                in_tok / 1e6 * _INPUT_USD_PER_M + out_tok / 1e6 * _OUTPUT_USD_PER_M, 4
-            ),
-        },
+        # cost lives in the Logfire dashboard (it prices each LLM span itself)
+        "tokens": {"input": in_tok, "output": out_tok},
         "failures": failures,
         "case_results": [dict(c) for c in cases],
     }
@@ -93,7 +83,7 @@ def render_markdown(report: dict) -> str:
         "",
         f"p50 latency {report['latency_ms']['p50']}ms · "
         f"p95 {report['latency_ms']['p95']}ms · "
-        f"est. cost ${report['tokens']['est_cost_usd']}/run",
+        f"tokens {report['tokens']['input']}/{report['tokens']['output']} in/out",
         "",
         f"Failures: {report['failures']['exceptions']} exceptions · "
         f"{report['failures']['validation_errors']} validation errors · "

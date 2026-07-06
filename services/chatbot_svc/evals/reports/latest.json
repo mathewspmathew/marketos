@@ -1,8 +1,8 @@
 {
-  "run_at": "2026-07-05T20:52:46+00:00",
+  "run_at": "2026-07-06T05:51:03+00:00",
   "model": "groq:openai/gpt-oss-120b",
   "cases_total": 5,
-  "overall_pass_rate_pct": 20.0,
+  "overall_pass_rate_pct": 40.0,
   "layers": {
     "output_correctness": {
       "pass": 4,
@@ -10,16 +10,16 @@
       "rate_pct": 80.0
     },
     "structured_output": {
-      "pass": 4,
-      "fail": 1,
-      "rate_pct": 80.0
+      "pass": 5,
+      "fail": 0,
+      "rate_pct": 100.0
     },
     "tool_selection": {
       "pass": 3,
       "fail": 2,
       "rate_pct": 60.0
     },
-    "hallucination": {
+    "price_hallucination": {
       "pass": 5,
       "fail": 0,
       "rate_pct": 100.0
@@ -31,17 +31,17 @@
     }
   },
   "latency_ms": {
-    "p50": 65357,
-    "p95": 170410
+    "p50": 34906,
+    "p95": 1043163
   },
   "tokens": {
-    "input": 30182,
-    "output": 623,
-    "est_cost_usd": 0.0183
+    "input": 21274,
+    "output": 464,
+    "est_cost_usd": 0.0129
   },
   "failures": {
     "exceptions": 0,
-    "validation_errors": 1,
+    "validation_errors": 0,
     "timeouts": 0
   },
   "case_results": [
@@ -60,10 +60,10 @@
         "output_correctness": false,
         "structured_output": true,
         "tool_selection": true,
-        "hallucination": true,
+        "price_hallucination": true,
         "business_logic": true
       },
-      "duration_s": 1.904899725,
+      "duration_s": 7.721280544,
       "input_tokens": 0,
       "output_tokens": 0,
       "error": null,
@@ -85,10 +85,10 @@
         "output_correctness": true,
         "structured_output": true,
         "tool_selection": false,
-        "hallucination": true,
+        "price_hallucination": true,
         "business_logic": true
       },
-      "duration_s": 39.315499254,
+      "duration_s": 34.281736558,
       "input_tokens": 0,
       "output_tokens": 0,
       "error": null,
@@ -110,10 +110,10 @@
         "output_correctness": true,
         "structured_output": true,
         "tool_selection": false,
-        "hallucination": true,
+        "price_hallucination": true,
         "business_logic": false
       },
-      "duration_s": 65.356964933,
+      "duration_s": 34.905815814,
       "input_tokens": 0,
       "output_tokens": 0,
       "error": null,
@@ -130,26 +130,25 @@
         "resolve_product",
         "resolve_product",
         "get_variant",
-        "resolve_product",
         "resolve_product"
       ],
       "assertions": {
         "output_correctness": true,
-        "structured_output": false,
+        "structured_output": true,
         "tool_selection": true,
-        "hallucination": true,
+        "price_hallucination": true,
         "business_logic": true
       },
-      "duration_s": 170.410451575,
-      "input_tokens": 30182,
-      "output_tokens": 623,
+      "duration_s": 132.287921379,
+      "input_tokens": 21274,
+      "output_tokens": 464,
       "error": null,
-      "retries": 1
+      "retries": 0
     },
     {
       "case_id": "ambiguous_reference",
       "prompt": "Change the price of the pack.",
-      "ask": "I found multiple products matching \"the pack\". Which one did you mean?",
+      "ask": "I found multiple products matching \"Pack\". Which one would you like to change the price for?",
       "expected_tools": [
         "resolve_product"
       ],
@@ -161,10 +160,10 @@
         "output_correctness": true,
         "structured_output": true,
         "tool_selection": true,
-        "hallucination": true,
+        "price_hallucination": true,
         "business_logic": true
       },
-      "duration_s": 66.866218129,
+      "duration_s": 1043.162591722,
       "input_tokens": 0,
       "output_tokens": 0,
       "error": null,

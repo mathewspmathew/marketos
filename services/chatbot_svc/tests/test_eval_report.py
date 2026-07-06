@@ -37,8 +37,7 @@ def test_build_report_cross_cutting_metrics():
         _case("b", _all_pass(), duration=3.0, in_tok=300, out_tok=30, error="TimeoutError"),
     ]
     r = build_report(cases, model="m")
-    assert r["tokens"]["input"] == 400 and r["tokens"]["output"] == 40
-    assert r["tokens"]["est_cost_usd"] > 0
+    assert r["tokens"] == {"input": 400, "output": 40}  # cost: see Logfire dashboard
     assert r["latency_ms"]["p50"] <= r["latency_ms"]["p95"]
     assert r["failures"] == {"exceptions": 0, "validation_errors": 0, "timeouts": 1}
     assert "llm_judge" not in r
