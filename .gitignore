@@ -76,8 +76,10 @@ shopify_ui/.react-router/
 CLAUDE.md
 docs/superpowers/
 docs/rollout
-docs/evals
+docs/evals/
 reports/
+services/chatbot_svc/evals/reports/
+
 
 .superpowers
 .logfire

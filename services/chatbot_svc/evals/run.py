@@ -97,7 +97,9 @@ def main() -> int:
         case_dicts.append({
             "case_id": rc.name,
             "prompt": rc.inputs,
+            "reply": out.reply if out else "",
             "ask": out.ask if out else None,
+            "expected_facts": meta.get("expected_facts", []),
             "expected_tools": meta.get("expected_tools", []),
             "actual_tools": out.tool_names() if out else [],
             "assertions": {n: bool(a.value) for n, a in (rc.assertions or {}).items()},

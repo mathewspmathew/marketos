@@ -1,23 +1,23 @@
 {
-  "run_at": "2026-07-06T05:51:03+00:00",
+  "run_at": "2026-07-06T06:57:31+00:00",
   "model": "groq:openai/gpt-oss-120b",
   "cases_total": 5,
   "overall_pass_rate_pct": 40.0,
   "layers": {
     "output_correctness": {
-      "pass": 4,
-      "fail": 1,
-      "rate_pct": 80.0
-    },
-    "structured_output": {
       "pass": 5,
       "fail": 0,
       "rate_pct": 100.0
     },
-    "tool_selection": {
+    "structured_output": {
       "pass": 3,
       "fail": 2,
       "rate_pct": 60.0
+    },
+    "tool_selection": {
+      "pass": 2,
+      "fail": 3,
+      "rate_pct": 40.0
     },
     "price_hallucination": {
       "pass": 5,
@@ -25,22 +25,21 @@
       "rate_pct": 100.0
     },
     "business_logic": {
-      "pass": 4,
-      "fail": 1,
-      "rate_pct": 80.0
+      "pass": 3,
+      "fail": 2,
+      "rate_pct": 60.0
     }
   },
   "latency_ms": {
-    "p50": 34906,
-    "p95": 1043163
+    "p50": 43770,
+    "p95": 102410
   },
   "tokens": {
-    "input": 21274,
-    "output": 464,
-    "est_cost_usd": 0.0129
+    "input": 26579,
+    "output": 559
   },
   "failures": {
-    "exceptions": 0,
+    "exceptions": 2,
     "validation_errors": 0,
     "timeouts": 0
   },
@@ -48,62 +47,63 @@
     {
       "case_id": "price_query",
       "prompt": "What is the price of the Camlin Scholar Pro?",
-      "ask": "Did you mean **Camlin Scholar Pro Geometry Box - 12-Piece Set**?",
+      "ask": null,
       "expected_tools": [
         "resolve_product"
       ],
       "actual_tools": [
         "resolve_product",
-        "ask_user"
+        "get_variant"
       ],
       "assertions": {
-        "output_correctness": false,
+        "output_correctness": true,
         "structured_output": true,
         "tool_selection": true,
         "price_hallucination": true,
         "business_logic": true
       },
-      "duration_s": 7.721280544,
-      "input_tokens": 0,
-      "output_tokens": 0,
+      "duration_s": 43.770280217,
+      "input_tokens": 13282,
+      "output_tokens": 356,
       "error": null,
       "retries": 0
     },
     {
       "case_id": "dp_status",
       "prompt": "Is dynamic pricing turned on for the Camlin Scholar Pro?",
-      "ask": "Did you mean **Camlin Scholar Pro Geometry Box - 12-Piece Set**?",
+      "ask": null,
       "expected_tools": [
         "resolve_product",
         "get_dynamic_pricing_status"
       ],
       "actual_tools": [
         "resolve_product",
-        "ask_user"
+        "get_dynamic_pricing_status"
       ],
       "assertions": {
         "output_correctness": true,
         "structured_output": true,
-        "tool_selection": false,
+        "tool_selection": true,
         "price_hallucination": true,
         "business_logic": true
       },
-      "duration_s": 34.281736558,
-      "input_tokens": 0,
-      "output_tokens": 0,
+      "duration_s": 102.410023508,
+      "input_tokens": 13297,
+      "output_tokens": 203,
       "error": null,
       "retries": 0
     },
     {
       "case_id": "toggle_enable",
       "prompt": "Enable dynamic pricing for the Camlin Scholar Pro.",
-      "ask": "Did you mean **Camlin Scholar Pro Geometry Box - 12-Piece Set**?",
+      "ask": "Set up dynamic pricing for **Camlin Scholar Pro Geometry Box - 12-Piece Set** for the first time? I'll search competitor sites and start tracking prices.",
       "expected_tools": [
         "resolve_product",
         "preview_dynamic_pricing_toggle"
       ],
       "actual_tools": [
         "resolve_product",
+        "get_dynamic_pricing_status",
         "ask_user"
       ],
       "assertions": {
@@ -113,7 +113,7 @@
         "price_hallucination": true,
         "business_logic": false
       },
-      "duration_s": 34.905815814,
+      "duration_s": 100.732489687,
       "input_tokens": 0,
       "output_tokens": 0,
       "error": null,
@@ -126,47 +126,39 @@
       "expected_tools": [
         "resolve_product"
       ],
-      "actual_tools": [
-        "resolve_product",
-        "resolve_product",
-        "get_variant",
-        "resolve_product"
-      ],
+      "actual_tools": [],
       "assertions": {
         "output_correctness": true,
-        "structured_output": true,
-        "tool_selection": true,
+        "structured_output": false,
+        "tool_selection": false,
         "price_hallucination": true,
         "business_logic": true
       },
-      "duration_s": 132.287921379,
-      "input_tokens": 21274,
-      "output_tokens": 464,
-      "error": null,
+      "duration_s": 34.444074725,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "error": "ModelHTTPError",
       "retries": 0
     },
     {
       "case_id": "ambiguous_reference",
       "prompt": "Change the price of the pack.",
-      "ask": "I found multiple products matching \"Pack\". Which one would you like to change the price for?",
+      "ask": null,
       "expected_tools": [
         "resolve_product"
       ],
-      "actual_tools": [
-        "resolve_product",
-        "ask_user"
-      ],
+      "actual_tools": [],
       "assertions": {
         "output_correctness": true,
-        "structured_output": true,
-        "tool_selection": true,
+        "structured_output": false,
+        "tool_selection": false,
         "price_hallucination": true,
-        "business_logic": true
+        "business_logic": false
       },
-      "duration_s": 1043.162591722,
+      "duration_s": 0.093833899,
       "input_tokens": 0,
       "output_tokens": 0,
-      "error": null,
+      "error": "ModelHTTPError",
       "retries": 0
     }
   ]
