@@ -38,7 +38,7 @@ def extract_prices(text: str) -> list[float]:
         prices.append(float(raw))
     return prices
 
-
+# is each expected fact a substring of the reply?
 def check_output_correctness(out: ChatRunOutput, meta: dict) -> bool:
     reply = out.reply.lower()
     return all(f.lower() in reply for f in meta.get("expected_facts", []))
@@ -55,7 +55,7 @@ def check_tool_selection(out: ChatRunOutput, meta: dict) -> bool:
     return expected.issubset(called) and not (forbidden & called)
 
 
-def check_hallucination(out: ChatRunOutput, meta: dict) -> bool:
+def check_price_hallucination(out: ChatRunOutput, meta: dict) -> bool:
     """True = clean (no hallucinated price). Tolerates rounding to 2dp."""
     allowed = meta.get("allowed_prices", [])
     return all(
@@ -107,12 +107,12 @@ class ToolSelection(Evaluator):
 
 
 @dataclass
-class Hallucination(Evaluator):
+class PriceHallucination(Evaluator):
     def get_default_evaluation_name(self) -> str:
-        return "hallucination"
+        return "price_hallucination"
 
     def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return check_hallucination(ctx.output, ctx.metadata or {})
+        return check_price_hallucination(ctx.output, ctx.metadata or {})
 
 
 @dataclass

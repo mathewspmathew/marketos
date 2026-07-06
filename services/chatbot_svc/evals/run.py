@@ -23,8 +23,8 @@ from pydantic_evals import Dataset
 from services.chatbot_svc.evals.cases import build_cases
 from services.chatbot_svc.evals.evaluators import (
     BusinessLogic,
-    Hallucination,
     OutputCorrectness,
+    PriceHallucination,
     StructuredOutput,
     ToolSelection,
 )
@@ -73,7 +73,7 @@ def main() -> int:
                 OutputCorrectness(),
                 StructuredOutput(),
                 ToolSelection(),
-                Hallucination(),
+                PriceHallucination(),
                 BusinessLogic(),
             ],
         )

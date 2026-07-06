@@ -2,8 +2,8 @@ import pytest
 
 from services.chatbot_svc.evals.evaluators import (
     check_business_logic,
-    check_hallucination,
     check_output_correctness,
+    check_price_hallucination,
     check_structured_output,
     check_tool_selection,
     extract_prices,
@@ -45,17 +45,17 @@ def test_tool_selection_requires_expected_and_blocks_forbidden():
     assert not check_tool_selection(out, {"expected_tools": [], "forbidden_tools": ["get_variant"]})
 
 
-# Layer 4 — hallucination
+# Layer 4 — price hallucination
 def test_extract_prices_finds_currency_and_decimal_amounts_only():
     text = "₹175.00 or $12.50, also 339.00 flat. 172 pages, 0.5mm tip, Rs 145"
     assert extract_prices(text) == [175.0, 12.5, 339.0, 145.0]
 
-def test_hallucination_flags_price_not_in_allowed_set():
+def test_price_hallucination_flags_price_not_in_allowed_set():
     out = _out(reply="It costs ₹199.00")
-    assert not check_hallucination(out, {"allowed_prices": [175.0]})
-    assert check_hallucination(_out(reply="It costs ₹175.00"), {"allowed_prices": [175.0]})
+    assert not check_price_hallucination(out, {"allowed_prices": [175.0]})
+    assert check_price_hallucination(_out(reply="It costs ₹175.00"), {"allowed_prices": [175.0]})
     # no prices mentioned -> clean
-    assert check_hallucination(_out(reply="I could not find that product."), {"allowed_prices": []})
+    assert check_price_hallucination(_out(reply="I could not find that product."), {"allowed_prices": []})
 
 
 # Layer 5 — business logic
@@ -89,8 +89,8 @@ def test_unknown_rule_raises():
 from services.chatbot_svc.evals import evaluators as ev_module
 from services.chatbot_svc.evals.evaluators import (
     BusinessLogic,
-    Hallucination,
     OutputCorrectness,
+    PriceHallucination,
     StructuredOutput,
     ToolSelection,
 )
@@ -102,7 +102,7 @@ def test_evaluation_names_match_report_layers():
         OutputCorrectness().get_default_evaluation_name(),
         StructuredOutput().get_default_evaluation_name(),
         ToolSelection().get_default_evaluation_name(),
-        Hallucination().get_default_evaluation_name(),
+        PriceHallucination().get_default_evaluation_name(),
         BusinessLogic().get_default_evaluation_name(),
     ]
     assert names == LAYERS

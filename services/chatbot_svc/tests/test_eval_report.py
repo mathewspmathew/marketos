@@ -45,9 +45,9 @@ def test_build_report_cross_cutting_metrics():
 
 
 def test_render_markdown_contains_scoreboard_and_failures():
-    cases = [_case("good", _all_pass()), _case("bad", {**_all_pass(), "hallucination": False})]
+    cases = [_case("good", _all_pass()), _case("bad", {**_all_pass(), "price_hallucination": False})]
     md = render_markdown(build_report(cases, model="m"))
-    assert "| Layer" in md and "hallucination" in md
+    assert "| Layer" in md and "price_hallucination" in md
     assert "## Failed cases" in md and "bad" in md and "good" not in md.split("## Failed cases")[1]
 
 

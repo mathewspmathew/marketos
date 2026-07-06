@@ -7,7 +7,7 @@ LAYERS = [
     "output_correctness",
     "structured_output",
     "tool_selection",
-    "hallucination",
+    "price_hallucination",
     "business_logic",
 ]
 
