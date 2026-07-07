@@ -42,9 +42,6 @@ def build_report(
     cases: list[dict],
     *,
     model: str,
-    system_prompt_sha256: str = "",
-    system_prompt_chars: int = 0,
-    registered_tools: list[str] | None = None,
 ) -> dict:
     total = len(cases)
 
@@ -105,10 +102,6 @@ def build_report(
     return {
         "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model": model,
-        # Agent configuration fingerprint
-        "system_prompt_sha256": system_prompt_sha256,
-        "system_prompt_chars": system_prompt_chars,
-        "registered_tools": registered_tools or [],
         "cases_total": total,
         "overall_pass_rate_pct": _pct(overall_pass, total),
         "layers": bool_layers,
@@ -132,21 +125,12 @@ def build_report(
 def render_markdown(report: dict) -> str:
     m = report["metrics"]
     lms = m["latency_ms"]
-    tools_str = ", ".join(f"`{t}`" for t in report.get("registered_tools", []))
 
     lines = [
         f"# Chatbot Evaluation Report — {report['run_at'][:10]}",
         "",
         f"Model: `{report['model']}` · {report['cases_total']} cases · "
         f"overall **{report['overall_pass_rate_pct']}%** pass",
-        "",
-        "## Agent Configuration",
-        "",
-        f"| Field | Value |",
-        "|---|---|",
-        f"| System prompt SHA-256 (first 16 chars) | `{report.get('system_prompt_sha256', '—')}` |",
-        f"| System prompt length | {report.get('system_prompt_chars', 0):,} chars |",
-        f"| Registered tools | {tools_str or '—'} |",
         "",
         "## Metrics",
         "",

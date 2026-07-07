@@ -149,13 +149,7 @@ def main() -> int:
             "retries": out.retries if out else 0,
         })
 
-    report = build_report(
-        case_dicts,
-        model=_MODEL,
-        system_prompt_sha256=_prompt_sha,
-        system_prompt_chars=len(_SYSTEM_PROMPT),
-        registered_tools=_tool_names,
-    )
+    report = build_report(case_dicts, model=_MODEL)
 
     # --- Logfire: summary span with all aggregate metrics + prompt metadata ---
     # pydantic-evals already emits per-case spans; this adds a summary event
