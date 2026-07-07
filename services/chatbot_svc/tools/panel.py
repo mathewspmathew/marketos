@@ -81,7 +81,7 @@ def open_dynamic_pricing_panel(shop_domain: str, session_id: str,
         "panel": True,
         "cardState": card_state,
         "allowedActions": ALLOWED_ACTIONS[card_state],
-        # kept for backward-compat with the enable apply branch
+        # read only by the card's legacy-preview fallback, never by the apply route
         "enabled": card_state != "ACTIVE",
     }
     if card_state == "FRESH":

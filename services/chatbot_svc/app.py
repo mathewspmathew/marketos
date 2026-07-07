@@ -104,7 +104,7 @@ def _preview_event_data(preview: ChatPreview) -> dict:
     """Build the SSE `preview` payload from a ChatPreview row.
 
     Must include `change` so the client card can tell enable from disable
-    (DynamicPricingCard branches on change.enabled) and `variantIds` for the
+    (DynamicPricingCard branches on change.cardState) and `variantIds` for the
     affected count / frozen ids.
     """
     return {

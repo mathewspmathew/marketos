@@ -114,11 +114,26 @@ export default function ChatPanel() {
     }).catch(() => null);
     let data; try { data = await r?.json(); } catch { data = null; }
     if (!r?.ok || !data?.ok) {
-      setTurns((t) => [...t, { role: "assistant", text: `Apply failed: ${data?.reason ?? "network error"}` }]);
+      const REASON_TEXT = {
+        state_changed: "This product's dynamic-pricing status changed since the card was created — ask me again to get a fresh card.",
+        already_applied: "This card was already applied.",
+        expired: "This card expired — ask me again to get a fresh one.",
+      };
+      const failMsg = REASON_TEXT[data?.reason] ?? `Apply failed: ${data?.reason ?? "network error"}`;
+      setTurns((t) => [...t, { role: "assistant", text: failMsg }]);
       setBusy(false);
       return;
     }
-    setTurns((t) => [...t, { role: "assistant", text: `Applied to ${data.succeeded?.length ?? 0} item(s).` }]);
+    const ACTION_DONE = {
+      enable: "Dynamic pricing set up — first competitor fetch is on the way.",
+      resume: "Dynamic pricing resumed.",
+      pause: "Dynamic pricing paused — competitor data kept.",
+      delete: "Dynamic pricing turned off and competitor data deleted.",
+    };
+    const doneMsg = data.action
+      ? (ACTION_DONE[data.action] ?? "Done.")
+      : `Applied to ${data.succeeded?.length ?? 0} item(s).`;
+    setTurns((t) => [...t, { role: "assistant", text: doneMsg }]);
     setBusy(false);
   }
 
