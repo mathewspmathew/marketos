@@ -11,9 +11,14 @@ def _tool_names() -> set[str]:
 def test_all_expected_tools_registered():
     expected = {
         "structured_search", "semantic_search", "get_variant", "get_stats",
-        "preview_price_change", "preview_dynamic_pricing_toggle", "ask_user",
+        "preview_price_change", "open_dynamic_pricing_panel", "ask_user",
     }
     assert expected <= _tool_names()
+
+
+def test_toggle_preview_tool_removed():
+    """The scope+enabled toggle preview is retired; the panel replaces it."""
+    assert "preview_dynamic_pricing_toggle" not in _tool_names()
 
 
 def test_apply_tools_absent():

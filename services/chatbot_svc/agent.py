@@ -43,6 +43,7 @@ from services.chatbot_svc.schemas import (
     ScopeFilter,
     PriceChange,
     PreviewSummary,
+    PanelSummary,
     ApplyResult,
     VariantSummary,
     ResolvedProduct,
@@ -54,6 +55,7 @@ from services.chatbot_svc.schemas import (
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
 from services.chatbot_svc.tools import preview as t_preview
+from services.chatbot_svc.tools import panel as t_panel
 from services.chatbot_svc.tools import status as t_status
 from services.chatbot_svc.tools import debug as t_debug
 from services.chatbot_svc.tools import price_explanation as t_price_explanation
@@ -162,17 +164,18 @@ def preview_price_change(
 
 
 @agent.tool
-def preview_dynamic_pricing_toggle(
+def open_dynamic_pricing_panel(
     ctx: RunContext[AgentDeps],
-    scope: ScopeFilter,
-    enabled: bool,
-) -> PreviewSummary:
-    """Preview enabling/disabling dynamic pricing on matched products. Surfaces an interactive card; the merchant's Continue on the card performs the change (the agent does not apply toggles itself)."""
-    return t_preview.preview_dynamic_pricing_toggle(
-        ctx.deps.shop_domain,
-        ctx.deps.session_id,
-        scope,
-        enabled,
+    product_id: str,
+) -> PanelSummary:
+    """Open the dynamic-pricing panel card for ONE product. Call this for ANY
+    enable/disable/pause/resume dynamic-pricing request, right after
+    resolve_product. The backend reads the product's real state and the card
+    shows the right options (first-time setup form / pause / resume / delete);
+    the merchant's click performs the change — you apply NOTHING yourself.
+    Raises an error if product_id is not in this shop."""
+    return t_panel.open_dynamic_pricing_panel(
+        ctx.deps.shop_domain, ctx.deps.session_id, product_id
     )
 
 
