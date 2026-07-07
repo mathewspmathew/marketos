@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import text as sa_text
 
 from services.common.db import get_db
 from services.common.models import (
@@ -43,6 +44,33 @@ def _add_candidate(shop, pid):
             url="https://x.test/p", domain="x.test", source="serper_search",
             status="SCRAPED",
         ))
+
+
+def _variant_id(pid):
+    from services.common.models import ShopifyVariant
+    with get_db() as s:
+        return s.query(ShopifyVariant.id).filter(ShopifyVariant.productId == pid).scalar()
+
+
+def _add_pricing_stats(shop, variant_id):
+    with get_db() as s:
+        s.execute(sa_text("""
+            INSERT INTO "PriceDecision"
+                (id, "shopDomain", "shopifyVariantId", "oldPrice", "newPrice",
+                 reason, "decidedAt", "appliedAt")
+            VALUES (:id, :shop, :vid, 99.0, 89.0, 'test', now(), now())
+        """), {"id": str(uuid.uuid4()), "shop": shop, "vid": variant_id})
+        s.execute(sa_text("""
+            INSERT INTO "VariantCompetitorStats"
+                ("shopifyVariantId", "shopDomain", "competitorCount", "minPrice", "median", "maxPrice")
+            VALUES (:vid, :shop, 3, 80.0, 90.0, 100.0)
+        """), {"vid": variant_id, "shop": shop})
+
+
+def _clear_pricing_stats(variant_id):
+    with get_db() as s:
+        s.execute(sa_text('DELETE FROM "PriceDecision" WHERE "shopifyVariantId" = :vid'), {"vid": variant_id})
+        s.execute(sa_text('DELETE FROM "VariantCompetitorStats" WHERE "shopifyVariantId" = :vid'), {"vid": variant_id})
 
 
 def _clear_candidates(shop, pid):
@@ -91,7 +119,31 @@ def test_active_product_gets_readonly_pause_delete_card(seed_shop):
             assert row.change["allowedActions"] == ["pause", "delete"]
             assert "numResults" not in row.change  # no form on read-only cards
             assert row.summary["deleteCounts"]["price_stats_variants"] == 1
+            assert row.summary["stats"] is None  # no PriceDecision/stats seeded
     finally:
+        _cleanup(sid)
+
+
+def test_active_product_stats_show_last_price_change_and_competitors(seed_shop):
+    sid = _session(seed_shop)
+    pid = _product_id(seed_shop)
+    vid = _variant_id(pid)
+    with get_db() as s:
+        s.get(ShopifyProduct, pid).dynamicPricingEnabled = True
+    _add_pricing_stats(seed_shop, vid)
+    try:
+        res = open_dynamic_pricing_panel(seed_shop, sid, pid)
+        with get_db() as s:
+            row = s.get(ChatPreview, res.preview_id)
+            stats = row.summary["stats"]
+            assert stats["lastPriceChange"]["oldPrice"] == 99.0
+            assert stats["lastPriceChange"]["newPrice"] == 89.0
+            assert stats["competitors"]["count"] == 3
+            assert stats["competitors"]["minPrice"] == 80.0
+            assert stats["competitors"]["median"] == 90.0
+            assert stats["competitors"]["maxPrice"] == 100.0
+    finally:
+        _clear_pricing_stats(vid)
         _cleanup(sid)
 
 
@@ -107,6 +159,7 @@ def test_paused_product_gets_readonly_resume_delete_card(seed_shop):
             assert row.change["allowedActions"] == ["resume", "delete"]
             assert row.summary["enableContext"]["competitors_found"] == 1
             assert row.summary["deleteCounts"]["discovered_links"] == 1
+            assert row.summary["stats"] is None  # stats block is ACTIVE-only
     finally:
         _clear_candidates(seed_shop, pid)
         _cleanup(sid)

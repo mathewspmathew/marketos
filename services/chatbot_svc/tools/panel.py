@@ -13,6 +13,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import text as sa_text
+
 from services.common.db import get_db
 from services.common.models import ChatPreview, DiscoveryJob, ShopifyProduct
 from services.chatbot_svc.schemas import PanelSummary
@@ -45,6 +47,59 @@ def _human(card_state: str, title: str, ctx) -> str:
         f"{title} was set up before — {ctx.competitors_found} competitor(s) are "
         f"kept. Use the card to Resume or turn off and delete the data."
     )
+
+
+def _active_stats(shop_domain: str, product_id: str) -> dict | None:
+    """Read-only pricing stats for an ACTIVE product's card, no schema changes.
+
+    Queries the pricing-worker's existing tables (same pattern as
+    price_explanation.py): most recent applied PriceDecision across the
+    product's variants, plus aggregated VariantCompetitorStats.
+    """
+    with get_db() as s:
+        decision = s.execute(
+            sa_text("""
+                SELECT pd."oldPrice", pd."newPrice", pd."appliedAt", v.title AS variant_title
+                FROM "PriceDecision" pd
+                JOIN "ShopifyVariant" v ON v.id = pd."shopifyVariantId"
+                WHERE v."productId" = :pid AND pd."shopDomain" = :shop
+                  AND pd."appliedAt" IS NOT NULL
+                ORDER BY pd."appliedAt" DESC
+                LIMIT 1
+            """),
+            {"pid": product_id, "shop": shop_domain},
+        ).mappings().first()
+
+        competitors = s.execute(
+            sa_text("""
+                SELECT SUM(vcs."competitorCount") AS count,
+                       MIN(vcs."minPrice") AS min_price,
+                       AVG(vcs."median") AS median,
+                       MAX(vcs."maxPrice") AS max_price
+                FROM "VariantCompetitorStats" vcs
+                JOIN "ShopifyVariant" v ON v.id = vcs."shopifyVariantId"
+                WHERE v."productId" = :pid AND vcs."shopDomain" = :shop
+            """),
+            {"pid": product_id, "shop": shop_domain},
+        ).mappings().first()
+
+    if decision is None and (competitors is None or competitors["count"] is None):
+        return None
+
+    return {
+        "lastPriceChange": {
+            "oldPrice": float(decision["oldPrice"]),
+            "newPrice": float(decision["newPrice"]),
+            "appliedAt": decision["appliedAt"].isoformat(),
+            "variantTitle": decision["variant_title"],
+        } if decision is not None else None,
+        "competitors": {
+            "count": int(competitors["count"]),
+            "minPrice": float(competitors["min_price"]) if competitors["min_price"] is not None else None,
+            "median": float(competitors["median"]) if competitors["median"] is not None else None,
+            "maxPrice": float(competitors["max_price"]) if competitors["max_price"] is not None else None,
+        } if competitors is not None and competitors["count"] is not None else None,
+    }
 
 
 def open_dynamic_pricing_panel(shop_domain: str, session_id: str,
@@ -102,6 +157,7 @@ def open_dynamic_pricing_panel(shop_domain: str, session_id: str,
             compute_disable_counts(shop_domain, product_id)
             if card_state != "FRESH" else None
         ),
+        "stats": _active_stats(shop_domain, product_id) if card_state == "ACTIVE" else None,
     }
 
     now = datetime.now(timezone.utc)

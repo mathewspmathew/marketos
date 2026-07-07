@@ -16,6 +16,7 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
   const product = summary.product || {};
   const ctx = summary.enableContext || {};
   const dc = summary.deleteCounts || {};
+  const stats = summary.stats || null;
 
   // FRESH form state, pre-filled from the frozen preview defaults.
   const [num, setNum] = useState(String(change.numResults ?? 10));
@@ -68,6 +69,27 @@ export default function DynamicPricingCard({ preview, onApply, onCancel, busy = 
               {product.latestJobStatus ? ` · last job ${product.latestJobStatus}` : ""}
             </s-text>
           </s-banner>
+        )}
+
+        {state === "ACTIVE" && stats && (
+          <s-stack direction="block" gap="tight">
+            {stats.lastPriceChange && (
+              <s-text>
+                Current price: <strong>₹{stats.lastPriceChange.newPrice.toFixed(2)}</strong>
+                {" "}(was ₹{stats.lastPriceChange.oldPrice.toFixed(2)}, changed{" "}
+                {new Date(stats.lastPriceChange.appliedAt).toLocaleDateString()})
+              </s-text>
+            )}
+            {stats.competitors && (
+              <s-text tone="subdued">
+                {stats.competitors.count} competitor price(s) tracked
+                {stats.competitors.minPrice != null
+                  ? ` · ₹${stats.competitors.minPrice.toFixed(2)}–₹${stats.competitors.maxPrice.toFixed(2)}`
+                  : ""}
+                {stats.competitors.median != null ? ` (median ₹${stats.competitors.median.toFixed(2)})` : ""}
+              </s-text>
+            )}
+          </s-stack>
         )}
 
         {state === "FRESH" && (
