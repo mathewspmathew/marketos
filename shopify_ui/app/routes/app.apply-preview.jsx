@@ -21,18 +21,14 @@ export const action = async ({ request }) => {
     applied_by: session.userId ? String(session.userId) : null,
   };
   if (kind === "dynamic_pricing_toggle") {
-    if (body.enable) {
+    const ACTIONS = ["enable", "pause", "resume", "delete"];
+    forward.action = ACTIONS.includes(body.action) ? body.action : null;
+    // Field edits are only meaningful (and only trusted) on first-time enable.
+    if (forward.action === "enable") {
       forward.rescrape = !!body.rescrape;
       forward.numResults = body.numResults;
       forward.listingExpansionCap = body.listingExpansionCap;
       forward.query = body.query;
-      // Cadence fields (shown on the resume/paused-with-data card).
-      if (body.frequencyInterval != null) {
-        forward.frequencyInterval = body.frequencyInterval;
-        forward.frequencyUnit = body.frequencyUnit;
-      }
-    } else {
-      forward.mode = body.mode === "delete" ? "delete" : "pause";
     }
   }
 
