@@ -4,6 +4,7 @@ EXPECTED_NAMES = [
     "price_query",
     "dp_status",
     "toggle_enable",
+    "toggle_disable",
     "nonexistent_product",
     "ambiguous_reference",
 ]
@@ -13,7 +14,7 @@ def test_shop_price_set_collects_all_variant_prices(seed_shop):
     assert shop_price_set(seed_shop) == {99.0}
 
 
-def test_build_cases_returns_exactly_five_fixed_names(seed_shop):
+def test_build_cases_returns_exactly_six_fixed_names(seed_shop):
     cases = build_cases(seed_shop)
     assert [c.name for c in cases] == EXPECTED_NAMES
 
@@ -30,8 +31,8 @@ def test_price_query_uses_first_product_facts(seed_shop):
 
 def test_toggle_enable_requires_preview_rules(seed_shop):
     meta = {c.name: c for c in build_cases(seed_shop)}["toggle_enable"].metadata
-    assert "preview_dynamic_pricing_toggle" in meta["expected_tools"]
-    assert "toggle_needs_preview" in meta["rules"]
+    assert "open_dynamic_pricing_panel" in meta["expected_tools"]
+    assert "toggle_needs_panel" in meta["rules"]
     assert "no_claim_applied" in meta["rules"]
 
 

@@ -74,11 +74,11 @@ def test_price_hallucination_flags_price_not_in_allowed_set():
 
 
 # Layer 5 — business logic
-def test_toggle_needs_preview_rule():
-    meta = {"rules": ["toggle_needs_preview"]}
-    assert check_business_logic(_out(tools=["resolve_product", "preview_dynamic_pricing_toggle"]), meta)[0]
+def test_toggle_needs_panel_rule():
+    meta = {"rules": ["toggle_needs_panel"]}
+    assert check_business_logic(_out(tools=["resolve_product", "open_dynamic_pricing_panel"]), meta)[0]
     ok, why = check_business_logic(_out(tools=["resolve_product"]), meta)
-    assert not ok and "preview_dynamic_pricing_toggle" in why
+    assert not ok and "open_dynamic_pricing_panel" in why
 
 def test_no_claim_applied_rule():
     meta = {"rules": ["no_claim_applied"]}

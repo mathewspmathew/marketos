@@ -26,7 +26,7 @@ _CLAIMS_APPLIED_RE = re.compile(
     re.IGNORECASE,
 )
 _KNOWN_RULES = frozenset({
-    "toggle_needs_preview",
+    "toggle_needs_panel",
     "price_change_needs_preview",
     "no_claim_applied",
     "must_ask_when_ambiguous",
@@ -88,8 +88,8 @@ def check_business_logic(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
     for rule in rules:
         if rule not in _KNOWN_RULES:
             raise ValueError(f"unknown business-logic rule: {rule!r}")
-        if rule == "toggle_needs_preview" and "preview_dynamic_pricing_toggle" not in called:
-            return False, "toggle_needs_preview: preview_dynamic_pricing_toggle was never called"
+        if rule == "toggle_needs_panel" and "open_dynamic_pricing_panel" not in called:
+            return False, "toggle_needs_panel: open_dynamic_pricing_panel was never called"
         if rule == "price_change_needs_preview" and "preview_price_change" not in called:
             return False, "price_change_needs_preview: preview_price_change was never called"
         if rule == "no_claim_applied" and _CLAIMS_APPLIED_RE.search(out.reply):

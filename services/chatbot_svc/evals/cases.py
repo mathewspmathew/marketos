@@ -67,7 +67,7 @@ def build_cases(shop_domain: str) -> list[Case]:
             metadata={
                 "expected_facts": [],
                 "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
-                "forbidden_tools": ["preview_dynamic_pricing_toggle"],
+                "forbidden_tools": ["open_dynamic_pricing_panel"],
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
             },
@@ -77,10 +77,21 @@ def build_cases(shop_domain: str) -> list[Case]:
             inputs=f"Enable dynamic pricing for the {short}.",
             metadata={
                 "expected_facts": [],
-                "expected_tools": ["resolve_product", "preview_dynamic_pricing_toggle"],
+                "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
-                "rules": ["toggle_needs_preview", "no_claim_applied"],
+                "rules": ["toggle_needs_panel", "no_claim_applied"],
+            },
+        ),
+        Case(
+            name="toggle_disable",
+            inputs=f"Turn off dynamic pricing for the {short}.",
+            metadata={
+                "expected_facts": [],
+                "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
+                "forbidden_tools": [],
+                "allowed_prices": allowed,
+                "rules": ["toggle_needs_panel", "no_claim_applied"],
             },
         ),
         Case(
@@ -89,7 +100,7 @@ def build_cases(shop_domain: str) -> list[Case]:
             metadata={
                 "expected_facts": [],
                 "expected_tools": ["resolve_product"],
-                "forbidden_tools": ["preview_price_change", "preview_dynamic_pricing_toggle"],
+                "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
                 "allowed_prices": allowed,  # any price not in the store = hallucination
                 "rules": ["no_claim_applied"],
             },
