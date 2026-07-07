@@ -3,12 +3,17 @@ from datetime import datetime, timezone
 import pytest
 
 from services.common.db import get_db
-from services.common.models import ChatSession
-from services.chatbot_svc.tools.preview import (
-    preview_price_change, preview_dynamic_pricing_toggle,
-)
+from services.common.models import ChatSession, ShopifyProduct
+from services.chatbot_svc.tools.preview import preview_price_change
+from services.chatbot_svc.tools.panel import open_dynamic_pricing_panel
 from services.chatbot_svc.tools.stats import get_stats, StatsMetric
 from services.chatbot_svc.schemas import ScopeFilter, PriceChange
+
+
+def _pid(shop):
+    with get_db() as s:
+        return s.query(ShopifyProduct.id).filter(
+            ShopifyProduct.shopDomain == shop).scalar()
 
 
 @pytest.fixture
@@ -47,12 +52,8 @@ async def test_full_price_change_flow(seed_shop, session_row):
 async def test_full_dynamic_pricing_toggle_flow(seed_shop, session_row):
     """(a) Toggle: the agent previews and STOPS — applying is the card's job, so
     there is no Python apply step. Assert a pending preview persists for the card."""
-    prev = preview_dynamic_pricing_toggle(
-        seed_shop, session_row,
-        ScopeFilter(vendor="Boat"),
-        enabled=True,
-    )
-    assert prev.count >= 1
+    pid = _pid(seed_shop)
+    prev = open_dynamic_pricing_panel(seed_shop, session_row, pid)
     assert prev.kind == "dynamic_pricing_toggle"
     # A pending (unapplied) ChatPreview row exists for the card to apply.
     with get_db() as s:

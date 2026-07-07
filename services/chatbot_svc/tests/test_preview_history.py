@@ -7,18 +7,13 @@ from services.common.db import get_db
 from services.common.models import (
     ShopifyProduct, CompetitorCandidate, ChatPreview, ChatSession,
 )
-from services.chatbot_svc.schemas import ScopeFilter
-from services.chatbot_svc.tools.preview import preview_dynamic_pricing_toggle
+from services.chatbot_svc.tools.panel import open_dynamic_pricing_panel
 
 
 def _pid(shop):
     with get_db() as s:
         return s.query(ShopifyProduct.id).filter(
             ShopifyProduct.shopDomain == shop).scalar()
-
-
-def _scope(pid):
-    return ScopeFilter(product_ids=[pid])
 
 
 def _stored_summary(preview_id):
@@ -43,11 +38,11 @@ def chat_session(seed_shop):
 
 def test_fresh_preview_has_fresh_state(seed_shop, chat_session):
     pid = _pid(seed_shop)
-    res = preview_dynamic_pricing_toggle(seed_shop, chat_session, _scope(pid), True)
+    res = open_dynamic_pricing_panel(seed_shop, chat_session, pid)
     summary = _stored_summary(res.preview_id)
     assert summary["enableContext"]["state"] == "FRESH"
-    assert ("first time" in res.human_summary.lower()
-            or "set up" in res.human_summary.lower())
+    assert res.card_state == "FRESH"
+    assert "setup" in res.human_summary.lower()
 
 
 def test_paused_preview_reports_existing_data(seed_shop, chat_session):
@@ -59,7 +54,7 @@ def test_paused_preview_reports_existing_data(seed_shop, chat_session):
             url="https://x.test/p", domain="x.test", source="serper_search",
             status="SCRAPED"))
     try:
-        res = preview_dynamic_pricing_toggle(seed_shop, chat_session, _scope(pid), True)
+        res = open_dynamic_pricing_panel(seed_shop, chat_session, pid)
         summary = _stored_summary(res.preview_id)
         assert summary["enableContext"]["state"] == "PAUSED_WITH_DATA"
         assert summary["enableContext"]["competitors_found"] == 1

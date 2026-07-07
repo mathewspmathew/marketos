@@ -74,6 +74,12 @@ export const action = async ({ request }) => {
   }
 
   const productId = preview.variantIds[0]; // panel previews freeze exactly one product id
+  // Fail-closed insurance: an empty variantIds would leave productId undefined,
+  // and Prisma strips undefined filters — fanning mutations shop-wide. Panel
+  // previews always freeze exactly one id, so this should never trigger.
+  if (!productId) {
+    return Response.json({ ok: false, reason: "missing_product" }, { status: 400 });
+  }
   const shopDomain = preview.shopDomain;
 
   const product = await prisma.shopifyProduct.findFirst({

@@ -1,9 +1,14 @@
 import pytest, uuid
 from datetime import datetime, timezone
-from services.chatbot_svc.tools.preview import preview_dynamic_pricing_toggle
-from services.chatbot_svc.schemas import ScopeFilter
+from services.chatbot_svc.tools.panel import open_dynamic_pricing_panel
 from services.common.db import get_db
-from services.common.models import ChatSession, ChatPreview
+from services.common.models import ChatSession, ChatPreview, ShopifyProduct
+
+
+def _pid(shop):
+    with get_db() as s:
+        return s.query(ShopifyProduct.id).filter(
+            ShopifyProduct.shopDomain == shop).scalar()
 
 
 @pytest.fixture
@@ -20,29 +25,33 @@ def chat_session(seed_shop):
 
 
 def test_toggle_preview_persists(seed_shop, chat_session):
-    res = preview_dynamic_pricing_toggle(seed_shop, chat_session,
-                                         ScopeFilter(vendor="Boat"), enabled=True)
+    pid = _pid(seed_shop)
+    res = open_dynamic_pricing_panel(seed_shop, chat_session, pid)
     with get_db() as s:
         row = s.get(ChatPreview, res.preview_id)
         assert row is not None
         assert row.kind == "dynamic_pricing_toggle"
-        assert row.change["enabled"] is True
+        assert row.change["panel"] is True
+        assert row.change["cardState"] == "FRESH"
+        assert row.change["allowedActions"] == ["enable"]
         assert row.change["rescrape"] is False
         assert row.change["numResults"] == 10
-        assert row.variantIds  # product ids stored
+        assert row.variantIds == [pid]  # product ids stored
 
 
 def test_toggle_summary_mentions_dynamic_pricing(seed_shop, chat_session):
-    res = preview_dynamic_pricing_toggle(seed_shop, chat_session,
-                                         ScopeFilter(vendor="Boat"), enabled=True)
-    assert res.count >= 1
-    assert "dynamic pricing" in res.human_summary.lower()
+    pid = _pid(seed_shop)
+    res = open_dynamic_pricing_panel(seed_shop, chat_session, pid)
+    assert res.kind == "dynamic_pricing_toggle"
+    assert res.card_state == "FRESH"
+    assert "setup" in res.human_summary.lower()
 
 
 def test_toggle_dedups_to_product_ids(seed_shop, chat_session):
-    res = preview_dynamic_pricing_toggle(seed_shop, chat_session,
-                                         ScopeFilter(vendor="Boat"), enabled=False)
+    pid = _pid(seed_shop)
+    res = open_dynamic_pricing_panel(seed_shop, chat_session, pid)
     with get_db() as s:
         row = s.get(ChatPreview, res.preview_id)
-        # length should equal distinct product count, which is <= variant count
+        # panel freezes exactly one product id, with no duplicates
         assert len(row.variantIds) == len(set(row.variantIds))
+        assert row.variantIds == [pid]
