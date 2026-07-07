@@ -101,6 +101,42 @@ def check_business_logic(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
     return True, f"all business rules satisfied: {rules}"
 
 
+def check_tool_recall(out: ChatRunOutput, meta: dict) -> tuple[float, str]:
+    """Recall = |called ∩ expected| / |expected|.  1.0 when expected is empty."""
+    expected = set(meta.get("expected_tools", []))
+    if not expected:
+        return 1.0, "no expected tools defined — recall trivially 1.0"
+    called = set(out.tool_names())
+    hit = expected & called
+    score = round(len(hit) / len(expected), 3)
+    missed = sorted(expected - called)
+    if missed:
+        return score, f"recall={score} — missed tools: {missed} (called: {sorted(called)})"
+    return score, f"recall=1.0 — all expected tools called"
+
+
+def check_tool_precision(out: ChatRunOutput, meta: dict) -> tuple[float, str]:
+    """Precision = |called ∩ expected| / |called|.  1.0 when nothing called."""
+    expected = set(meta.get("expected_tools", []))
+    called_names = out.tool_names()
+    called = set(called_names)
+    if not called:
+        return 1.0, "no tools called — precision trivially 1.0"
+    hit = expected & called
+    score = round(len(hit) / len(called), 3)
+    spurious = sorted(called - expected)
+    if spurious:
+        return score, f"precision={score} — spurious tools: {spurious}"
+    return score, f"precision=1.0 — no spurious tools called"
+
+
+def check_tool_success(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
+    """True when no tool returned is_error=True during the run."""
+    if not out.tool_errors:
+        return True, "all tool calls succeeded (no tool errors)"
+    return False, f"tools returned errors: {out.tool_errors}"
+
+
 @dataclass
 class OutputCorrectness(Evaluator):
     def get_default_evaluation_name(self) -> str:
@@ -148,4 +184,40 @@ class BusinessLogic(Evaluator):
 
     def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
         ok, why = check_business_logic(ctx.output, ctx.metadata or {})
+        return EvaluationReason(value=ok, reason=why)
+
+
+@dataclass
+class ToolRecall(Evaluator):
+    """Fraction of expected tools that were actually called (0–1)."""
+
+    def get_default_evaluation_name(self) -> str:
+        return "tool_recall"
+
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        score, why = check_tool_recall(ctx.output, ctx.metadata or {})
+        return EvaluationReason(value=score, reason=why)
+
+
+@dataclass
+class ToolPrecision(Evaluator):
+    """Fraction of called tools that were expected (no spurious calls)."""
+
+    def get_default_evaluation_name(self) -> str:
+        return "tool_precision"
+
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        score, why = check_tool_precision(ctx.output, ctx.metadata or {})
+        return EvaluationReason(value=score, reason=why)
+
+
+@dataclass
+class ToolSuccess(Evaluator):
+    """True when no tool returned an error during the run."""
+
+    def get_default_evaluation_name(self) -> str:
+        return "tool_success"
+
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        ok, why = check_tool_success(ctx.output, ctx.metadata or {})
         return EvaluationReason(value=ok, reason=why)

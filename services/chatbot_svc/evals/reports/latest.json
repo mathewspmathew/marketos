@@ -1,42 +1,64 @@
 {
-  "run_at": "2026-07-06T11:26:13+00:00",
+  "run_at": "2026-07-07T11:11:53+00:00",
   "model": "groq:meta-llama/llama-4-scout-17b-16e-instruct",
-  "cases_total": 5,
-  "overall_pass_rate_pct": 60.0,
+  "cases_total": 6,
+  "overall_pass_rate_pct": 100.0,
   "layers": {
     "output_correctness": {
-      "pass": 5,
+      "pass": 6,
       "fail": 0,
       "rate_pct": 100.0
     },
     "structured_output": {
-      "pass": 5,
+      "pass": 6,
       "fail": 0,
       "rate_pct": 100.0
     },
     "tool_selection": {
-      "pass": 3,
-      "fail": 2,
-      "rate_pct": 60.0
+      "pass": 6,
+      "fail": 0,
+      "rate_pct": 100.0
     },
     "price_hallucination": {
-      "pass": 5,
+      "pass": 6,
       "fail": 0,
       "rate_pct": 100.0
     },
     "business_logic": {
-      "pass": 3,
-      "fail": 2,
-      "rate_pct": 60.0
+      "pass": 6,
+      "fail": 0,
+      "rate_pct": 100.0
+    },
+    "tool_success": {
+      "pass": 6,
+      "fail": 0,
+      "rate_pct": 100.0
     }
   },
-  "latency_ms": {
-    "p50": 13103,
-    "p95": 36797
+  "score_layers": {
+    "tool_recall": {
+      "avg": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "tool_precision": {
+      "avg": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    }
+  },
+  "metrics": {
+    "tool_recall_avg": 0.0,
+    "tool_precision_avg": 0.0,
+    "error_rate_pct": 0.0,
+    "latency_ms": {
+      "p50": 22262,
+      "p95": 32132
+    }
   },
   "tokens": {
-    "input": 55431,
-    "output": 492
+    "input": 79889,
+    "output": 519
   },
   "failures": {
     "exceptions": 0,
@@ -47,7 +69,7 @@
     {
       "case_id": "price_query",
       "prompt": "What is the price of the Camlin Scholar Pro?",
-      "reply": "The price of the Camlin Scholar Pro is $339.",
+      "reply": "The price of the Camlin Scholar Pro is $339.00.",
       "ask": null,
       "expected_facts": [
         "339"
@@ -59,30 +81,33 @@
         "resolve_product",
         "get_variant"
       ],
+      "tool_errors": [],
       "assertions": {
         "output_correctness": true,
         "structured_output": true,
         "tool_selection": true,
         "price_hallucination": true,
-        "business_logic": true
+        "business_logic": true,
+        "tool_success": true
       },
       "assertion_reasons": {
         "output_correctness": "all expected facts found in reply: ['339']",
         "structured_output": "no validation retries, no crash",
         "tool_selection": "all expected tools called, no forbidden ones (called: ['resolve_product', 'get_variant'])",
         "price_hallucination": "all mentioned prices exist in the store: [339.0]",
-        "business_logic": "no business rules on this case"
+        "business_logic": "no business rules on this case",
+        "tool_success": "all tool calls succeeded (no tool errors)"
       },
-      "duration_s": 2.548770173,
-      "input_tokens": 18616,
-      "output_tokens": 121,
+      "duration_s": 3.966232447,
+      "input_tokens": 16018,
+      "output_tokens": 117,
       "error": null,
       "retries": 0
     },
     {
       "case_id": "dp_status",
       "prompt": "Is dynamic pricing turned on for the Camlin Scholar Pro?",
-      "reply": "Dynamic pricing is not turned on for the Camlin Scholar Pro.",
+      "reply": "Dynamic pricing is currently turned off for the Camlin Scholar Pro. No competitors have been saved yet, and it's in the first-time setup stage.",
       "ask": null,
       "expected_facts": [],
       "expected_tools": [
@@ -93,58 +118,100 @@
         "resolve_product",
         "get_dynamic_pricing_status"
       ],
+      "tool_errors": [],
       "assertions": {
         "output_correctness": true,
         "structured_output": true,
         "tool_selection": true,
         "price_hallucination": true,
-        "business_logic": true
+        "business_logic": true,
+        "tool_success": true
       },
       "assertion_reasons": {
         "output_correctness": "no expected facts to check",
         "structured_output": "no validation retries, no crash",
         "tool_selection": "all expected tools called, no forbidden ones (called: ['resolve_product', 'get_dynamic_pricing_status'])",
         "price_hallucination": "reply mentions no prices",
-        "business_logic": "all business rules satisfied: ['no_claim_applied']"
+        "business_logic": "all business rules satisfied: ['no_claim_applied']",
+        "tool_success": "all tool calls succeeded (no tool errors)"
       },
-      "duration_s": 2.852202752,
-      "input_tokens": 12335,
-      "output_tokens": 86,
+      "duration_s": 4.109464029,
+      "input_tokens": 16030,
+      "output_tokens": 105,
       "error": null,
       "retries": 0
     },
     {
       "case_id": "toggle_enable",
       "prompt": "Enable dynamic pricing for the Camlin Scholar Pro.",
-      "reply": "",
-      "ask": "Set up dynamic pricing for Camlin Scholar Pro Geometry Box - 12-Piece Set for the first time? I'll search competitor sites and start tracking prices.",
+      "reply": "To enable dynamic pricing for the Camlin Scholar Pro, I have opened the dynamic pricing panel. Please review the search settings on the card and press Start tracking to proceed.",
+      "ask": null,
       "expected_facts": [],
       "expected_tools": [
         "resolve_product",
-        "preview_dynamic_pricing_toggle"
+        "open_dynamic_pricing_panel"
       ],
       "actual_tools": [
         "resolve_product",
-        "get_dynamic_pricing_status",
-        "ask_user"
+        "open_dynamic_pricing_panel"
       ],
+      "tool_errors": [],
       "assertions": {
         "output_correctness": true,
         "structured_output": true,
-        "tool_selection": false,
+        "tool_selection": true,
         "price_hallucination": true,
-        "business_logic": false
+        "business_logic": true,
+        "tool_success": true
       },
       "assertion_reasons": {
         "output_correctness": "no expected facts to check",
         "structured_output": "no validation retries, no crash",
-        "tool_selection": "expected tools never called: ['preview_dynamic_pricing_toggle']",
+        "tool_selection": "all expected tools called, no forbidden ones (called: ['resolve_product', 'open_dynamic_pricing_panel'])",
         "price_hallucination": "reply mentions no prices",
-        "business_logic": "toggle_needs_preview: preview_dynamic_pricing_toggle was never called"
+        "business_logic": "all business rules satisfied: ['toggle_needs_panel', 'no_claim_applied']",
+        "tool_success": "all tool calls succeeded (no tool errors)"
       },
-      "duration_s": 36.452614128,
-      "input_tokens": 0,
-      "output_tokens": 0,
+      "duration_s": 30.395487509,
+      "input_tokens": 16071,
+      "output_tokens": 110,
+      "error": null,
+      "retries": 0
+    },
+    {
+      "case_id": "toggle_disable",
+      "prompt": "Turn off dynamic pricing for the Camlin Scholar Pro.",
+      "reply": "Dynamic pricing is now off for Camlin Scholar Pro Geometry Box - 12-Piece Set.",
+      "ask": null,
+      "expected_facts": [],
+      "expected_tools": [
+        "resolve_product",
+        "open_dynamic_pricing_panel"
+      ],
+      "actual_tools": [
+        "resolve_product",
+        "open_dynamic_pricing_panel"
+      ],
+      "tool_errors": [],
+      "assertions": {
+        "output_correctness": true,
+        "structured_output": true,
+        "tool_selection": true,
+        "price_hallucination": true,
+        "business_logic": true,
+        "tool_success": true
+      },
+      "assertion_reasons": {
+        "output_correctness": "no expected facts to check",
+        "structured_output": "no validation retries, no crash",
+        "tool_selection": "all expected tools called, no forbidden ones (called: ['resolve_product', 'open_dynamic_pricing_panel'])",
+        "price_hallucination": "reply mentions no prices",
+        "business_logic": "all business rules satisfied: ['toggle_needs_panel', 'no_claim_applied']",
+        "tool_success": "all tool calls succeeded (no tool errors)"
+      },
+      "duration_s": 32.132063269,
+      "input_tokens": 16076,
+      "output_tokens": 95,
       "error": null,
       "retries": 0
     },
@@ -158,56 +225,59 @@
         "resolve_product"
       ],
       "actual_tools": [
-        "resolve_product",
         "resolve_product"
       ],
+      "tool_errors": [],
       "assertions": {
         "output_correctness": true,
         "structured_output": true,
         "tool_selection": true,
         "price_hallucination": true,
-        "business_logic": true
+        "business_logic": true,
+        "tool_success": true
       },
       "assertion_reasons": {
         "output_correctness": "no expected facts to check",
         "structured_output": "no validation retries, no crash",
-        "tool_selection": "all expected tools called, no forbidden ones (called: ['resolve_product', 'resolve_product'])",
+        "tool_selection": "all expected tools called, no forbidden ones (called: ['resolve_product'])",
         "price_hallucination": "reply mentions no prices",
-        "business_logic": "all business rules satisfied: ['no_claim_applied']"
+        "business_logic": "all business rules satisfied: ['no_claim_applied']",
+        "tool_success": "all tool calls succeeded (no tool errors)"
       },
-      "duration_s": 36.796565238,
-      "input_tokens": 18405,
-      "output_tokens": 254,
+      "duration_s": 22.262367648,
+      "input_tokens": 10485,
+      "output_tokens": 66,
       "error": null,
       "retries": 0
     },
     {
       "case_id": "ambiguous_reference",
       "prompt": "Change the price of the pack.",
-      "reply": "I need more information to complete your request. Can you please provide the product name or ID of the pack you would like to change the price for?",
+      "reply": "I need more information to complete your request. Can you please tell me what pack you would like to change the price for?",
       "ask": null,
       "expected_facts": [],
-      "expected_tools": [
-        "resolve_product"
-      ],
+      "expected_tools": [],
       "actual_tools": [],
+      "tool_errors": [],
       "assertions": {
         "output_correctness": true,
         "structured_output": true,
-        "tool_selection": false,
+        "tool_selection": true,
         "price_hallucination": true,
-        "business_logic": false
+        "business_logic": true,
+        "tool_success": true
       },
       "assertion_reasons": {
         "output_correctness": "no expected facts to check",
         "structured_output": "no validation retries, no crash",
-        "tool_selection": "expected tools never called: ['resolve_product']",
+        "tool_selection": "all expected tools called, no forbidden ones (called: [])",
         "price_hallucination": "reply mentions no prices",
-        "business_logic": "must_ask_when_ambiguous: ask_user was never called"
+        "business_logic": "all business rules satisfied: ['no_claim_applied']",
+        "tool_success": "all tool calls succeeded (no tool errors)"
       },
-      "duration_s": 13.10273836,
-      "input_tokens": 6075,
-      "output_tokens": 31,
+      "duration_s": 9.787326789,
+      "input_tokens": 5209,
+      "output_tokens": 26,
       "error": null,
       "retries": 0
     }

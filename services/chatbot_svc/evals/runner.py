@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai import capture_run_messages
-from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart
+from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart, ToolReturnPart
 
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.deps import build_deps
@@ -19,6 +19,7 @@ class ChatRunOutput:
     reply: str = ""
     ask: str | None = None  # set when the agent paused to ask a clarifying question
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_errors: list[str] = field(default_factory=list)  # tool names that returned is_error=True
     retries: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -45,6 +46,16 @@ def extract_tool_calls(messages: list) -> list[dict[str, Any]]:
     return calls
 
 
+def extract_tool_errors(messages: list) -> list[str]:
+    """Return names of tools whose ToolReturnPart has is_error=True."""
+    errors: list[str] = []
+    for msg in messages:
+        for part in getattr(msg, "parts", []):
+            if isinstance(part, ToolReturnPart) and getattr(part, "is_error", False):
+                errors.append(part.tool_name)
+    return errors
+
+
 def count_retries(messages: list) -> int:
     return sum(
         1
@@ -69,12 +80,14 @@ async def run_chat_case(prompt: str, shop_domain: str, session_id: str) -> ChatR
             except AskUserRequested as ask:
                 out.ask = ask.question
                 out.tool_calls = extract_tool_calls(messages)
+                out.tool_errors = extract_tool_errors(messages)
                 out.retries = count_retries(messages)
                 return out
         messages = result.all_messages()
         usage = result.usage()
         out.reply = result.output
         out.tool_calls = extract_tool_calls(messages)
+        out.tool_errors = extract_tool_errors(messages)
         out.retries = count_retries(messages)
         out.input_tokens = usage.input_tokens or 0
         out.output_tokens = usage.output_tokens or 0

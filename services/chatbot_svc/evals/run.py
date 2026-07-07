@@ -11,6 +11,7 @@ set LOGFIRE_TOKEN to get traces, otherwise spans go to stderr only.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -18,6 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import logfire
 from pydantic_evals import Dataset
 
 from services.chatbot_svc.evals.cases import build_cases
@@ -26,12 +28,20 @@ from services.chatbot_svc.evals.evaluators import (
     OutputCorrectness,
     PriceHallucination,
     StructuredOutput,
+    ToolPrecision,
+    ToolRecall,
     ToolSelection,
+    ToolSuccess,
 )
 from services.chatbot_svc.evals.report import build_report, render_markdown
 from services.chatbot_svc.evals.runner import ChatRunOutput, run_chat_case
 from services.common.db import get_db
 from services.common.models import ChatSession
+
+# Import agent + prompt so we can log them as eval metadata.
+# Importing here (after logfire.configure in agent.py) is safe; the module
+# is cached so it is not re-initialised on subsequent imports.
+from services.chatbot_svc.agent import agent as _agent, _PROMPT as _SYSTEM_PROMPT
 
 _REQUIRED_ENV = ["DATABASE_URL", "GROQ_API_KEY", "CHATBOT_RR_URL", "INTERNAL_API_TOKEN",
                  "EVAL_SHOP_DOMAIN", "CHATBOT_MODEL"]
@@ -55,6 +65,29 @@ def main() -> int:
     print(f"running {len(cases)} cases against {shop} with {_MODEL}")
 
     session_id = f"eval-{uuid.uuid4().hex[:12]}"
+
+    # ------------------------------------------------------------------
+    # Logfire: emit a config span BEFORE any cases run so Logfire stores
+    # exactly what the agent looked like for this eval run.
+    # ------------------------------------------------------------------
+    _prompt_sha = hashlib.sha256(_SYSTEM_PROMPT.encode()).hexdigest()[:16]
+    _tool_names = sorted(_agent._function_toolset.tools)  # noqa: SLF001
+    logfire.info(
+        "eval_run_config",
+        model=_MODEL,
+        shop=shop,
+        session_id=session_id,
+        cases_total=len(cases),
+        python_version=sys.version,
+        # System-prompt metadata (full text + fingerprint)
+        system_prompt=_SYSTEM_PROMPT,
+        system_prompt_chars=len(_SYSTEM_PROMPT),
+        system_prompt_sha256=_prompt_sha,
+        # Tool registry
+        registered_tools=_tool_names,
+        registered_tools_count=len(_tool_names),
+    )
+    # ------------------------------------------------------------------
     try:
         with get_db() as s:
             # timestamps set explicitly: the Prisma-managed table has no DB
@@ -76,6 +109,9 @@ def main() -> int:
                 ToolSelection(),
                 PriceHallucination(),
                 BusinessLogic(),
+                ToolRecall(),
+                ToolPrecision(),
+                ToolSuccess(),
             ],
         )
 
@@ -103,7 +139,8 @@ def main() -> int:
             "expected_facts": meta.get("expected_facts", []),
             "expected_tools": meta.get("expected_tools", []),
             "actual_tools": out.tool_names() if out else [],
-            "assertions": {n: bool(a.value) for n, a in (rc.assertions or {}).items()},
+            "tool_errors": out.tool_errors if out else [],
+            "assertions": {n: a.value for n, a in (rc.assertions or {}).items()},
             "assertion_reasons": {n: a.reason for n, a in (rc.assertions or {}).items()},
             "duration_s": rc.task_duration,
             "input_tokens": out.input_tokens if out else 0,
@@ -112,7 +149,43 @@ def main() -> int:
             "retries": out.retries if out else 0,
         })
 
-    report = build_report(case_dicts, model=_MODEL)
+    report = build_report(
+        case_dicts,
+        model=_MODEL,
+        system_prompt_sha256=_prompt_sha,
+        system_prompt_chars=len(_SYSTEM_PROMPT),
+        registered_tools=_tool_names,
+    )
+
+    # --- Logfire: summary span with all aggregate metrics + prompt metadata ---
+    # pydantic-evals already emits per-case spans; this adds a summary event
+    # that you can pin as a Logfire dashboard panel and correlate by
+    # system_prompt_sha256 across runs.
+    m = report["metrics"]
+    logfire.info(
+        "eval_run_summary",
+        model=_MODEL,
+        shop=shop,
+        session_id=session_id,
+        cases_total=report["cases_total"],
+        overall_pass_rate_pct=report["overall_pass_rate_pct"],
+        # tool quality
+        tool_recall_avg=m["tool_recall_avg"],
+        tool_precision_avg=m["tool_precision_avg"],
+        # reliability
+        error_rate_pct=m["error_rate_pct"],
+        failures=report["failures"],
+        # latency
+        latency_p50_ms=m["latency_ms"]["p50"],
+        latency_p95_ms=m["latency_ms"]["p95"],
+        # token cost
+        tokens_input=report["tokens"]["input"],
+        tokens_output=report["tokens"]["output"],
+        # prompt version — lets you correlate metric changes to prompt edits
+        system_prompt_sha256=_prompt_sha,
+        system_prompt_chars=len(_SYSTEM_PROMPT),
+    )
+    # --------------------------------------------------------------------------
 
     REPORTS_DIR.mkdir(exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

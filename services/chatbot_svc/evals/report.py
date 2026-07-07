@@ -3,13 +3,24 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-LAYERS = [
+# Boolean layers — pass/fail per case
+BOOL_LAYERS = [
     "output_correctness",
     "structured_output",
     "tool_selection",
     "price_hallucination",
     "business_logic",
+    "tool_success",
 ]
+
+# Numeric layers — averaged across cases (0–1 score)
+SCORE_LAYERS = [
+    "tool_recall",
+    "tool_precision",
+]
+
+ALL_LAYERS = BOOL_LAYERS + SCORE_LAYERS
+
 
 def _pct(n: int, total: int) -> float:
     return round(100.0 * n / total, 1) if total else 0.0
@@ -23,28 +34,69 @@ def _percentile(values: list[float], pct: float) -> float:
     return values[idx]
 
 
-def build_report(cases: list[dict], *, model: str) -> dict:
-    total = len(cases)
-    layers = {}
-    for layer in LAYERS:
-        passed = sum(1 for c in cases if c["assertions"].get(layer, False))
-        layers[layer] = {"pass": passed, "fail": total - passed, "rate_pct": _pct(passed, total)}
+def _avg(values: list[float]) -> float:
+    return round(sum(values) / len(values), 3) if values else 0.0
 
+
+def build_report(
+    cases: list[dict],
+    *,
+    model: str,
+    system_prompt_sha256: str = "",
+    system_prompt_chars: int = 0,
+    registered_tools: list[str] | None = None,
+) -> dict:
+    total = len(cases)
+
+    # --- boolean layers ---
+    bool_layers: dict[str, dict] = {}
+    for layer in BOOL_LAYERS:
+        passed = sum(1 for c in cases if c["assertions"].get(layer, False))
+        bool_layers[layer] = {
+            "pass": passed,
+            "fail": total - passed,
+            "rate_pct": _pct(passed, total),
+        }
+
+    # --- score layers (numeric 0–1) ---
+    score_layers: dict[str, dict] = {}
+    for layer in SCORE_LAYERS:
+        scores = [
+            float(c["assertions"].get(layer, 0.0))
+            for c in cases
+            if layer in c["assertions"]
+        ]
+        score_layers[layer] = {
+            "avg": _avg(scores),
+            "min": round(min(scores), 3) if scores else 0.0,
+            "max": round(max(scores), 3) if scores else 0.0,
+        }
+
+    # --- overall pass: all BOOL layers green (score layers are informational) ---
     overall_pass = sum(
-        1 for c in cases if all(c["assertions"].get(l, False) for l in LAYERS)
+        1 for c in cases if all(c["assertions"].get(l, False) for l in BOOL_LAYERS)
     )
+
+    # --- latency ---
     durations_ms = [c["duration_s"] * 1000 for c in cases]
+
+    # --- token totals ---
     in_tok = sum(c["input_tokens"] for c in cases)
     out_tok = sum(c["output_tokens"] for c in cases)
 
+    # --- error rate ---
+    error_cases = sum(
+        1 for c in cases if c.get("error") or c.get("retries", 0) > 0
+    )
+    error_rate_pct = _pct(error_cases, total)
+
+    # --- failure breakdown ---
     failures = {"exceptions": 0, "validation_errors": 0, "timeouts": 0}
     for c in cases:
         err = c.get("error")
         if err is None:
             if c.get("retries", 0) > 0:
                 failures["validation_errors"] += 1
-        # substring, not a fixed set: catches TimeoutError plus httpx's
-        # ConnectTimeout / ReadTimeout / WriteTimeout / PoolTimeout
         elif "Timeout" in err:
             failures["timeouts"] += 1
         else:
@@ -53,12 +105,22 @@ def build_report(cases: list[dict], *, model: str) -> dict:
     return {
         "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model": model,
+        # Agent configuration fingerprint
+        "system_prompt_sha256": system_prompt_sha256,
+        "system_prompt_chars": system_prompt_chars,
+        "registered_tools": registered_tools or [],
         "cases_total": total,
         "overall_pass_rate_pct": _pct(overall_pass, total),
-        "layers": layers,
-        "latency_ms": {
-            "p50": round(_percentile(durations_ms, 0.50)),
-            "p95": round(_percentile(durations_ms, 0.95)),
+        "layers": bool_layers,
+        "score_layers": score_layers,
+        "metrics": {
+            "tool_recall_avg": score_layers["tool_recall"]["avg"],
+            "tool_precision_avg": score_layers["tool_precision"]["avg"],
+            "error_rate_pct": error_rate_pct,
+            "latency_ms": {
+                "p50": round(_percentile(durations_ms, 0.50)),
+                "p95": round(_percentile(durations_ms, 0.95)),
+            },
         },
         # cost lives in the Logfire dashboard (it prices each LLM span itself)
         "tokens": {"input": in_tok, "output": out_tok},
@@ -68,22 +130,56 @@ def build_report(cases: list[dict], *, model: str) -> dict:
 
 
 def render_markdown(report: dict) -> str:
+    m = report["metrics"]
+    lms = m["latency_ms"]
+    tools_str = ", ".join(f"`{t}`" for t in report.get("registered_tools", []))
+
     lines = [
         f"# Chatbot Evaluation Report — {report['run_at'][:10]}",
         "",
         f"Model: `{report['model']}` · {report['cases_total']} cases · "
         f"overall **{report['overall_pass_rate_pct']}%** pass",
         "",
+        "## Agent Configuration",
+        "",
+        f"| Field | Value |",
+        "|---|---|",
+        f"| System prompt SHA-256 (first 16 chars) | `{report.get('system_prompt_sha256', '—')}` |",
+        f"| System prompt length | {report.get('system_prompt_chars', 0):,} chars |",
+        f"| Registered tools | {tools_str or '—'} |",
+        "",
+        "## Metrics",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Tool Recall (avg) | {m['tool_recall_avg']:.1%} |",
+        f"| Tool Precision (avg) | {m['tool_precision_avg']:.1%} |",
+        f"| Error Rate | {m['error_rate_pct']}% |",
+        f"| Latency P50 | {lms['p50']} ms |",
+        f"| Latency P95 | {lms['p95']} ms |",
+        f"| Tokens (in / out) | {report['tokens']['input']} / {report['tokens']['output']} |",
+        "",
+        "## Layer Results (pass / fail)",
+        "",
         "| Layer | Pass | Fail | Rate |",
         "|---|---|---|---|",
     ]
     for layer, s in report["layers"].items():
         lines.append(f"| {layer} | {s['pass']} | {s['fail']} | {s['rate_pct']}% |")
+
     lines += [
         "",
-        f"p50 latency {report['latency_ms']['p50']}ms · "
-        f"p95 {report['latency_ms']['p95']}ms · "
-        f"tokens {report['tokens']['input']}/{report['tokens']['output']} in/out",
+        "## Tool Score Layers",
+        "",
+        "| Layer | Avg | Min | Max |",
+        "|---|---|---|---|",
+    ]
+    for layer, s in report["score_layers"].items():
+        lines.append(
+            f"| {layer} | {s['avg']:.1%} | {s['min']:.1%} | {s['max']:.1%} |"
+        )
+
+    lines += [
         "",
         f"Failures: {report['failures']['exceptions']} exceptions · "
         f"{report['failures']['validation_errors']} validation errors · "
@@ -96,7 +192,9 @@ def render_markdown(report: dict) -> str:
     ]
     any_failed = False
     for c in report["case_results"]:
-        failed = [layer for layer in LAYERS if not c["assertions"].get(layer, False)]
+        failed = [
+            layer for layer in BOOL_LAYERS if not c["assertions"].get(layer, False)
+        ]
         if failed:
             any_failed = True
             lines.append(
