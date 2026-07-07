@@ -215,7 +215,7 @@ def build_cases(shop_domain: str) -> list[Case]:
                 "expected_facts": [
                     "The reply should present a list or summary of the available products in the store based on the broad search."
                 ],
-                "expected_tools": ["semantic_search"],
+                "expected_tools": ["get_stats"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
