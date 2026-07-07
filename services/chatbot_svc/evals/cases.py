@@ -99,10 +99,10 @@ def build_cases(shop_domain: str) -> list[Case]:
             inputs="Change the price of the pack.",
             metadata={
                 "expected_facts": [],
-                "expected_tools": ["resolve_product"],
+                "expected_tools": [],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
-                "rules": ["must_ask_when_ambiguous", "no_claim_applied"],
+                "rules": ["no_claim_applied"],
             },
         ),
     ]

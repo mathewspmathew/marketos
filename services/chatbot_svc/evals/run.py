@@ -33,11 +33,12 @@ from services.chatbot_svc.evals.runner import ChatRunOutput, run_chat_case
 from services.common.db import get_db
 from services.common.models import ChatSession
 
-_REQUIRED_ENV = ["DATABASE_URL", "GROQ_API_KEY", "CHATBOT_RR_URL", "INTERNAL_API_TOKEN", "EVAL_SHOP_DOMAIN"]
+_REQUIRED_ENV = ["DATABASE_URL", "GROQ_API_KEY", "CHATBOT_RR_URL", "INTERNAL_API_TOKEN",
+                 "EVAL_SHOP_DOMAIN", "CHATBOT_MODEL"]
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 REPORTS_DIR = Path(__file__).parent / "reports"
 MARKDOWN_PATH = _REPO_ROOT / "docs" / "evals" / "CHATBOT_EVAL_REPORT.md"
-_MODEL = os.environ.get("CHATBOT_MODEL", "groq:llama-3.3-70b-versatile")
+_MODEL = os.environ.get("CHATBOT_MODEL", "")
 
 
 def main() -> int:
@@ -103,6 +104,7 @@ def main() -> int:
             "expected_tools": meta.get("expected_tools", []),
             "actual_tools": out.tool_names() if out else [],
             "assertions": {n: bool(a.value) for n, a in (rc.assertions or {}).items()},
+            "assertion_reasons": {n: a.reason for n, a in (rc.assertions or {}).items()},
             "duration_s": rc.task_duration,
             "input_tokens": out.input_tokens if out else 0,
             "output_tokens": out.output_tokens if out else 0,

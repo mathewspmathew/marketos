@@ -12,7 +12,7 @@ export const loader = async ({ request }) => {
 
 export default function App() {
   const { apiKey } = useLoaderData();
-
+//  this is the react route
   return (
     <AppProvider embedded apiKey={apiKey}>
       <s-app-nav>

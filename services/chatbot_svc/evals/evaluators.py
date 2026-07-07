@@ -1,15 +1,17 @@
 """Five evaluation layers as pure check functions + pydantic-evals wrappers.
 
-Pure functions take (ChatRunOutput, case-metadata dict) -> bool so they are
-unit-testable without pydantic-evals plumbing. The Evaluator dataclasses are
-thin adapters: ctx.output is the ChatRunOutput, ctx.metadata the dict.
+Pure functions take (ChatRunOutput, case-metadata dict) -> (bool, reason) so
+they are unit-testable without pydantic-evals plumbing, and every verdict
+explains itself. The Evaluator dataclasses are thin adapters: ctx.output is
+the ChatRunOutput, ctx.metadata the dict; they wrap the pair in
+EvaluationReason so the reason shows up in Logfire and the report.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
 from services.chatbot_svc.evals.runner import ChatRunOutput
 
@@ -38,45 +40,65 @@ def extract_prices(text: str) -> list[float]:
         prices.append(float(raw))
     return prices
 
+
 # is each expected fact a substring of the reply?
-def check_output_correctness(out: ChatRunOutput, meta: dict) -> bool:
+def check_output_correctness(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
+    facts = meta.get("expected_facts", [])
+    if not facts:
+        return True, "no expected facts to check"
     reply = out.reply.lower()
-    return all(f.lower() in reply for f in meta.get("expected_facts", []))
+    missing = [f for f in facts if f.lower() not in reply]
+    if missing:
+        return False, f"reply is missing expected facts: {missing}"
+    return True, f"all expected facts found in reply: {facts}"
 
 
-def check_structured_output(out: ChatRunOutput, meta: dict) -> bool:
-    return out.retries == 0 and out.error is None
+def check_structured_output(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
+    if out.retries == 0 and out.error is None:
+        return True, "no validation retries, no crash"
+    return False, f"retries={out.retries}, error={out.error}"
 
 
-def check_tool_selection(out: ChatRunOutput, meta: dict) -> bool:
+def check_tool_selection(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
     called = set(out.tool_names())
-    expected = set(meta.get("expected_tools", []))
-    forbidden = set(meta.get("forbidden_tools", []))
-    return expected.issubset(called) and not (forbidden & called)
+    missing = set(meta.get("expected_tools", [])) - called
+    hit_forbidden = set(meta.get("forbidden_tools", [])) & called
+    if missing:
+        return False, f"expected tools never called: {sorted(missing)}"
+    if hit_forbidden:
+        return False, f"forbidden tools were called: {sorted(hit_forbidden)}"
+    return True, f"all expected tools called, no forbidden ones (called: {out.tool_names()})"
 
 
-def check_price_hallucination(out: ChatRunOutput, meta: dict) -> bool:
+def check_price_hallucination(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
     """True = clean (no hallucinated price). Tolerates rounding to 2dp."""
     allowed = meta.get("allowed_prices", [])
-    return all(
-        any(abs(p - a) < 0.01 for a in allowed) for p in extract_prices(out.reply)
-    )
+    mentioned = extract_prices(out.reply)
+    if not mentioned:
+        return True, "reply mentions no prices"
+    bad = [p for p in mentioned if not any(abs(p - a) < 0.01 for a in allowed)]
+    if bad:
+        return False, f"reply mentions prices that are not in the store: {bad}"
+    return True, f"all mentioned prices exist in the store: {mentioned}"
 
 
-def check_business_logic(out: ChatRunOutput, meta: dict) -> bool:
+def check_business_logic(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
     called = set(out.tool_names())
-    for rule in meta.get("rules", []):
+    rules = meta.get("rules", [])
+    for rule in rules:
         if rule not in _KNOWN_RULES:
             raise ValueError(f"unknown business-logic rule: {rule!r}")
         if rule == "toggle_needs_preview" and "preview_dynamic_pricing_toggle" not in called:
-            return False
+            return False, "toggle_needs_preview: preview_dynamic_pricing_toggle was never called"
         if rule == "price_change_needs_preview" and "preview_price_change" not in called:
-            return False
+            return False, "price_change_needs_preview: preview_price_change was never called"
         if rule == "no_claim_applied" and _CLAIMS_APPLIED_RE.search(out.reply):
-            return False
+            return False, "no_claim_applied: reply claims a change was already applied"
         if rule == "must_ask_when_ambiguous" and "ask_user" not in called:
-            return False
-    return True
+            return False, "must_ask_when_ambiguous: ask_user was never called"
+    if not rules:
+        return True, "no business rules on this case"
+    return True, f"all business rules satisfied: {rules}"
 
 
 @dataclass
@@ -84,8 +106,9 @@ class OutputCorrectness(Evaluator):
     def get_default_evaluation_name(self) -> str:
         return "output_correctness"
 
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return check_output_correctness(ctx.output, ctx.metadata or {})
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        ok, why = check_output_correctness(ctx.output, ctx.metadata or {})
+        return EvaluationReason(value=ok, reason=why)
 
 
 @dataclass
@@ -93,8 +116,9 @@ class StructuredOutput(Evaluator):
     def get_default_evaluation_name(self) -> str:
         return "structured_output"
 
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return check_structured_output(ctx.output, ctx.metadata or {})
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        ok, why = check_structured_output(ctx.output, ctx.metadata or {})
+        return EvaluationReason(value=ok, reason=why)
 
 
 @dataclass
@@ -102,8 +126,9 @@ class ToolSelection(Evaluator):
     def get_default_evaluation_name(self) -> str:
         return "tool_selection"
 
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return check_tool_selection(ctx.output, ctx.metadata or {})
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        ok, why = check_tool_selection(ctx.output, ctx.metadata or {})
+        return EvaluationReason(value=ok, reason=why)
 
 
 @dataclass
@@ -111,8 +136,9 @@ class PriceHallucination(Evaluator):
     def get_default_evaluation_name(self) -> str:
         return "price_hallucination"
 
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return check_price_hallucination(ctx.output, ctx.metadata or {})
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        ok, why = check_price_hallucination(ctx.output, ctx.metadata or {})
+        return EvaluationReason(value=ok, reason=why)
 
 
 @dataclass
@@ -120,5 +146,6 @@ class BusinessLogic(Evaluator):
     def get_default_evaluation_name(self) -> str:
         return "business_logic"
 
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return check_business_logic(ctx.output, ctx.metadata or {})
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        ok, why = check_business_logic(ctx.output, ctx.metadata or {})
+        return EvaluationReason(value=ok, reason=why)
