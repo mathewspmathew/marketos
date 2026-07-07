@@ -102,6 +102,21 @@ class PreviewSummary(BaseModel):
     expires_at: str
 
 
+class PanelSummary(BaseModel):
+    """What the agent sees after opening the dynamic-pricing panel for one product.
+
+    The full card payload (form defaults, counts, product info) lives in the
+    ChatPreview row and reaches the browser via the SSE preview event; the
+    agent only needs enough to phrase a 1-2 sentence reply."""
+    preview_id: str
+    kind: Literal["dynamic_pricing_toggle"] = "dynamic_pricing_toggle"
+    card_state: Literal["FRESH", "ACTIVE", "PAUSED"]
+    product_id: str
+    product_title: str
+    human_summary: str
+    expires_at: str
+
+
 class ApplyResult(BaseModel):
     preview_id: str
     succeeded: list[str]
