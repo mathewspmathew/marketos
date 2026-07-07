@@ -30,16 +30,20 @@ def preview_price_change(shop_domain: str, session_id: str,
             "preview. Resolve the product with resolve_product first."
         )
     variant_ids = [r.variant_id for r in rows]
+    old_prices = [r.current_price for r in rows]
     new_prices = [_compute_new_price(r.current_price, change) for r in rows]
     sample = rows[:10]
     summary_dict = {
         "count": len(rows),
         "sampleRows": [r.model_dump() for r in sample],
+        "minOld": min(old_prices) if old_prices else None,
+        "maxOld": max(old_prices) if old_prices else None,
+        "avgOld": (sum(old_prices) / len(old_prices)) if old_prices else None,
         "minNew": min(new_prices) if new_prices else None,
         "maxNew": max(new_prices) if new_prices else None,
         "avgNew": (sum(new_prices) / len(new_prices)) if new_prices else None,
         "revenueDeltaEst": (
-            sum(np - r.current_price for np, r in zip(new_prices, rows)) if rows else 0
+            sum(np - op for np, op in zip(new_prices, old_prices)) if old_prices else 0
         ),
     }
     preview_id = uuid.uuid4().hex
@@ -60,8 +64,7 @@ def preview_price_change(shop_domain: str, session_id: str,
     # rows is guaranteed non-empty here: the empty-match guard above raises otherwise.
     human = (
         f"I'll change prices on {len(rows)} variant(s) "
-        f"(min ${summary_dict['minNew']}, max ${summary_dict['maxNew']}, "
-        f"avg ${summary_dict['avgNew']:.2f}). Apply?"
+        f"(from avg {summary_dict['avgOld']:.2f} to avg {summary_dict['avgNew']:.2f}). Apply?"
     )
     return PreviewSummary(
         preview_id=preview_id, kind="price_change", count=len(rows),
