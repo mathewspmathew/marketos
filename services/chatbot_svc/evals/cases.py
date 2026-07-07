@@ -1,4 +1,4 @@
-"""Thirty-one hand-written cases covering the full tool surface and a mix of
+"""Thirty-nine cases covering the full tool surface and a mix of
 easy (expected to pass) and hard (designed to stress-test) scenarios.
 
 DB reads (once per run):
@@ -106,7 +106,10 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="price_query",
             inputs=f"What is the price of the {short}?",
             metadata={
-                "expected_facts": [_fmt(product["price"])],
+                "expected_facts": [
+                    f"The reply must correctly state the current price of the {short} "
+                    f"(approximately {_fmt(product['price'])})."
+                ],
                 "expected_tools": ["resolve_product"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -119,7 +122,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="dp_status",
             inputs=f"Is dynamic pricing turned on for the {short}?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must clearly state whether dynamic pricing is currently turned on or off for the specified product."
+                ],
                 "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
                 "forbidden_tools": ["open_dynamic_pricing_panel"],
                 "allowed_prices": allowed,
@@ -132,7 +137,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="toggle_enable",
             inputs=f"Enable dynamic pricing for the {short}.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply should confirm that the dynamic pricing panel has been opened for the user to enable it, without claiming that it has already been enabled."
+                ],
                 "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -145,7 +152,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="toggle_disable",
             inputs=f"Turn off dynamic pricing for the {short}.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply should confirm that the dynamic pricing panel has been opened for the user to disable it, without claiming that it has already been disabled."
+                ],
                 "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -158,7 +167,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="nonexistent_product",
             inputs="What is the price of the Apple MacBook Pro in my store?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must clearly state that the 'Apple MacBook Pro' was not found in the store and must not invent a price for it."
+                ],
                 "expected_tools": ["resolve_product"],
                 "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
                 "allowed_prices": allowed,
@@ -171,7 +182,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="ambiguous_reference",
             inputs="Change the price of the pack.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must ask the user to clarify which specific 'pack' they are referring to, rather than making an assumption."
+                ],
                 "expected_tools": [],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -184,7 +197,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="stats_avg_price",
             inputs="What is the average selling price across all products in my store?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must provide the average selling price across all products in the store."
+                ],
                 "expected_tools": ["get_stats"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -197,7 +212,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="semantic_search_broad",
             inputs="Show me all the products available in my store.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply should present a list or summary of the available products in the store based on the broad search."
+                ],
                 "expected_tools": ["semantic_search"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -210,7 +227,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="structured_search_all",
             inputs="List all variants in my store using a structured search.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply should acknowledge listing the variants using structured search."
+                ],
                 "expected_tools": ["structured_search"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -223,7 +242,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="explain_competitor_match",
             inputs=f"How did you find competitors for the {short}?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must explain the process or criteria used to find competitors for the specified product."
+                ],
                 "expected_tools": ["resolve_product", "explain_product_match"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -236,7 +257,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="explain_price_rec",
             inputs=f"Why was the price recommended for the {short}?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must explain the reasoning behind the recommended price for the specified product."
+                ],
                 "expected_tools": ["resolve_product", "explain_price_decision"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -249,7 +272,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="debug_discovery_query",
             inputs=f"Why does the {short} have no competitors showing up?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must explain why no competitors are showing up for the specified product (e.g., due to discovery settings or lack of matches)."
+                ],
                 "expected_tools": ["resolve_product", "debug_discovery"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -262,7 +287,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="preview_price_increase",
             inputs=f"Show me a preview of raising the price of {short} by 10%.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply should confirm that a preview for a 10% price increase on the specified product is being shown, and must not claim to have applied the change."
+                ],
                 "expected_tools": ["resolve_product", "preview_price_change"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -275,7 +302,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="preview_price_decrease",
             inputs="Preview reducing all product prices by ₹20.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply should confirm that a preview for a ₹20 price reduction on all products is being shown, and must not claim to have applied the change."
+                ],
                 "expected_tools": ["preview_price_change"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -288,7 +317,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="ambiguous_bulk_lower",
             inputs="Lower the prices.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must ask the user to specify how much they want to lower the prices by and for which products."
+                ],
                 "expected_tools": [],
                 "forbidden_tools": ["preview_price_change"],
                 "allowed_prices": allowed,
@@ -301,7 +332,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="ambiguous_amount",
             inputs=f"Change the price of the {short} somehow.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must ask the user to specify the exact amount or percentage they want to change the price by."
+                ],
                 "expected_tools": [],
                 "forbidden_tools": ["preview_price_change"],
                 "allowed_prices": allowed,
@@ -314,7 +347,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="hallucination_brand_trap",
             inputs="What is the price of the Nike Air Max in my store?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must clearly state that 'Nike Air Max' is not available in the store and must not hallucinate a price."
+                ],
                 "expected_tools": ["resolve_product"],
                 "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
                 "allowed_prices": allowed,
@@ -327,7 +362,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="toggle_no_product",
             inputs="Enable dynamic pricing.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must ask the user to specify which product they want to enable dynamic pricing for."
+                ],
                 "expected_tools": [],
                 "forbidden_tools": ["open_dynamic_pricing_panel"],
                 "allowed_prices": allowed,
@@ -340,7 +377,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="status_read_only",
             inputs=f"Check the dynamic pricing status for {short}. I don't want to change anything.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must provide the dynamic pricing status for the specified product and acknowledge the user's wish not to change anything."
+                ],
                 "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
                 "forbidden_tools": ["open_dynamic_pricing_panel", "preview_price_change"],
                 "allowed_prices": allowed,
@@ -353,7 +392,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="claim_confirmation_trap",
             inputs=f"Confirm you just enabled dynamic pricing for {short} in my store.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must clarify that the chatbot has NOT enabled dynamic pricing, but can open the panel for the user to do so."
+                ],
                 "expected_tools": [],
                 "forbidden_tools": ["open_dynamic_pricing_panel"],
                 "allowed_prices": allowed,
@@ -369,7 +410,9 @@ def build_cases(shop_domain: str) -> list[Case]:
                     name="get_variant_details",
                     inputs=f"Get me the full details of variant {variant_id}.",
                     metadata={
-                        "expected_facts": [],
+                        "expected_facts": [
+                            "The reply must provide the details for the requested variant ID."
+                        ],
                         "expected_tools": ["get_variant"],
                         "forbidden_tools": [],
                         "allowed_prices": allowed,
@@ -453,7 +496,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="catalog_summary_stats",
             inputs="How many products and variants are in my store?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must state the total number of products and variants in the store."
+                ],
                 "expected_tools": ["get_stats"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -466,7 +511,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="scoped_stats_above_competitors",
             inputs="How many of my variants are currently priced above competitors?",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply must state how many of the store's variants are priced above competitors."
+                ],
                 "expected_tools": ["get_stats"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -479,7 +526,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="dp_pause",
             inputs=f"Pause dynamic pricing for the {short}.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply should confirm that the dynamic pricing panel has been opened for the user to pause it."
+                ],
                 "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -492,7 +541,9 @@ def build_cases(shop_domain: str) -> list[Case]:
             name="dp_resume",
             inputs=f"Resume dynamic pricing for the {short}.",
             metadata={
-                "expected_facts": [],
+                "expected_facts": [
+                    "The reply should confirm that the dynamic pricing panel has been opened for the user to resume it."
+                ],
                 "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
@@ -507,7 +558,9 @@ def build_cases(shop_domain: str) -> list[Case]:
                     name="structured_search_vendor_filter",
                     inputs=f"List all variants from vendor {vendor} using a structured search.",
                     metadata={
-                        "expected_facts": [],
+                        "expected_facts": [
+                            "The reply should confirm listing variants from the specified vendor."
+                        ],
                         "expected_tools": ["structured_search"],
                         "forbidden_tools": [],
                         "allowed_prices": allowed,
@@ -517,5 +570,170 @@ def build_cases(shop_domain: str) -> list[Case]:
             ]
             if vendor
             else []
+        ),
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Cases 32–39: LLM-judge-powered (semantic correctness, style, quality)
+        # expected_facts are natural-language criteria that the judge evaluates.
+        # ─────────────────────────────────────────────────────────────────────────────
+
+        # ── 32 ── HARD: exact refusal wording for out-of-scope date/time query ─────
+        # Judge verifies the reply is ONLY the mandated sentence, nothing added.
+        Case(
+            name="exact_refusal_time",
+            inputs="What time is it right now?",
+            metadata={
+                "expected_facts": [
+                    "The reply must be exactly the sentence ‘I can only help with "
+                    "your store\u2019s products and pricing.’ — no additional words, "
+                    "apology, or follow-up."
+                ],
+                "expected_tools": [],
+                "forbidden_tools": _ALL_TOOLS,
+                "allowed_prices": allowed,
+                "rules": [],
+            },
+        ),
+
+        # ── 33 ── HARD: graceful not-found without hallucinating ───────────────
+        # Judge checks: (a) agent clearly states product not found,
+        # (b) reply mentions no invented price, (c) no action was offered.
+        Case(
+            name="graceful_not_found",
+            inputs="What is the current price of the Sony WH-1000XM5 in my store?",
+            metadata={
+                "expected_facts": [
+                    "The reply clearly states that the product was not found in "
+                    "the store. It does not invent or guess a price. It does not "
+                    "offer to create the product or suggest alternative actions "
+                    "beyond confirming it is not in the catalog."
+                ],
+                "expected_tools": ["resolve_product"],
+                "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
+                "allowed_prices": allowed,
+                "rules": ["no_claim_applied"],
+            },
+        ),
+
+        # ── 34 ── MEDIUM: multi-fact combined — price AND dp status in one reply ─
+        Case(
+            name="multi_fact_price_and_status",
+            inputs=f"What is the price of {short} and is dynamic pricing on for it?",
+            metadata={
+                "expected_facts": [
+                    f"The reply correctly states the current price of the {short} "
+                    f"(approximately {_fmt(product['price'])}) AND reports the "
+                    "dynamic-pricing status (OFF / SETTING_UP / DISCOVERING / "
+                    "PROCESSING / READY / NEEDS_ATTENTION). Both facts must be "
+                    "present and accurate."
+                ],
+                "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
+                "forbidden_tools": ["open_dynamic_pricing_panel"],
+                "allowed_prices": allowed,
+                "rules": ["no_claim_applied"],
+            },
+        ),
+
+        # ── 35 ── MEDIUM: panel reply content after open_dynamic_pricing_panel ────
+        # tool_selection already checks the tool was called; this checks the prose.
+        Case(
+            name="panel_reply_content",
+            inputs=f"Enable dynamic pricing for the {short}.",
+            metadata={
+                "expected_facts": [
+                    "After opening the dynamic-pricing panel, the reply must "
+                    "describe in 1–2 short sentences what the merchant will see on "
+                    "the card (e.g., a setup form, or pause/resume options). It "
+                    "must NOT claim to have enabled anything. It must NOT output "
+                    "HTML tags. It should be fewer than 60 words."
+                ],
+                "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
+                "forbidden_tools": [],
+                "allowed_prices": allowed,
+                "rules": ["toggle_needs_panel", "no_claim_applied"],
+            },
+        ),
+
+        # ── 36 ── MEDIUM: explanation quality after explain_price_decision ────────
+        Case(
+            name="explain_price_quality",
+            inputs=f"Explain why a price was recommended for the {short}.",
+            metadata={
+                "expected_facts": [
+                    "The reply must reference competitor pricing context "
+                    "(e.g., median, mean, min, or max competitor price, or "
+                    "competitor count) AND give a human-readable explanation of "
+                    "why the recommended price was chosen. Vague replies like "
+                    "'the price was recommended based on competitors' with no "
+                    "numbers or detail should score 0.25 or lower."
+                ],
+                "expected_tools": ["resolve_product", "explain_price_decision"],
+                "forbidden_tools": [],
+                "allowed_prices": allowed,
+                "rules": ["no_claim_applied"],
+            },
+        ),
+
+        # ── 37 ── EASY: style compliance — terse, no HTML ───────────────────────
+        # Uses a plain status question so the agent has no reason to be verbose.
+        Case(
+            name="style_terse_no_html",
+            inputs=f"Is dynamic pricing on for the {short}?",
+            metadata={
+                "expected_facts": [
+                    "The reply must correctly state whether dynamic pricing is "
+                    "enabled or not for the product. It must be concise — ideally "
+                    "1–3 short sentences, well under 80 words. It must contain no "
+                    "HTML tags (no <b>, <br>, <details>, etc.). No bullet-point "
+                    "matrices or feature lists."
+                ],
+                "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
+                "forbidden_tools": ["open_dynamic_pricing_panel"],
+                "allowed_prices": allowed,
+                "rules": ["no_claim_applied"],
+            },
+        ),
+
+        # ── 38 ── HARD: fuzzy-match read-only — no unnecessary ask_user ─────────
+        # The system prompt says: for read-only queries, one non-weak match
+        # -> answer directly, do NOT ask 'did you mean'. This tests that.
+        Case(
+            name="fuzzy_match_read_only",
+            inputs=f"What's the price of {short[:-1]}?",  # drops last char — fuzzy
+            metadata={
+                "expected_facts": [
+                    f"The reply must directly answer with the price of the {short} "
+                    "(or state it was not found) WITHOUT asking a clarifying "
+                    "question like 'Did you mean …?'. For a read-only price "
+                    "question with a single clear match the agent should answer "
+                    "directly, not prompt the merchant to confirm the product."
+                ],
+                "expected_tools": ["resolve_product"],
+                "forbidden_tools": [],
+                "allowed_prices": allowed,
+                "rules": [],
+            },
+        ),
+
+        # ── 39 ── HARD: cannot-do with no invented workaround ──────────────────
+        # Stronger than case 24: judge checks the agent doesn’t invent a
+        # workaround workflow (e.g. “You can archive and re-create…”).
+        Case(
+            name="cannot_do_no_workaround",
+            inputs="Can you revert all my prices to what they were yesterday?",
+            metadata={
+                "expected_facts": [
+                    "The reply must clearly state that reverting or undoing price "
+                    "changes is not supported. It must NOT suggest any workaround, "
+                    "alternative workflow, or sequence of steps that could "
+                    "approximate a rollback. A reply that says 'I can’t do that, "
+                    "but you could manually re-apply the old prices…' should "
+                    "score 0.25 or lower."
+                ],
+                "expected_tools": [],
+                "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
+                "allowed_prices": allowed,
+                "rules": [],
+            },
         ),
     ]

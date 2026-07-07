@@ -44,7 +44,7 @@ from services.common.models import ChatSession
 from services.chatbot_svc.agent import agent as _agent, _PROMPT as _SYSTEM_PROMPT
 
 _REQUIRED_ENV = ["DATABASE_URL", "GROQ_API_KEY", "CHATBOT_RR_URL", "INTERNAL_API_TOKEN",
-                 "EVAL_SHOP_DOMAIN", "CHATBOT_MODEL"]
+                 "EVAL_SHOP_DOMAIN", "CHATBOT_MODEL", "CHATBOT_EVAL_MODEL"]
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 REPORTS_DIR = Path(__file__).parent / "reports"
 MARKDOWN_PATH = _REPO_ROOT / "docs" / "evals" / "CHATBOT_EVAL_REPORT.md"
@@ -131,6 +131,7 @@ def main() -> int:
     for rc in lib_report.cases:
         out: ChatRunOutput = rc.output
         meta = rc.metadata or {}
+        all_results = {**(rc.assertions or {}), **(rc.scores or {})}
         case_dicts.append({
             "case_id": rc.name,
             "prompt": rc.inputs,
@@ -140,8 +141,8 @@ def main() -> int:
             "expected_tools": meta.get("expected_tools", []),
             "actual_tools": out.tool_names() if out else [],
             "tool_errors": out.tool_errors if out else [],
-            "assertions": {n: a.value for n, a in (rc.assertions or {}).items()},
-            "assertion_reasons": {n: a.reason for n, a in (rc.assertions or {}).items()},
+            "assertions": {n: a.value for n, a in all_results.items()},
+            "assertion_reasons": {n: a.reason for n, a in all_results.items()},
             "duration_s": rc.task_duration,
             "input_tokens": out.input_tokens if out else 0,
             "output_tokens": out.output_tokens if out else 0,

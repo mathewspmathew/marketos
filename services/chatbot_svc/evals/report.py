@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 
 # Boolean layers — pass/fail per case
 BOOL_LAYERS = [
-    "output_correctness",
     "structured_output",
     "tool_selection",
     "price_hallucination",
@@ -15,6 +14,7 @@ BOOL_LAYERS = [
 
 # Numeric layers — averaged across cases (0–1 score)
 SCORE_LAYERS = [
+    "output_correctness",  # LLM-as-judge
     "tool_recall",
     "tool_precision",
 ]
@@ -69,9 +69,12 @@ def build_report(
             "max": round(max(scores), 3) if scores else 0.0,
         }
 
-    # --- overall pass: all BOOL layers green (score layers are informational) ---
+    # --- overall pass: all BOOL layers green + output_correctness score >= 0.75 ---
     overall_pass = sum(
-        1 for c in cases if all(c["assertions"].get(l, False) for l in BOOL_LAYERS)
+        1
+        for c in cases
+        if all(c["assertions"].get(l, False) for l in BOOL_LAYERS)
+        and float(c["assertions"].get("output_correctness", 0.0)) >= 0.75
     )
 
     # --- latency ---

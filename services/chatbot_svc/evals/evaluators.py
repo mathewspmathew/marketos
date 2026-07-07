@@ -1,10 +1,13 @@
-"""Five evaluation layers as pure check functions + pydantic-evals wrappers.
+"""Evaluation layers as pure check functions + pydantic-evals wrappers.
 
-Pure functions take (ChatRunOutput, case-metadata dict) -> (bool, reason) so
-they are unit-testable without pydantic-evals plumbing, and every verdict
-explains itself. The Evaluator dataclasses are thin adapters: ctx.output is
-the ChatRunOutput, ctx.metadata the dict; they wrap the pair in
+Pure functions take (ChatRunOutput, case-metadata dict) -> (bool|float, reason)
+so they are unit-testable without pydantic-evals plumbing, and every verdict
+explains itself.  The Evaluator dataclasses are thin adapters: ctx.output is
+the ChatRunOutput, ctx.metadata the dict; they wrap the result in
 EvaluationReason so the reason shows up in Logfire and the report.
+
+OutputCorrectness uses an LLM judge (see judge.py) and its Evaluator wrapper
+is therefore async — pydantic-evals supports both sync and async evaluate().
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from dataclasses import dataclass
 
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
+from services.chatbot_svc.evals.judge import llm_judge
 from services.chatbot_svc.evals.runner import ChatRunOutput
 
 # Currency-marked (₹ / $ / Rs) or two-decimal amounts. Deliberately ignores
@@ -41,16 +45,19 @@ def extract_prices(text: str) -> list[float]:
     return prices
 
 
-# is each expected fact a substring of the reply?
-def check_output_correctness(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
-    facts = meta.get("expected_facts", [])
-    if not facts:
-        return True, "no expected facts to check"
-    reply = out.reply.lower()
-    missing = [f for f in facts if f.lower() not in reply]
-    if missing:
-        return False, f"reply is missing expected facts: {missing}"
-    return True, f"all expected facts found in reply: {facts}"
+async def check_output_correctness(
+    out: ChatRunOutput,
+    meta: dict,
+    user_prompt: str = "",
+) -> tuple[float, str]:
+    """LLM-as-judge: score 0.0–1.0 for how well the reply satisfies the case criteria.
+
+    Passes the user prompt, agent reply, and expected_facts to the judge model
+    (CHATBOT_EVAL_MODEL).  Returns (score, one-sentence reasoning).
+    """
+    criteria = meta.get("expected_facts", [])
+    reply = out.reply or out.ask or ""
+    return await llm_judge(user_prompt, reply, criteria)
 
 
 def check_structured_output(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
@@ -139,12 +146,18 @@ def check_tool_success(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:
 
 @dataclass
 class OutputCorrectness(Evaluator):
+    """LLM-as-judge evaluator. Returns a float score 0.0–1.0."""
+
     def get_default_evaluation_name(self) -> str:
         return "output_correctness"
 
-    def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
-        ok, why = check_output_correctness(ctx.output, ctx.metadata or {})
-        return EvaluationReason(value=ok, reason=why)
+    async def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        score, why = await check_output_correctness(
+            ctx.output,
+            ctx.metadata or {},
+            user_prompt=ctx.inputs or "",
+        )
+        return EvaluationReason(value=score, reason=why)
 
 
 @dataclass
