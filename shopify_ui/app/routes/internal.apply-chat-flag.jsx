@@ -1,9 +1,20 @@
 /**
  * internal.apply-chat-flag.jsx — chatbot-driven dynamicPricingEnabled toggle.
  *
- * Called by chatbot_svc with {preview_id}. Re-validates the ChatPreview row
- * (kind must be "dynamic_pricing_toggle"), updates the flag on the frozen
- * product set, and records the result. No Shopify call.
+ * Called by chatbot_svc with {preview_id, applied_by, action, + enable-only
+ * fields}. The request is action-based ("enable" | "pause" | "resume" |
+ * "delete"), not target-based: the caller says what button was clicked, and
+ * this route decides whether that action is legal right now.
+ *
+ * After the token/preview guards it does a click-time state re-check — the
+ * card is a frozen snapshot, so the product may have been toggled from the
+ * product pane (or another tab) since the card rendered. It derives the
+ * product's current card state (FRESH | ACTIVE | PAUSED) from
+ * dynamicPricingEnabled + the competitor-candidate count and 409s with
+ * "state_changed" if it no longer matches preview.change.cardState, then
+ * enforces a per-state action whitelist before mutating. Field edits in the
+ * body are honored only on "enable"; resume/pause/delete treat the card as
+ * read-only. No Shopify call.
  *
  * Required env:
  *   INTERNAL_API_TOKEN — shared secret matched against X-Internal-Token
@@ -52,142 +63,123 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, reason: "wrong_kind" }, { status: 400 });
   }
 
-  // Apply-time re-check: the flag may have changed since the preview card was
-  // shown (the merchant could have toggled it elsewhere). If the DB already
-  // matches the requested target, report it rather than redo the work.
-  {
-    const targetEnabled = !!preview.change?.enabled;
-    const current = await prisma.shopifyProduct.findMany({
-      where: { id: { in: preview.variantIds }, shopDomain: preview.shopDomain },
-      select: { id: true, dynamicPricingEnabled: true },
-    });
-    const allAlready = current.length > 0 && current.every(
-      (p) => p.dynamicPricingEnabled === targetEnabled,
-    );
-    // Only no-op the ENABLE path. A disable preview must still run its
-    // teardown (pause/delete) even when the flag is already off, because
-    // "already disabled" says nothing about whether competitor data still
-    // needs deleting.
-    if (targetEnabled && allAlready) {
-      await prisma.chatPreview.update({
-        where: { id: preview_id },
-        data: { appliedAt: new Date(), appliedBy: applied_by ?? null,
-                result: { noop: true, enabled: targetEnabled } },
-      });
-      return Response.json({ ok: true, preview_id, noop: true, enabled: targetEnabled });
-    }
+  const ALLOWED = {
+    FRESH: ["enable"],
+    ACTIVE: ["pause", "delete"],
+    PAUSED: ["resume", "delete"],
+  };
+  const action = body.action;
+  if (!action || !["enable", "pause", "resume", "delete"].includes(action)) {
+    return Response.json({ ok: false, reason: "missing_action" }, { status: 400 });
   }
 
-  const enabled = !!preview.change?.enabled;
-  const productIds = preview.variantIds; // overloaded — holds product ids for flag previews
+  const productId = preview.variantIds[0]; // panel previews freeze exactly one product id
   const shopDomain = preview.shopDomain;
+
+  const product = await prisma.shopifyProduct.findFirst({
+    where: { id: productId, shopDomain },
+  });
+  if (!product) {
+    return Response.json({ ok: false, reason: "product_not_found" }, { status: 404 });
+  }
+
+  // Click-time state re-check: the card is a frozen snapshot; the product may
+  // have been toggled from the product pane (or another tab) since it rendered.
+  const candidateCount = await prisma.competitorCandidate.count({
+    where: { shopDomain, shopifyProductId: productId },
+  });
+  const currentState = product.dynamicPricingEnabled
+    ? "ACTIVE"
+    : candidateCount > 0 ? "PAUSED" : "FRESH";
+  const cardState = preview.change?.cardState;
+  if (currentState !== cardState) {
+    return Response.json(
+      { ok: false, reason: "state_changed", cardState, currentState },
+      { status: 409 },
+    );
+  }
+  if (!ALLOWED[currentState].includes(action)) {
+    return Response.json({ ok: false, reason: "action_not_allowed" }, { status: 400 });
+  }
+
   const clamp = (v, lo, hi, dflt) => {
     const n = parseInt(v, 10);
     if (Number.isNaN(n)) return dflt;
     return Math.max(lo, Math.min(n, hi));
   };
 
-  // "pause" unless the merchant explicitly chose delete (disable branch only).
-  const mode = body.mode === "delete" ? "delete" : "pause";
-
-  // Persist the merchant's chosen scrape breadth onto the product on enable, so
-  // the first competitor fetch uses these numbers whether it runs now (the
-  // "Rescrape now" DiscoveryJob below) or shortly (the beat's first-time
-  // discovery, which reads discoveryNumResults; the scrape resolves the cap
-  // via Product.listingExpansionCap — see scraper_svc/candidate.py).
-  const numResults = clamp(body.numResults, 1, 50, 10);
-  const listingExpansionCap = clamp(body.listingExpansionCap, 1, 50, 5);
-
-  const upd = await prisma.shopifyProduct.updateMany({
-    where: { id: { in: productIds }, shopDomain },
-    data: enabled
-      ? { dynamicPricingEnabled: true, discoveryNumResults: numResults, listingExpansionCap }
-      : { dynamicPricingEnabled: false },
-  });
-
-  if (enabled) {
-    // Set frequency FIRST so re-arm below uses the correct interval.
-    if (body.frequencyInterval != null) {
-      const VALID_UNITS = ["never", "minute", "hour", "day"];
-      const unit = VALID_UNITS.includes(body.frequencyUnit) ? body.frequencyUnit : "day";
+  if (action === "enable") {
+    const numResults = clamp(body.numResults, 1, 50, 10);
+    const listingExpansionCap = clamp(body.listingExpansionCap, 1, 50, 5);
+    await prisma.shopifyProduct.updateMany({
+      where: { id: productId, shopDomain },
+      data: { dynamicPricingEnabled: true, discoveryNumResults: numResults, listingExpansionCap },
+    });
+    if (typeof body.query === "string" && body.query.trim()) {
       await prisma.shopifyProduct.updateMany({
-        where: { id: { in: productIds }, shopDomain },
-        data: {
-          frequencyInterval: parseInt(body.frequencyInterval, 10),
-          frequencyUnit: unit,
-        },
+        where: { id: productId, shopDomain },
+        data: { searchQueryOverride: body.query.trim() },
       });
     }
-    // Re-arm known ProductUrls so the rescrape loop resumes (mirrors the
-    // discover page's toggle-on behavior).
-    const nextRunAt = body.frequencyInterval != null
-      ? computeNextRunAt(parseInt(body.frequencyInterval), body.frequencyUnit ?? "day")
-      : new Date();
     await prisma.productUrl.updateMany({
       where: {
-        shopifyProductId: { in: productIds },
+        shopifyProductId: productId,
+        status: "ACTIVE",
+        OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
+      },
+      data: { nextRunAt: new Date() },
+    });
+    if (body.rescrape) {
+      const query =
+        body.query?.trim() || product.searchQueryOverride || product.searchQuery || product.title || "";
+      if (query) {
+        await prisma.discoveryJob.create({
+          data: { shopDomain, shopifyProductId: productId, status: "QUEUED",
+                  query, numResults, listingExpansionCap },
+        });
+      }
+    }
+  } else if (action === "resume") {
+    // Read-only card: field edits in the body are deliberately ignored.
+    await prisma.shopifyProduct.updateMany({
+      where: { id: productId, shopDomain },
+      data: { dynamicPricingEnabled: true },
+    });
+    const nextRunAt = computeNextRunAt(product.frequencyInterval, product.frequencyUnit);
+    await prisma.productUrl.updateMany({
+      where: {
+        shopifyProductId: productId,
         status: "ACTIVE",
         OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
       },
       data: { nextRunAt: nextRunAt ?? new Date() },
     });
-    // Persist the merchant's chosen/edited search query so discovery — this run
-    // and future rescrapes — uses it. The DiscoveryJob query computation below
-    // reads searchQueryOverride first.
-    if (typeof body.query === "string" && body.query.trim()) {
-      await prisma.shopifyProduct.updateMany({
-        where: { id: { in: productIds }, shopDomain },
-        data: { searchQueryOverride: body.query.trim() },
-      });
-    }
-    // "Rescrape now" gates the immediate, credit-spending discovery. When off,
-    // the beat's first-time discovery picks the product up shortly using the
-    // numbers persisted onto it above.
-    if (body.rescrape) {
-      for (const pid of productIds) {
-        const product = await prisma.shopifyProduct.findFirst({
-          where: { id: pid, shopDomain },
-        });
-        const query =
-          product?.searchQueryOverride || product?.searchQuery || product?.title || "";
-        if (query) {
-          await prisma.discoveryJob.create({
-            data: { shopDomain, shopifyProductId: pid, status: "QUEUED",
-                    query, numResults, listingExpansionCap },
-          });
-        }
-      }
-    }
   } else {
-    for (const pid of productIds) {
-      // Cooperative-cancel the in-flight run: stop the job, drop only its
-      // not-yet-scraped (PENDING) candidates. The scrape_candidate guard
-      // halts any task already dispatched (flag is now false).
-      await prisma.discoveryJob.updateMany({
-        where: { shopDomain, shopifyProductId: pid, status: { in: ["QUEUED", "RUNNING"] } },
-        data: { status: "FAILED", error: "cancelled: dynamic pricing turned off" },
-      });
-      await prisma.competitorCandidate.deleteMany({
-        where: { shopDomain, shopifyProductId: pid, status: "PENDING" },
-      });
-      if (mode === "delete") {
-        await deleteCompetitorData(prisma, shopDomain, pid);
-      }
+    // pause and delete both turn the flag off and stop in-flight work.
+    await prisma.shopifyProduct.updateMany({
+      where: { id: productId, shopDomain },
+      data: { dynamicPricingEnabled: false },
+    });
+    await prisma.discoveryJob.updateMany({
+      where: { shopDomain, shopifyProductId: productId, status: { in: ["QUEUED", "RUNNING"] } },
+      data: { status: "FAILED", error: "cancelled: dynamic pricing turned off" },
+    });
+    await prisma.competitorCandidate.deleteMany({
+      where: { shopDomain, shopifyProductId: productId, status: "PENDING" },
+    });
+    if (action === "delete") {
+      await deleteCompetitorData(prisma, shopDomain, productId);
     }
   }
-
-  const succeeded = productIds.slice(0, upd.count);
-  const failed = [];
 
   await prisma.chatPreview.update({
     where: { id: preview_id },
     data: {
       appliedAt: new Date(),
       appliedBy: applied_by ?? null,
-      result: { succeeded, failed, updatedCount: upd.count, enabled,
-                mode: enabled ? undefined : mode },
+      result: { action, productId },
     },
   });
 
-  return Response.json({ ok: true, preview_id, succeeded, failed, updatedCount: upd.count });
+  return Response.json({ ok: true, preview_id, action, productId });
 };
