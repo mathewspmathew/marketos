@@ -48,7 +48,7 @@ pricing.apply_price.
 from __future__ import annotations
 
 import json
-import logging
+import structlog
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -57,7 +57,7 @@ from sqlalchemy import text
 from services.common.celery_app import app
 from services.common.db import get_db
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Note: MIN_CHANGE_PCT and ABS_MIN_FRESHNESS are now loaded from ShopSettings
 # minChangePctThreshold and minFreshnessHours respectively

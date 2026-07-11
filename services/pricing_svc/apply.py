@@ -14,7 +14,7 @@ Per-product advisory lock prevents concurrent apply for the same product.
 from __future__ import annotations
 
 import json
-import logging
+import structlog
 
 from sqlalchemy import text
 
@@ -26,7 +26,7 @@ from services.common.shopify_auth import (
     call_shopify_admin,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _stamp_error(session, decision_ids: list[str], err: str, shop_domain: str = "", pending: list[tuple] = None) -> None:
@@ -48,7 +48,7 @@ def _stamp_error(session, decision_ids: list[str], err: str, shop_domain: str = 
                     ).scalar()
                     product_id = product_result if product_result else ""
                 except Exception as e:
-                    logger.exception(f"Failed to update PriceDecision: {e}")
+                    logger.exception("price_decision_update_failed", error=str(e))
 
 
 def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) -> dict:
@@ -152,7 +152,7 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
                 ).scalar()
                 product_id = product_result if product_result else ""
             except Exception as e:
-                logger.exception(f"Failed to update PriceDecision: {e}")
+                logger.exception("price_decision_update_failed", error=str(e))
 
     return {"ok": True, "applied": len(pending), "decisionIds": decision_ids}
 
@@ -164,8 +164,10 @@ def apply_price(self, shop_domain: str, shopify_product_id: str, trigger_decisio
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             logger.error(
-                "pricing.apply_price product=%s decision=%s permanently failed: %s",
-                shopify_product_id, trigger_decision_id, exc,
+                "apply_price_permanently_failed",
+                shopify_product_id=shopify_product_id,
+                trigger_decision_id=trigger_decision_id,
+                error=str(exc),
             )
             return {"ok": False, "reason": "exception", "error": str(exc)}
         raise self.retry(exc=exc)
