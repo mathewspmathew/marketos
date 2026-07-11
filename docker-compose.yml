@@ -1,5 +1,11 @@
 name: marketos
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   redis:
     image: redis:7-alpine
@@ -20,6 +26,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: scraper_worker
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -45,6 +52,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: extraction_worker
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -69,6 +77,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: scheduler_worker
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -84,6 +93,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: discovery_worker
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -100,6 +110,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: semantic_worker
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -122,6 +133,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: shopify_semantic_worker
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -140,6 +152,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: embedding_worker
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -160,6 +173,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: matcher_worker
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -179,6 +193,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: pricing_worker
+    logging: *default-logging
     env_file: .env
     environment:
       - DATABASE_URL=${DATABASE_URL}
@@ -202,6 +217,7 @@ services:
       context: .
       dockerfile: Dockerfile.python
     container_name: celery_beat
+    logging: *default-logging
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
