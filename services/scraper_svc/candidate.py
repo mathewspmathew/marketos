@@ -21,7 +21,7 @@ That code path stays callable until the scheduler rewrite drops it.
 from __future__ import annotations
 
 import json
-import logging
+import structlog
 import os
 import uuid
 from datetime import datetime, timezone
@@ -53,7 +53,7 @@ from services.scraper_svc.url_classifier import is_listing_url, registrable_doma
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _firecrawl_client = V1FirecrawlApp(api_key=os.getenv("FIRECRAWL_API_KEY", "not-set"))
 
@@ -112,7 +112,7 @@ def scrape_candidate(self, candidate_id: str):
     with get_db() as db:
         cand = db.get(models.CompetitorCandidate, candidate_id)
         if not cand:
-            logger.warning("scrape_candidate: candidate %s missing", candidate_id)
+            logger.warning("candidate_missing", candidate_id=candidate_id)
             return {"status": "missing"}
         # Cooperative cancellation: if the merchant turned dynamic pricing OFF
         # for this product, abort before spending a Firecrawl call. The chatbot
@@ -123,8 +123,9 @@ def scrape_candidate(self, candidate_id: str):
         product = db.get(models.ShopifyProduct, cand.shopifyProductId)
         if product is not None and not product.dynamicPricingEnabled:
             logger.info(
-                "scrape_candidate: product %s dynamic pricing off, skipping %s",
-                cand.shopifyProductId, candidate_id,
+                "scrape_candidate_skipped_dynamic_pricing_off",
+                shopify_product_id=cand.shopifyProductId,
+                candidate_id=candidate_id,
             )
             return {"status": "skipped_disabled"}
         url    = cand.url
@@ -135,7 +136,7 @@ def scrape_candidate(self, candidate_id: str):
         markdown = (result.get("markdown") if isinstance(result, dict)
                     else getattr(result, "markdown", None)) or ""
     except Exception as exc:
-        logger.warning("Firecrawl failed for %s: %s", url, exc)
+        logger.warning("firecrawl_failed", url=url, error=str(exc))
         if self.request.retries >= self.max_retries:
             with get_db() as db:
                 _set_candidate_status(
@@ -354,8 +355,13 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
                     if r["currentPrice"] and r["currentPrice"] > 0
                 ]
                 logger.info(
-                    "Recording %d observations for %s from %s: title=%s domain=%s prod_id=%s",
-                    len(obs_rows), shop_domain, url, product.title, domain, prod_id
+                    "recording_observations",
+                    observation_count=len(obs_rows),
+                    shop_domain=shop_domain,
+                    url=url,
+                    product_title=product.title,
+                    domain=domain,
+                    product_id=prod_id,
                 )
                 _record_observations(db, shop_domain, obs_rows)
 
@@ -365,7 +371,7 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
                 scrapedProductId=prod_id, scrapedAt=now,
             )
     except Exception as exc:
-        logger.exception("extract_candidate DB error for %s", url)
+        logger.exception("extract_candidate_db_error", url=url)
         if self.request.retries >= self.max_retries:
             with get_db() as db:
                 _set_candidate_status(db, candidate_id, status="DEAD", rejectReason=f"db_error: {type(exc).__name__}")
@@ -383,8 +389,8 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
             sp = db.get(models.ShopifyProduct, shopify_product_id)
             if sp and not sp.dynamicPricingEnabled:
                 logger.info(
-                    "extract_candidate: product %s paused after extraction, skipping semantics/embedding fan-out",
-                    shopify_product_id
+                    "extract_candidate_paused_skipping_fan_out",
+                    shopify_product_id=shopify_product_id,
                 )
                 return {"status": "queued_extract", "skipped_fan_out": True}
 
@@ -573,7 +579,11 @@ def rescrape_url(self, product_url_id: str):
         # Cooperative pause guard: if the product's dynamic pricing is off,
         # skip this rescrape even if it was queued before the pause.
         if shopify_product and not shopify_product.dynamicPricingEnabled:
-            logger.info("rescrape_url: product %s dynamic pricing off, skipping %s", shopify_product_id, product_url_id)
+            logger.info(
+                "rescrape_url_skipped_dynamic_pricing_off",
+                shopify_product_id=shopify_product_id,
+                product_url_id=product_url_id,
+            )
             return {"status": "skipped_product_paused"}
         settings = db.get(models.ShopSettings, shop_domain)
         freq_unit = (
@@ -610,7 +620,7 @@ def rescrape_url(self, product_url_id: str):
         markdown = (result.get("markdown") if isinstance(result, dict)
                     else getattr(result, "markdown", None)) or ""
     except Exception as exc:
-        logger.warning("rescrape Firecrawl failed for %s: %s", url, exc)
+        logger.warning("rescrape_firecrawl_failed", url=url, error=str(exc))
         if self.request.retries >= self.max_retries:
             return _reschedule_after_failure("fail")
         raise self.retry(exc=exc)
