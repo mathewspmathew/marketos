@@ -12,7 +12,7 @@ Handles:
 """
 from __future__ import annotations
 
-import logging
+import structlog
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,7 +28,7 @@ from services.common.db import get_db
 project_root = Path(__file__).parent.parent.parent
 load_dotenv(project_root / ".env")
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ShopifyAuthError(Exception):
@@ -178,9 +178,9 @@ def get_access_token(shop_domain: str, session) -> tuple[str, datetime]:
             params,
         )
         session.commit()
-        logger.info(f"Persisted refreshed access token for {shop_domain}")
+        logger.info("token_persisted", shop_domain=shop_domain)
     except Exception as e:
-        logger.error(f"Failed to persist refreshed token: {e}")
+        logger.error("token_persist_failed", error=str(e))
         # Don't fail - token exchange succeeded, just couldn't persist new token
 
     return access_token, expires_at
