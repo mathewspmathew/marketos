@@ -28,6 +28,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "joblib>=1.4",
     "logfire>=4.33.0",
+    "structlog>=24.1",
     "flower>=2.0.1",
     "pyright>=1.1.410",
 ]
