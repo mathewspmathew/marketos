@@ -19,7 +19,7 @@ Verification still happens later in scraper_svc after extract.
 """
 from __future__ import annotations
 
-import logging
+import structlog
 from datetime import datetime, timezone
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -31,7 +31,7 @@ from services.common.db import get_db
 from services.common import models
 from services.discovery_svc import serper
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 MAX_PER_DOMAIN = 2
 CONTENT_URL_BLOCKLIST = (
@@ -153,7 +153,7 @@ def search_products(
     with get_db() as db:
         product = db.get(models.ShopifyProduct, shopify_product_id)
         if not product:
-            logger.warning("search_products: product %s not found", shopify_product_id)
+            logger.warning("product_not_found", shopify_product_id=shopify_product_id)
             return {"status": "missing_product"}
 
         settings  = db.get(models.ShopSettings, product.shopDomain)
@@ -191,8 +191,11 @@ def search_products(
                 limit=num_results,
             )
             logger.info(
-                "search_products[%s] q=%r: %d raw -> %d kept",
-                product.id, query, len(raw_hits), len(filtered),
+                "search_products_query_results",
+                product_id=product.id,
+                query=query,
+                raw_hits=len(raw_hits),
+                kept_hits=len(filtered),
             )
 
             now = datetime.now(timezone.utc)
