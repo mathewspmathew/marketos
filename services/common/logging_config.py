@@ -12,6 +12,7 @@ import os
 import sys
 
 import structlog
+from celery.signals import setup_logging as celery_setup_logging
 from celery.signals import task_postrun, task_prerun
 
 _SHARED_PROCESSORS = [
@@ -49,6 +50,11 @@ def setup_logging() -> None:
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]
     root_logger.setLevel(log_level)
+
+
+@celery_setup_logging.connect
+def _on_celery_setup_logging(**_kwargs) -> None:
+    setup_logging()
 
 
 @task_prerun.connect
