@@ -12,7 +12,7 @@ def test_setup_logging_emits_json_with_expected_keys(capsys):
     logger.info("something_happened", foo="bar")
 
     captured = capsys.readouterr()
-    line = captured.err.strip().splitlines()[-1]
+    line = captured.out.strip().splitlines()[-1]
     payload = json.loads(line)
 
     assert payload["event"] == "something_happened"
