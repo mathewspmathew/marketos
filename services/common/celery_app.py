@@ -3,7 +3,10 @@ from celery import Celery
 from celery.schedules import crontab
 from dotenv import load_dotenv
 
+from services.common.logging_config import setup_logging
+
 load_dotenv()
+setup_logging()
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
