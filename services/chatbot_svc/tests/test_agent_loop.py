@@ -11,9 +11,18 @@ def _tool_names() -> set[str]:
 def test_all_expected_tools_registered():
     expected = {
         "structured_search", "semantic_search", "get_variant", "get_stats",
-        "preview_price_change", "open_dynamic_pricing_panel", "ask_user",
+        "preview_price_change", "ask_user",
     }
     assert expected <= _tool_names()
+
+
+def test_open_dynamic_pricing_panel_retired():
+    """Commented out (not deleted) in agent.py — direct tools (apply/pause/
+    delete) now cover every dynamic-pricing chat action, including resume
+    (apply_dynamic_pricing_config with every field omitted) and ambiguous
+    requests (get_dynamic_pricing_status). See prompts/system.md's Hard rule
+    decision procedure."""
+    assert "open_dynamic_pricing_panel" not in _tool_names()
 
 
 def test_toggle_preview_tool_removed():
@@ -58,3 +67,11 @@ def test_resolve_product_tool_registered():
 def test_get_dynamic_pricing_status_tool_registered():
     from services.chatbot_svc.agent import agent
     assert "get_dynamic_pricing_status" in list(agent._function_toolset.tools)
+
+
+def test_get_delete_preview_tool_registered():
+    assert "get_delete_preview" in _tool_names()
+
+
+def test_delete_dynamic_pricing_tool_registered():
+    assert "delete_dynamic_pricing" in _tool_names()

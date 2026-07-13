@@ -30,15 +30,18 @@ def apply_dynamic_pricing_config(
             )
 
         if not product.dynamicPricingEnabled:
+            # "Ever configured before" signal: frequencyUnit is nullable and only
+            # ever set by a real configure action, unlike pricingTier (which has a
+            # NOT NULL "COMPETITIVE" DB default and so can never distinguish "never
+            # chosen" from "chose COMPETITIVE"). A paused product that was
+            # configured before has frequencyUnit set — use that as the proxy to
+            # also rescue tier, so a plain resume (all-null config) on a
+            # previously-configured product doesn't get wrongly asked to repeat a
+            # tier it already has.
+            previously_configured = product.frequencyUnit is not None or product.frequencyInterval is not None
             missing = []
-            if config.pricing_tier is None:
+            if config.pricing_tier is None and not previously_configured:
                 missing.append("pricing tier (BUDGET, COMPETITIVE, or PREMIUM)")
-            # Frequency is only "missing" if the product has no existing schedule
-            # either — a paused product (dynamicPricingEnabled=False) keeps its
-            # frequency from before, so a partial reconfigure shouldn't be gated
-            # just because this message didn't repeat it (apply_pane_config's
-            # own "config value or existing value" fallback already handles this
-            # correctly once past this guard).
             unit_missing = config.frequency_unit is None and product.frequencyUnit is None
             interval_missing = config.frequency_interval is None and product.frequencyInterval is None
             if unit_missing or interval_missing:

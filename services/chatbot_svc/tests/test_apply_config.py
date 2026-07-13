@@ -346,3 +346,45 @@ def test_get_delete_preview_returns_real_counts(seed_shop):
         with get_db() as s:
             s.query(CompetitorCandidate).filter(CompetitorCandidate.id == cand_id).delete(synchronize_session=False)
             s.query(ScrapedProduct).filter(ScrapedProduct.id == scraped_id).delete(synchronize_session=False)
+
+
+def test_plain_resume_all_null_config_succeeds_on_previously_configured_product(seed_shop):
+    """A paused product (dynamicPricingEnabled=False) that was configured
+    before (frequencyUnit already set) must accept a plain resume — an
+    all-null config — without being asked to repeat a tier it already has.
+    pricingTier can never be None (NOT NULL DB default), so the guard must
+    use frequencyUnit-already-set as the "previously configured" signal
+    to rescue tier too, not just frequency."""
+    pid = _product_id(seed_shop)
+    apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6),
+    )
+    pause_dynamic_pricing(seed_shop, pid)
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is False  # confirms paused, not fresh
+
+    result = apply_dynamic_pricing_config(seed_shop, pid, _blank_config())
+    assert result.dynamic_pricing_enabled_after is True
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is True
+        assert product.pricingTier == "PREMIUM"
+        assert product.frequencyUnit == "hour"
+        assert product.frequencyInterval == 6
+
+
+def test_fresh_product_still_requires_tier_even_with_frequency_given(seed_shop):
+    """A truly never-configured product (frequencyUnit is None) must still
+    require an explicit tier, even if this message gives a frequency —
+    the previously_configured rescue must not fire for a genuine first-time
+    enable."""
+    pid = _product_id(seed_shop)
+    with pytest.raises(RuntimeError, match="pricing tier"):
+        apply_dynamic_pricing_config(
+            seed_shop, pid,
+            _blank_config(frequency_unit="hour", frequency_interval=6),
+        )
