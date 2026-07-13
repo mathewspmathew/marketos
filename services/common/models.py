@@ -51,6 +51,12 @@ _match_confidence_tier = PgEnum(
     create_type=False,
 )
 
+_pricing_tier = PgEnum(
+    "BUDGET", "COMPETITIVE", "PREMIUM",
+    name="PricingTier",
+    create_type=False,
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Multi-tenancy root — one row per installed Shopify store
@@ -109,6 +115,9 @@ class ShopifyProduct(Base):
     lastDiscoveryAt           = Column("lastDiscoveryAt",           DateTime(timezone=True), nullable=True)
     discoveryNumResults       = Column("discoveryNumResults",       Integer, nullable=False, default=10)
     listingExpansionCap       = Column("listingExpansionCap",       Integer, nullable=True)
+    pricingTier         = Column("pricingTier",         _pricing_tier, nullable=False, server_default="'COMPETITIVE'")
+    minPriceOverride    = Column("minPriceOverride",    Numeric(10, 2), nullable=True)
+    maxPriceOverride    = Column("maxPriceOverride",    Numeric(10, 2), nullable=True)
     createdAt   = Column("createdAt",   DateTime(timezone=True), server_default=func.now())
     updatedAt   = Column("updatedAt",   DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
