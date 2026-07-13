@@ -182,7 +182,7 @@ def open_dynamic_pricing_panel(
     back to this panel for that case. If it's a clear pause/stop request with
     nothing else specified, use pause_dynamic_pricing instead. The backend
     reads the product's real state and the card shows the right options
-    (pause / resume / delete); the merchant's click performs the change —
+    (first-time setup form, or pause / resume / delete); the merchant's click performs the change —
     you apply NOTHING yourself. Raises an error if product_id is not in this
     shop."""
     return t_panel.open_dynamic_pricing_panel(

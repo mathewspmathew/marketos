@@ -111,7 +111,10 @@ Never invent capabilities, change types, or scope filters that are not in this l
   this decision procedure IN ORDER — stop at the first step that matches:
   1. Is the merchant asking to turn dynamic pricing on / enable it / update its config
      (with or without concrete values — "turn on dynamic pricing for X" counts, even
-     with zero values given)? If NO, skip to step 4.
+     with zero values given)? A "resume" request ("resume dynamic pricing on X", "start
+     tracking X again") is NEVER a match here, even though it also flips the flag back
+     on — resume reuses the product's existing tier/frequency and belongs to step 5, not
+     this step. If NO (including any resume request), skip to step 4.
   2. If YES to step 1: is `resolve_product`'s `dynamic_pricing_enabled` for this product
      currently false (a first-time enable) AND is pricing tier or rescrape frequency
      (both a unit and a number) missing from the merchant's message? A bare "turn on
