@@ -14,6 +14,7 @@ import json
 import os
 from datetime import datetime, timezone, timedelta
 
+import structlog
 from celery.exceptions import Retry as CeleryRetry
 from dotenv import load_dotenv
 from groq import RateLimitError as GroqRateLimitError
@@ -26,6 +27,8 @@ from services.common.models import ScrapedProduct, ScrapedVariant, ShopifyProduc
 from services.scraper_svc.helpers import log_error
 
 load_dotenv()
+
+logger = structlog.get_logger(__name__)
 
 # Two separate Groq clients so competitor (scraper) and Shopify-side semantic
 # generation each get their own TPM budget on the Groq free tier. Both fall
@@ -161,8 +164,8 @@ def _groq_search_query(
             tok for tok in q.replace(",", " ").replace('"', " ").split() if tok
         )
         return q or None
-    except Exception as exc:
-        print(f"[!] search query generation failed: {exc}")
+    except Exception:
+        logger.exception("search_query_generation_failed", title=title)
         return None
 
 
@@ -304,7 +307,7 @@ def _mark_semantic_failed(product_id, version_read, reason: str) -> None:
 @app.task(name='scraper.generate_variant_semantics', bind=True, max_retries=3, default_retry_delay=30, rate_limit='3/m')
 def generate_variant_semantics(self, product_id: str, config_id: str, shop_domain: str, product_url: str):
     """One Groq call generates semanticText for all ScrapedVariants, then queues embeddings."""
-    print(f"[>] Generating semantic text for product {product_id}")
+    logger.info("generating_variant_semantics", product_id=product_id)
 
     try:
         with get_db() as session:
@@ -312,10 +315,10 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
             variants = session.query(ScrapedVariant).filter(ScrapedVariant.productId == product_id).all()
 
             if not product:
-                print(f"[!] Product {product_id} not found — skipping")
+                logger.warning("product_not_found", product_id=product_id)
                 return
             if not variants:
-                print(f"[!] No variants for product {product_id} — skipping")
+                logger.warning("no_variants_for_product", product_id=product_id)
                 return
 
             variants_payload = [
@@ -373,7 +376,12 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
                         )
                     )
 
-            print(f"    [✓] semanticText written for {updated}/{len(variants)} variant(s) of '{product.title[:40]}'")
+            logger.info(
+                "semantic_text_written",
+                updated_count=updated,
+                total_count=len(variants),
+                product_title=product.title,
+            )
 
             if updated == 0:
                 if self.request.retries >= self.max_retries:
@@ -390,9 +398,9 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
 
     try:
         app.send_task('embedder.generate_embeddings', args=[product_id], queue='embedding_queue')
-        print(f"    [>] Queued embedding: {product_id}")
+        logger.info("embedding_queued", product_id=product_id)
     except Exception as e:
-        print(f"    [!] Failed to queue embedding for {product_id}: {e} — will retry on next semantic run", flush=True)
+        logger.exception("embedding_queue_failed_retrying", product_id=product_id)
         raise self.retry(exc=e)
 
 
@@ -499,7 +507,7 @@ def generate_shopify_variant_semantics(self, product_id: str):
         rc = _finalize_semantic_done(session, product_id, version_read)
         if rc == 0:
             session.rollback()
-            print(f"[semantics] discarded stale result for {product_id} (version moved)")
+            logger.info("semantic_result_discarded_stale", product_id=product_id)
             return
         # CAS succeeded — safe to write ShopifyProduct fields in the same txn
         if product_fields.get("categoryTop") or product_fields.get("productGender"):
