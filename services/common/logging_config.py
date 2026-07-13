@@ -52,11 +52,13 @@ def setup_logging() -> None:
     root_logger.setLevel(log_level)
 
 
+# Translation: "When Celery is about to set up its own logging, run our setup_logging() instead." That guarantees our JSON setup wins and survives, no matter when in the boot sequence Celery would've tried to do its own thing.
 @celery_setup_logging.connect
 def _on_celery_setup_logging(**_kwargs) -> None:
     setup_logging()
 
 
+# From that point on, any log call anywhere in the code — even deep inside a helper function that has no idea what task it's running under — automatically has task_id merged into its dict. (Remember merge_contextvars, the very first processor from Step 1? This is what it reads from.)
 @task_prerun.connect
 def _bind_task_context(task_id=None, task=None, **_kwargs) -> None:
     structlog.contextvars.bind_contextvars(

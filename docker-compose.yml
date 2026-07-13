@@ -313,5 +313,13 @@ services:
       - ~/.config/gcloud:/root/.config/gcloud:ro
     command: ["uv", "run", "uvicorn", "services.chatbot_svc.app:app", "--host", "0.0.0.0", "--port", "8088"]
 
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    ports:
+      - "8888:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
 volumes:
   redis_data:
