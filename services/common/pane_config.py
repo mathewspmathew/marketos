@@ -125,3 +125,127 @@ def pause_dynamic_pricing(session: Session, product: "models.ShopifyProduct") ->
     old = product.dynamicPricingEnabled
     product.dynamicPricingEnabled = False
     return {"dynamicPricingEnabled": {"old": old, "new": False}}
+
+
+def delete_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -> dict:
+    """Guarded, full teardown of a product's competitor/pricing data, then
+    reset its pane config to defaults. Merges the two existing JS
+    implementations (deleteDynamicWithData in app.products.jsx +
+    competitorTeardown.server.js::deleteCompetitorData — see
+    docs/superpowers/specs/2026-07-13-pause-delete-dynamic-pricing-design.md
+    for the discrepancy this reconciles): the shared-ScrapedProduct guard
+    from the latter, the fuller cleanup from the former, minus the latter's
+    ProductSuggestion call (that model does not exist in the schema).
+    """
+    product_id  = product.id
+    shop_domain = product.shopDomain
+
+    cand_scraped_ids = {
+        row[0] for row in session.query(models.CompetitorCandidate.scrapedProductId)
+        .filter(
+            models.CompetitorCandidate.shopDomain == shop_domain,
+            models.CompetitorCandidate.shopifyProductId == product_id,
+            models.CompetitorCandidate.scrapedProductId.isnot(None),
+        )
+        .all()
+    }
+    url_scraped_ids = {
+        row[0] for row in session.query(models.ProductUrl.prodId)
+        .filter(
+            models.ProductUrl.shopDomain == shop_domain,
+            models.ProductUrl.shopifyProductId == product_id,
+        )
+        .all()
+    }
+    my_scraped_ids = cand_scraped_ids | url_scraped_ids
+
+    deletable_scraped_ids = []
+    for sid in my_scraped_ids:
+        other_cand = (
+            session.query(models.CompetitorCandidate.id)
+            .filter(
+                models.CompetitorCandidate.scrapedProductId == sid,
+                models.CompetitorCandidate.shopifyProductId != product_id,
+            )
+            .first()
+        )
+        other_url = (
+            session.query(models.ProductUrl.id)
+            .filter(
+                models.ProductUrl.prodId == sid,
+                models.ProductUrl.shopifyProductId != product_id,
+            )
+            .first()
+        )
+        if not other_cand and not other_url:
+            deletable_scraped_ids.append(sid)
+
+    variant_ids = [
+        row[0] for row in session.query(models.ShopifyVariant.id)
+        .filter(models.ShopifyVariant.productId == product_id)
+        .all()
+    ]
+
+    if variant_ids:
+        session.query(models.VariantCompetitorStats).filter(
+            models.VariantCompetitorStats.shopifyVariantId.in_(variant_ids)
+        ).delete(synchronize_session=False)
+        session.query(models.PriceDecision).filter(
+            models.PriceDecision.shopifyVariantId.in_(variant_ids)
+        ).delete(synchronize_session=False)
+        session.query(models.ProductMatch).filter(
+            models.ProductMatch.shopifyVariantId.in_(variant_ids)
+        ).delete(synchronize_session=False)
+
+    session.query(models.ProductLevelMatch).filter(
+        models.ProductLevelMatch.shopifyProductId == product_id
+    ).delete(synchronize_session=False)
+
+    config_ids = [
+        row[0] for row in session.query(models.ProductUrl.configId)
+        .filter(
+            models.ProductUrl.shopDomain == shop_domain,
+            models.ProductUrl.shopifyProductId == product_id,
+            models.ProductUrl.configId.isnot(None),
+        )
+        .all()
+    ]
+
+    session.query(models.CompetitorCandidate).filter(
+        models.CompetitorCandidate.shopDomain == shop_domain,
+        models.CompetitorCandidate.shopifyProductId == product_id,
+    ).delete(synchronize_session=False)
+    session.query(models.DiscoveryJob).filter(
+        models.DiscoveryJob.shopDomain == shop_domain,
+        models.DiscoveryJob.shopifyProductId == product_id,
+    ).delete(synchronize_session=False)
+    session.query(models.ProductUrl).filter(
+        models.ProductUrl.shopDomain == shop_domain,
+        models.ProductUrl.shopifyProductId == product_id,
+    ).delete(synchronize_session=False)
+
+    if config_ids:
+        session.query(models.ScrapingConfig).filter(
+            models.ScrapingConfig.id.in_(config_ids)
+        ).delete(synchronize_session=False)
+
+    if deletable_scraped_ids:
+        # DB-level ON DELETE CASCADE (Prisma-defined FKs) handles
+        # ScrapedVariant, CompetitorPriceObservation, ProductEmbedding, and
+        # any remaining competitor-side ProductMatch rows for these ids.
+        session.query(models.ScrapedProduct).filter(
+            models.ScrapedProduct.id.in_(deletable_scraped_ids)
+        ).delete(synchronize_session=False)
+
+    product.dynamicPricingEnabled = False
+    product.frequencyInterval     = None
+    product.frequencyUnit         = None
+    product.pricingTier           = "COMPETITIVE"
+    product.minPriceOverride      = None
+    product.maxPriceOverride      = None
+    product.searchQueryOverride   = None
+    product.listingExpansionCap   = None
+    product.discoveryNumResults   = None
+    product.avgBasePrice          = None
+
+    return {"deletedScrapedProducts": len(deletable_scraped_ids)}

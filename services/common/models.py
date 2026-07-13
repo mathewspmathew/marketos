@@ -378,8 +378,10 @@ class ProductLevelMatch(Base):
     shopDomain       = Column("shopDomain",       String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
     shopifyProductId = Column("shopifyProductId", String, ForeignKey("ShopifyProduct.id", ondelete="CASCADE"), nullable=False)
     scrapedProductId = Column("scrapedProductId", String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
+    confidence       = Column("confidence",       Numeric(4, 3), nullable=False, default=0)
     confidenceTier   = Column("confidenceTier",   _match_confidence_tier, nullable=False)
     rejectedByMerchant = Column("rejectedByMerchant", Boolean, nullable=False, default=False)
+    updatedAt        = Column("updatedAt",        DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
