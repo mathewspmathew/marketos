@@ -53,6 +53,7 @@ from services.chatbot_svc.schemas import (
     MatchExplanation,
     PaneConfigInput,
     ApplyPaneConfigResult,
+    PauseDynamicPricingResult,
 )
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
@@ -172,15 +173,16 @@ def open_dynamic_pricing_panel(
     product_id: str,
 ) -> PanelSummary:
     """Open the dynamic-pricing panel card for ONE product. Call this for ANY
-    enable/disable/pause/resume dynamic-pricing request, right after
+    enable/disable/resume dynamic-pricing request, right after
     resolve_product. The backend reads the product's real state and the card
     shows the right options (first-time setup form / pause / resume / delete);
     the merchant's click performs the change — you apply NOTHING yourself.
     If the user's message already contains concrete configuration values
     (tier, price bounds, frequency, etc.), use apply_dynamic_pricing_config
-    instead — this tool is for when they haven't specified values yet, or
-    want to pause/resume/delete. Raises an error if product_id is not in
-    this shop."""
+    instead. If it's a clear pause/stop request with nothing else specified,
+    use pause_dynamic_pricing instead. This tool is for first-time setup with
+    no values yet, resume, delete, or anything ambiguous. Raises an error if
+    product_id is not in this shop."""
     return t_panel.open_dynamic_pricing_panel(
         ctx.deps.shop_domain, ctx.deps.session_id, product_id
     )
@@ -205,6 +207,21 @@ def apply_dynamic_pricing_config(
     return t_apply_config.apply_dynamic_pricing_config(
         ctx.deps.shop_domain, product_id, config
     )
+
+
+@agent.tool
+def pause_dynamic_pricing(
+    ctx: RunContext[AgentDeps],
+    product_id: str,
+) -> PauseDynamicPricingResult:
+    """Immediately pause dynamic pricing for ONE product — flips the flag
+    off, keeps all pane configuration (tier, price bounds, frequency, etc.)
+    intact so it can be resumed later. Applies directly, no card or
+    confirmation click. Call this ONLY for a clear pause/stop request with
+    nothing else specified. For delete, resume, or anything ambiguous, use
+    open_dynamic_pricing_panel instead. Call resolve_product first to get
+    product_id. Raises an error if product_id is not in this shop."""
+    return t_apply_config.pause_dynamic_pricing(ctx.deps.shop_domain, product_id)
 
 
 @agent.tool
