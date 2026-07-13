@@ -12,7 +12,7 @@ because SQLAlchemy has no native pgvector type; all vector reads/writes use raw 
 """
 import uuid
 
-from sqlalchemy import BIGINT, Boolean, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func, UniqueConstraint
+from sqlalchemy import BIGINT, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, func, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM as PgEnum, JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -161,6 +161,34 @@ class ShopifyEmbedding(Base):
     matchedAt  = Column("matchedAt",  DateTime(timezone=True), nullable=True)
 
     variant = relationship("ShopifyVariant", back_populates="embedding")
+
+
+class VariantCompetitorStats(Base):
+    __tablename__ = "VariantCompetitorStats"
+
+    shopifyVariantId = Column("shopifyVariantId", String, ForeignKey("ShopifyVariant.id", ondelete="CASCADE"), primary_key=True)
+    shopDomain       = Column("shopDomain",       String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    competitorCount  = Column("competitorCount",  Integer, nullable=False, default=0)
+    minPrice         = Column("minPrice",         Numeric(10, 2), nullable=True)
+    median           = Column("median",           Numeric(10, 2), nullable=True)
+    maxPrice         = Column("maxPrice",         Numeric(10, 2), nullable=True)
+    lastUpdatedAt    = Column("lastUpdatedAt",    DateTime(timezone=True), server_default=func.now())
+
+
+class PriceDecision(Base):
+    __tablename__ = "PriceDecision"
+
+    id               = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    shopDomain       = Column("shopDomain",       String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
+    shopifyVariantId = Column("shopifyVariantId", String, ForeignKey("ShopifyVariant.id", ondelete="CASCADE"), nullable=False)
+    oldPrice         = Column("oldPrice",         Numeric(10, 2), nullable=False)
+    newPrice         = Column("newPrice",         Numeric(10, 2), nullable=False)
+    reason           = Column("reason",           String, nullable=False)
+    decidedAt        = Column("decidedAt",        DateTime(timezone=True), server_default=func.now())
+    appliedAt        = Column("appliedAt",        DateTime(timezone=True), nullable=True)
+    changePct        = Column("changePct",        Float, nullable=True)
+    tierAtDecision   = Column("tierAtDecision",   _pricing_tier, nullable=True)
+    autoApplied      = Column("autoApplied",      Boolean, nullable=False, default=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
