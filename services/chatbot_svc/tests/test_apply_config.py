@@ -3,6 +3,7 @@ os.environ.setdefault("GROQ_API_KEY", "test")
 
 import uuid
 
+import pydantic
 import pytest
 
 from services.common.db import get_db
@@ -16,11 +17,29 @@ def _product_id(shop):
         return s.query(ShopifyProduct.id).filter(ShopifyProduct.shopDomain == shop).scalar()
 
 
+def _blank_config(**overrides):
+    """PaneConfigInput now requires every field explicitly (null = unmentioned
+    by the user) — this builds an all-null config with the given overrides,
+    matching what the LLM is required to send on every real call."""
+    defaults = dict(
+        search_query_override=None,
+        pricing_tier=None,
+        min_price_override=None,
+        max_price_override=None,
+        frequency_unit=None,
+        frequency_interval=None,
+        discovery_num_results=None,
+        listing_expansion_cap=None,
+    )
+    defaults.update(overrides)
+    return PaneConfigInput(**defaults)
+
+
 def test_apply_writes_fields_and_enables(seed_shop):
     pid = _product_id(seed_shop)
     result = apply_dynamic_pricing_config(
         seed_shop, pid,
-        PaneConfigInput(
+        _blank_config(
             pricing_tier="PREMIUM",
             min_price_override=800,
             max_price_override=1200,
@@ -46,7 +65,7 @@ def test_apply_rejects_product_from_another_shop(seed_shop, seed_other_shop):
     other_pid = _product_id(seed_other_shop)
     with pytest.raises(RuntimeError):
         apply_dynamic_pricing_config(
-            seed_shop, other_pid, PaneConfigInput(pricing_tier="BUDGET"),
+            seed_shop, other_pid, _blank_config(pricing_tier="BUDGET"),
         )
 
     with get_db() as s:
@@ -60,12 +79,32 @@ def test_apply_invalid_bounds_raises_runtime_error_not_pane_config_error(seed_sh
     with pytest.raises(RuntimeError):
         apply_dynamic_pricing_config(
             seed_shop, pid,
-            PaneConfigInput(min_price_override=100, max_price_override=50),
+            _blank_config(min_price_override=100, max_price_override=50),
         )
 
     with get_db() as s:
         product = s.get(ShopifyProduct, pid)
         assert product.dynamicPricingEnabled is False  # no partial write
+
+
+def test_pane_config_input_rejects_unrecognized_field_names():
+    """Regression test: a live run showed the LLM can call this tool with
+    plausible-but-wrong field names (e.g. "tier"/"min_price" instead of
+    "pricing_tier"/"min_price_override"). Before this test was added,
+    PaneConfigInput silently dropped unknown keys and validated as an
+    all-null config — the tool call "succeeded" with nothing actually
+    applied, while the agent still reported false specifics to the
+    merchant. extra="forbid" must turn that into a loud ValidationError."""
+    with pytest.raises(pydantic.ValidationError):
+        PaneConfigInput(tier="PREMIUM", min_price=800)  # wrong names entirely
+
+
+def test_pane_config_input_requires_every_field_present():
+    """Every field must be explicitly present (as a real value or null) —
+    an LLM that omits a field entirely (rather than sending it as null)
+    must get a validation error, not a silent default."""
+    with pytest.raises(pydantic.ValidationError):
+        PaneConfigInput(pricing_tier="PREMIUM")  # missing the other 7 fields
 
 
 def test_apply_omitted_fields_leave_existing_values(seed_shop):
@@ -75,7 +114,7 @@ def test_apply_omitted_fields_leave_existing_values(seed_shop):
         product.searchQueryOverride = "existing override"
         s.flush()
 
-    apply_dynamic_pricing_config(seed_shop, pid, PaneConfigInput(pricing_tier="BUDGET"))
+    apply_dynamic_pricing_config(seed_shop, pid, _blank_config(pricing_tier="BUDGET"))
 
     with get_db() as s:
         product = s.get(ShopifyProduct, pid)

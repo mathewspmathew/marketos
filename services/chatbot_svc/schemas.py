@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScopeFilter(BaseModel):
@@ -30,18 +30,24 @@ class FlagChange(BaseModel):
 
 
 class PaneConfigInput(BaseModel):
-    """Chat-extracted dynamic-pricing pane configuration. Only include fields
-    the user actually specified in their message — omitted fields keep the
-    product's current value (apply_pane_config's existing "None = unchanged"
-    semantics), they are NOT reset to a default."""
-    search_query_override: Optional[str] = None
-    pricing_tier: Optional[Literal["BUDGET", "COMPETITIVE", "PREMIUM"]] = None
-    min_price_override: Optional[float] = None
-    max_price_override: Optional[float] = None
-    frequency_unit: Optional[Literal["never", "minute", "hour", "day"]] = None
-    frequency_interval: Optional[int] = None
-    discovery_num_results: Optional[int] = None
-    listing_expansion_cap: Optional[int] = None
+    """Chat-extracted dynamic-pricing pane configuration. EVERY field below is
+    REQUIRED in the tool call — you must include all of them. Set a field to
+    null for anything the user did NOT specify in their message; null means
+    "keep the product's current value" (apply_pane_config's existing
+    "None = unchanged" semantics), it does NOT reset the field to a default.
+    Only set a field to a real value when the user actually gave one. Do not
+    invent, guess, or infer values, and do not use any field names other than
+    the ones listed here — an unrecognized field name will be rejected."""
+    model_config = ConfigDict(extra="forbid")
+
+    search_query_override: Optional[str] = Field(..., description="null unless the user gave a search query.")
+    pricing_tier: Optional[Literal["BUDGET", "COMPETITIVE", "PREMIUM"]] = Field(..., description="null unless the user named a tier.")
+    min_price_override: Optional[float] = Field(..., description="null unless the user gave a minimum price.")
+    max_price_override: Optional[float] = Field(..., description="null unless the user gave a maximum price.")
+    frequency_unit: Optional[Literal["never", "minute", "hour", "day"]] = Field(..., description="null unless the user gave a rescrape unit.")
+    frequency_interval: Optional[int] = Field(..., description="null unless the user gave a rescrape interval number.")
+    discovery_num_results: Optional[int] = Field(..., description="null unless the user gave a competitor-products-per-run count.")
+    listing_expansion_cap: Optional[int] = Field(..., description="null unless the user gave a products-per-listing-page count.")
 
 
 class ApplyPaneConfigResult(BaseModel):
