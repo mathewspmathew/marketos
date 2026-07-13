@@ -14,6 +14,7 @@ import os
 import uuid
 
 import requests
+import structlog
 from dotenv import load_dotenv
 from google import genai
 from google.cloud import aiplatform_v1
@@ -27,6 +28,8 @@ from services.common.db import get_db
 from services.common.models import ScrapedProduct, ShopifyProduct, ShopifyVariant
 
 load_dotenv()
+
+logger = structlog.get_logger(__name__)
 
 VERTEX_PROJECT  = os.getenv("VERTEX_PROJECT", "marketos-494011")
 VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
@@ -82,8 +85,8 @@ def get_text_embedding(text_input: str) -> list[float] | None:
             ),
         )
         return list(result.embeddings[0].values)
-    except Exception as e:
-        print(f"    [!] Text embedding error: {e}")
+    except Exception:
+        logger.exception("text_embedding_failed")
         return None
 
 
@@ -114,8 +117,8 @@ def get_image_embedding(image_url: str) -> list[float] | None:
         prediction = dict(response.predictions[0])
         embedding = prediction.get("imageEmbedding")
         return list(embedding) if embedding else None
-    except Exception as e:
-        print(f"    [!] Image embedding error ({type(e).__name__}): {e}", flush=True)
+    except Exception:
+        logger.exception("image_embedding_failed", image_url=image_url)
         return None
 
 
@@ -136,10 +139,10 @@ def _generate(product_id: str) -> None:
             .first()
         )
         if not product:
-            print(f"[!] Product not found: {product_id}")
+            logger.warning("product_not_found", product_id=product_id)
             return
 
-        print(f"[>] Embedding: {product.title[:50]} | {len(product.variants)} variant(s)")
+        logger.info("embedding_started", title=product.title[:50], variant_count=len(product.variants))
 
         # Image embedding is shared across all variants (same product image)
         image_vec = get_image_embedding(product.imageUrl or "")
@@ -153,12 +156,12 @@ def _generate(product_id: str) -> None:
         written = 0
         for v in product.variants:
             if not v.semanticText:
-                print(f"    [-] No semanticText for variant {v.id[:8]} — skipping")
+                logger.info("variant_missing_semantic_text", variant_id=v.id)
                 continue
 
             text_vec = get_text_embedding(v.semanticText)
             if not text_vec:
-                print(f"    [!] Text embedding failed for variant {v.id[:8]}")
+                logger.warning("variant_text_embedding_failed", variant_id=v.id)
                 continue
 
             row_id = str(uuid.uuid4())
@@ -195,7 +198,7 @@ def _generate(product_id: str) -> None:
             written += 1
 
         eligible = sum(1 for v in product.variants if v.semanticText)
-        print(f"[✓] Wrote {written}/{eligible} ProductEmbedding row(s) for: {product.title[:50]}")
+        logger.info("product_embedding_written", written=written, eligible=eligible, title=product.title[:50])
         if eligible > 0 and written == 0:
             raise RuntimeError(f"All {eligible} embedding(s) failed for product {product_id} — check Vertex AI credentials")
 
@@ -209,7 +212,7 @@ def generate_embeddings(self, product_id: str):
     try:
         _generate(product_id)
     except Exception as exc:
-        print(f"    [!] Embedding failed for {product_id}: {exc} — retrying")
+        logger.exception("embedding_generation_failed_retrying", product_id=product_id)
         raise self.retry(exc=exc)
 
     # Fresh competitor embeddings → scoped match against the merchant
@@ -235,18 +238,18 @@ def _generate_shopify(variant_id: str) -> None:
             .first()
         )
         if not variant:
-            print(f"[!] ShopifyVariant not found: {variant_id}")
+            logger.warning("shopify_variant_not_found", variant_id=variant_id)
             return
 
         if not variant.semanticText:
-            print(f"[-] No semanticText for ShopifyVariant {variant_id[:8]} — skipping")
+            logger.info("shopify_variant_missing_semantic_text", variant_id=variant_id)
             return
 
-        print(f"[>] Shopify embedding: variant {variant_id[:8]}")
+        logger.info("shopify_embedding_started", variant_id=variant_id)
 
         text_vec = get_text_embedding(variant.semanticText)
         if not text_vec:
-            print(f"    [!] Text embedding failed for ShopifyVariant {variant_id[:8]}")
+            logger.warning("shopify_variant_text_embedding_failed", variant_id=variant_id)
             return
 
         image_vec = get_image_embedding(variant.product.imageUrl or "") if variant.product else None
@@ -287,7 +290,7 @@ def _generate_shopify(variant_id: str) -> None:
                 base_params,
             )
 
-        print(f"[✓] ShopifyEmbedding written for variant {variant_id[:8]}")
+        logger.info("shopify_embedding_written", variant_id=variant_id)
 
 
 @app.task(name='shopify_embedder.generate_shopify_embeddings', bind=True, max_retries=3, default_retry_delay=60, rate_limit='10/m')
@@ -296,9 +299,9 @@ def generate_shopify_embeddings(self, variant_id: str):
         _generate_shopify(variant_id)
     except Exception as exc:
         if self.request.retries >= self.max_retries:
-            print(f"    [!] Shopify embedding permanently failed for {variant_id}: {exc}", flush=True)
+            logger.exception("shopify_embedding_permanently_failed", variant_id=variant_id)
             return
-        print(f"    [!] Shopify embedding failed for {variant_id}: {exc} — retrying")
+        logger.exception("shopify_embedding_failed_retrying", variant_id=variant_id)
         raise self.retry(exc=exc)
 
     # Merchant embedding writes no longer trigger the matcher. Matching is
