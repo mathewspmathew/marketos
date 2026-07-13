@@ -10,8 +10,12 @@ from datetime import datetime, timedelta, timezone
 import redis as redis_lib
 from sqlalchemy import update as sa_update, func
 
+import structlog
+
 from services.common.db import get_db
 from services.common.models import ProductUrl, ScrapingConfig
+
+logger = structlog.get_logger(__name__)
 
 _UNIT_TO_SECONDS = {"min": 60, "hr": 3600, "day": 86400}
 
@@ -39,11 +43,15 @@ def log_error(
     gcs_ref:     str = "",
     detail:      str = "",
 ) -> None:
-    print(
-        f"    [ERR] {error_type} in {task_name} shop={shop_domain} "
-        f"config={config_id} url={product_url[:80]} "
-        f"gcs={gcs_ref or '-'} detail={(detail or '')[:300]}",
-        flush=True,
+    logger.error(
+        "task_error",
+        error_type=error_type,
+        task_name=task_name,
+        shop_domain=shop_domain,
+        config_id=config_id,
+        product_url=product_url,
+        gcs_ref=gcs_ref or None,
+        detail=(detail or "")[:300] or None,
     )
 
 
@@ -64,9 +72,9 @@ def set_next_scrap_at(config_id: str, product_url: str) -> None:
                 .where(ProductUrl.url == product_url)
                 .values(nextRunAt=next_at)
             )
-            print(f"    [>] nextRunAt set to {next_at.isoformat()} for {product_url[:60]}", flush=True)
-    except Exception as e:
-        print(f"    [!] set_next_scrap_at failed for {product_url[:60]}: {e}", flush=True)
+            logger.info("next_run_at_set", product_url=product_url, next_run_at=next_at.isoformat())
+    except Exception:
+        logger.exception("set_next_scrap_at_failed", config_id=config_id, product_url=product_url)
 
 
 def mark_task_done(config_id: str) -> None:
@@ -75,10 +83,10 @@ def mark_task_done(config_id: str) -> None:
         if not _redis.exists(counter_key):
             return  # re-scrape path — no initial-scrape counter to manage
         remaining   = _redis.decr(counter_key)
-        print(f"    [>] Pending counter for {config_id}: {remaining}", flush=True)
+        logger.info("pending_counter_decremented", config_id=config_id, remaining=remaining)
         if remaining <= 0:
             _redis.delete(counter_key)
             update_config_status(config_id, "SCRAPED_FIRST")
-            print(f"    [✓] Config {config_id} → SCRAPED_FIRST", flush=True)
-    except Exception as e:
-        print(f"    [!] Counter update failed for {config_id}: {e}", flush=True)
+            logger.info("config_scraped_first", config_id=config_id)
+    except Exception:
+        logger.exception("mark_task_done_failed", config_id=config_id)
