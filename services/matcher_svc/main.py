@@ -25,9 +25,14 @@ Design:
     private-label merchants (own brand never equals a competitor's brand).
     Brand still feeds compute_confidence (bonus) and the CONFIRMED tier
     requirement in scoring.py, so it survives as a soft signal.
-  - One scraped product can have multiple CompetitorCandidate rows pointing
-    at it (two merchant products independently discovered the same URL). We
-    match against every non-rejected candidate's merchant product.
+  # NOTE: As of the per-product scrape isolation fix (2026-07-13), new scrapes
+  # never let two different shopifyProductIds share one ScrapedProduct row —
+  # services/scraper_svc/candidate.py::_upsert_scraped_product dedups per
+  # (shopifyProductId, url), not globally by url. Older rows written before
+  # that fix may still have multiple CompetitorCandidate rows pointing at one
+  # ScrapedProduct (no backfill was performed), so this loop still needs to
+  # handle that case correctly for legacy data — it just should no longer
+  # happen for anything scraped going forward.
 """
 import uuid
 
