@@ -29,7 +29,15 @@ def apply_dynamic_pricing_config(
             missing = []
             if config.pricing_tier is None:
                 missing.append("pricing tier (BUDGET, COMPETITIVE, or PREMIUM)")
-            if config.frequency_unit is None or config.frequency_interval is None:
+            # Frequency is only "missing" if the product has no existing schedule
+            # either — a paused product (dynamicPricingEnabled=False) keeps its
+            # frequency from before, so a partial reconfigure shouldn't be gated
+            # just because this message didn't repeat it (apply_pane_config's
+            # own "config value or existing value" fallback already handles this
+            # correctly once past this guard).
+            unit_missing = config.frequency_unit is None and product.frequencyUnit is None
+            interval_missing = config.frequency_interval is None and product.frequencyInterval is None
+            if unit_missing or interval_missing:
                 missing.append("rescrape frequency (both a unit and a number, e.g. every 6 hours)")
             if missing:
                 raise RuntimeError(
