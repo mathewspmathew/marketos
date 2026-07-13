@@ -36,6 +36,7 @@ Design:
 """
 import uuid
 
+import structlog
 from sqlalchemy import text
 
 from services.common.celery_app import app
@@ -48,6 +49,8 @@ from services.matcher_svc.scoring import (
     compute_confidence,
     confidence_tier,
 )
+
+logger = structlog.get_logger(__name__)
 
 # Hybrid scoring: α·text_sim + (1-α)·img_sim when both vectors are available.
 _HYBRID_TEXT_WEIGHT = 0.6
@@ -323,7 +326,7 @@ def match_for_scraped_product(self, scraped_product_id: str):
                 {"pid": scraped_product_id},
             ).first()
             if not shop_row:
-                print(f"[matcher] scraped product {scraped_product_id} not found — skipping", flush=True)
+                logger.warning("scraped_product_not_found", scraped_product_id=scraped_product_id)
                 return 0
             shop_domain = shop_row[0]
 
@@ -342,11 +345,7 @@ def match_for_scraped_product(self, scraped_product_id: str):
             merchant_product_ids = [r[0] for r in candidate_rows if r[0]]
 
             if not merchant_product_ids:
-                print(
-                    f"[matcher] scraped product {scraped_product_id[:8]} has no "
-                    "non-rejected merchant candidates — skipping",
-                    flush=True,
-                )
+                logger.info("no_eligible_merchant_candidates", scraped_product_id=scraped_product_id)
                 return 0
 
             for mpid in merchant_product_ids:
@@ -369,22 +368,16 @@ def match_for_scraped_product(self, scraped_product_id: str):
             )
     except Exception as exc:
         if self.request.retries >= self.max_retries:
-            print(
-                f"[matcher] scraped product {scraped_product_id} permanently failed: {exc}",
-                flush=True,
-            )
+            logger.exception("match_permanently_failed", scraped_product_id=scraped_product_id)
             return 0
-        print(
-            f"[matcher] scraped product {scraped_product_id} failed: {exc} — retrying",
-            flush=True,
-        )
+        logger.exception("match_failed_retrying", scraped_product_id=scraped_product_id)
         raise self.retry(exc=exc)
 
-    print(
-        f"[matcher] scraped product {scraped_product_id[:8]} → "
-        f"{total_written} ProductMatch row(s) across "
-        f"{len(touched_variants)} variant(s)",
-        flush=True,
+    logger.info(
+        "match_run_completed",
+        scraped_product_id=scraped_product_id,
+        matches_written=total_written,
+        variants_touched=len(touched_variants),
     )
 
     if total_written == 0:
