@@ -51,11 +51,14 @@ from services.chatbot_svc.schemas import (
     DiscoveryDebugInfo,
     PriceExplanation,
     MatchExplanation,
+    PaneConfigInput,
+    ApplyPaneConfigResult,
 )
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
 from services.chatbot_svc.tools import preview as t_preview
 from services.chatbot_svc.tools import panel as t_panel
+from services.chatbot_svc.tools import apply_config as t_apply_config
 from services.chatbot_svc.tools import status as t_status
 from services.chatbot_svc.tools import debug as t_debug
 from services.chatbot_svc.tools import price_explanation as t_price_explanation
@@ -173,9 +176,34 @@ def open_dynamic_pricing_panel(
     resolve_product. The backend reads the product's real state and the card
     shows the right options (first-time setup form / pause / resume / delete);
     the merchant's click performs the change — you apply NOTHING yourself.
-    Raises an error if product_id is not in this shop."""
+    If the user's message already contains concrete configuration values
+    (tier, price bounds, frequency, etc.), use apply_dynamic_pricing_config
+    instead — this tool is for when they haven't specified values yet, or
+    want to pause/resume/delete. Raises an error if product_id is not in
+    this shop."""
     return t_panel.open_dynamic_pricing_panel(
         ctx.deps.shop_domain, ctx.deps.session_id, product_id
+    )
+
+
+@agent.tool
+def apply_dynamic_pricing_config(
+    ctx: RunContext[AgentDeps],
+    product_id: str,
+    config: PaneConfigInput,
+) -> ApplyPaneConfigResult:
+    """Immediately turn on/update dynamic pricing for ONE product using the
+    configuration values the user actually specified in their message
+    (search query, pricing tier, min/max price, rescrape frequency,
+    discovery settings). Call this INSTEAD of open_dynamic_pricing_panel
+    whenever the user's message already contains concrete configuration
+    values — this applies the change directly, with no card or confirmation
+    click. Only include fields the user mentioned; omitted fields keep the
+    product's existing value, they are not reset. Call resolve_product first
+    to get product_id. Raises an error if product_id is not in this shop, or
+    if the config is invalid (e.g. min price >= max price)."""
+    return t_apply_config.apply_dynamic_pricing_config(
+        ctx.deps.shop_domain, product_id, config
     )
 
 
