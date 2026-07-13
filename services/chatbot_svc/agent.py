@@ -172,17 +172,19 @@ def open_dynamic_pricing_panel(
     ctx: RunContext[AgentDeps],
     product_id: str,
 ) -> PanelSummary:
-    """Open the dynamic-pricing panel card for ONE product. Call this for ANY
-    enable/disable/resume dynamic-pricing request, right after
-    resolve_product. The backend reads the product's real state and the card
-    shows the right options (first-time setup form / pause / resume / delete);
-    the merchant's click performs the change — you apply NOTHING yourself.
-    If the user's message already contains concrete configuration values
-    (tier, price bounds, frequency, etc.), use apply_dynamic_pricing_config
-    instead. If it's a clear pause/stop request with nothing else specified,
-    use pause_dynamic_pricing instead. This tool is for first-time setup with
-    no values yet, resume, delete, or anything ambiguous. Raises an error if
-    product_id is not in this shop."""
+    """Open the dynamic-pricing panel card for ONE product. Call this for a
+    resume/delete request, or anything ambiguous that is NOT a request to
+    turn on / enable / update dynamic pricing, right after resolve_product.
+    Do NOT call this for a turn-on/enable request — even one with no
+    configuration values yet ("turn on dynamic pricing for X"). Those always
+    go through apply_dynamic_pricing_config (asking via ask_user first for
+    any missing pricing_tier/frequency on a first-time enable); never fall
+    back to this panel for that case. If it's a clear pause/stop request with
+    nothing else specified, use pause_dynamic_pricing instead. The backend
+    reads the product's real state and the card shows the right options
+    (pause / resume / delete); the merchant's click performs the change —
+    you apply NOTHING yourself. Raises an error if product_id is not in this
+    shop."""
     return t_panel.open_dynamic_pricing_panel(
         ctx.deps.shop_domain, ctx.deps.session_id, product_id
     )
@@ -201,9 +203,13 @@ def apply_dynamic_pricing_config(
     whenever the user's message already contains concrete configuration
     values — this applies the change directly, with no card or confirmation
     click. Only include fields the user mentioned; omitted fields keep the
-    product's existing value, they are not reset. Call resolve_product first
-    to get product_id. Raises an error if product_id is not in this shop, or
-    if the config is invalid (e.g. min price >= max price)."""
+    product's existing value, they are not reset. On a product that isn't
+    tracking dynamic pricing yet, pricing_tier and both frequency fields are
+    required — if the merchant's message doesn't include them, ask for the
+    missing value(s) with ask_user before calling this tool, don't guess or
+    omit them. Call resolve_product first to get product_id. Raises an
+    error if product_id is not in this shop, or if the config is invalid
+    (e.g. min price >= max price)."""
     return t_apply_config.apply_dynamic_pricing_config(
         ctx.deps.shop_domain, product_id, config
     )
