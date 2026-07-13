@@ -33,12 +33,14 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import requests
+import structlog
 from sqlalchemy import text
 
 from services.common.celery_app import app
 from services.common.db import get_db
 from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
+logger = structlog.get_logger(__name__)
 
 SHOPIFY_API_VERSION = "2026-07"
 _DEFAULT_LOOKBACK_DAYS = 28
@@ -415,7 +417,7 @@ def refresh_for_shop(shop_domain: str) -> int:
     """Recompute SalesAggregate for one shop. Returns rows written."""
     token = _get_offline_token(shop_domain)
     if not token:
-        print(f"[shopify_sync] no offline token for {shop_domain} — skipping (waiting on step 8)", flush=True)
+        logger.warning("no_offline_token", shop_domain=shop_domain)
         return 0
     rows = _fetch_orders(shop_domain, token, _DEFAULT_LOOKBACK_DAYS)
     agg = _aggregate_windows(rows, datetime.now(timezone.utc))
@@ -433,7 +435,7 @@ def recompute_sales_aggregate(self, shop_domain: str):
         return refresh_for_shop(shop_domain)
     except Exception as exc:
         if self.request.retries >= self.max_retries:
-            print(f"[shopify_sync] {shop_domain} permanently failed: {exc}", flush=True)
+            logger.exception("sales_aggregate_recompute_permanently_failed", shop_domain=shop_domain)
             return 0
         raise self.retry(exc=exc)
 
@@ -453,7 +455,7 @@ def refresh_all_sales_aggregates(self):
             args=[shop],
             queue="shopify_sync_queue",
         )
-    print(f"[shopify_sync] queued daily refresh for {len(shops)} shop(s)", flush=True)
+    logger.info("daily_sales_refresh_queued", shop_count=len(shops))
     return len(shops)
 
 
@@ -594,7 +596,7 @@ def apply_decision(self, decision_id: str):
         return _apply_one_decision(decision_id)
     except Exception as exc:
         if self.request.retries >= self.max_retries:
-            print(f"[shopify_writer] decision {decision_id} permanently failed: {exc}", flush=True)
+            logger.exception("apply_decision_permanently_failed", decision_id=decision_id)
             return {"ok": False, "reason": "exception", "error": str(exc)}
         raise self.retry(exc=exc)
 
@@ -625,5 +627,5 @@ def sweep_pending(self):
     for (did,) in rows:
         app.send_task("shopify_writer.apply_decision", args=[did], queue="writer_queue")
     if rows:
-        print(f"[shopify_writer] swept {len(rows)} pending decision(s)", flush=True)
+        logger.info("pending_decisions_swept", count=len(rows))
     return len(rows)
