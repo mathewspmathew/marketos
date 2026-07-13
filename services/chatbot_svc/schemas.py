@@ -29,6 +29,30 @@ class FlagChange(BaseModel):
     enabled: bool
 
 
+class PaneConfigInput(BaseModel):
+    """Chat-extracted dynamic-pricing pane configuration. Only include fields
+    the user actually specified in their message — omitted fields keep the
+    product's current value (apply_pane_config's existing "None = unchanged"
+    semantics), they are NOT reset to a default."""
+    search_query_override: Optional[str] = None
+    pricing_tier: Optional[Literal["BUDGET", "COMPETITIVE", "PREMIUM"]] = None
+    min_price_override: Optional[float] = None
+    max_price_override: Optional[float] = None
+    frequency_unit: Optional[Literal["never", "minute", "hour", "day"]] = None
+    frequency_interval: Optional[int] = None
+    discovery_num_results: Optional[int] = None
+    listing_expansion_cap: Optional[int] = None
+
+
+class ApplyPaneConfigResult(BaseModel):
+    product_id: str
+    product_title: str
+    dynamic_pricing_enabled_before: bool
+    dynamic_pricing_enabled_after: bool
+    rearmed_count: int
+    human_summary: str
+
+
 class VariantSummary(BaseModel):
     variant_id: str
     product_id: str

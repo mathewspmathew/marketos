@@ -1,0 +1,83 @@
+import os
+os.environ.setdefault("GROQ_API_KEY", "test")
+
+import uuid
+
+import pytest
+
+from services.common.db import get_db
+from services.common.models import ShopifyProduct
+from services.chatbot_svc.schemas import PaneConfigInput
+from services.chatbot_svc.tools.apply_config import apply_dynamic_pricing_config
+
+
+def _product_id(shop):
+    with get_db() as s:
+        return s.query(ShopifyProduct.id).filter(ShopifyProduct.shopDomain == shop).scalar()
+
+
+def test_apply_writes_fields_and_enables(seed_shop):
+    pid = _product_id(seed_shop)
+    result = apply_dynamic_pricing_config(
+        seed_shop, pid,
+        PaneConfigInput(
+            pricing_tier="PREMIUM",
+            min_price_override=800,
+            max_price_override=1200,
+            frequency_unit="hour",
+            frequency_interval=6,
+        ),
+    )
+    assert result.product_id == pid
+    assert result.dynamic_pricing_enabled_before is False
+    assert result.dynamic_pricing_enabled_after is True
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is True
+        assert product.pricingTier == "PREMIUM"
+        assert float(product.minPriceOverride) == 800.0
+        assert float(product.maxPriceOverride) == 1200.0
+        assert product.frequencyUnit == "hour"
+        assert product.frequencyInterval == 6
+
+
+def test_apply_rejects_product_from_another_shop(seed_shop, seed_other_shop):
+    other_pid = _product_id(seed_other_shop)
+    with pytest.raises(RuntimeError):
+        apply_dynamic_pricing_config(
+            seed_shop, other_pid, PaneConfigInput(pricing_tier="BUDGET"),
+        )
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, other_pid)
+        assert product.dynamicPricingEnabled is False
+        assert product.pricingTier == "COMPETITIVE"  # untouched
+
+
+def test_apply_invalid_bounds_raises_runtime_error_not_pane_config_error(seed_shop):
+    pid = _product_id(seed_shop)
+    with pytest.raises(RuntimeError):
+        apply_dynamic_pricing_config(
+            seed_shop, pid,
+            PaneConfigInput(min_price_override=100, max_price_override=50),
+        )
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is False  # no partial write
+
+
+def test_apply_omitted_fields_leave_existing_values(seed_shop):
+    pid = _product_id(seed_shop)
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        product.searchQueryOverride = "existing override"
+        s.flush()
+
+    apply_dynamic_pricing_config(seed_shop, pid, PaneConfigInput(pricing_tier="BUDGET"))
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.searchQueryOverride == "existing override"
+        assert product.pricingTier == "BUDGET"
