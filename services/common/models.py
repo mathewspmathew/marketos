@@ -272,7 +272,7 @@ class ProductUrl(Base):
     shopifyProductId  = Column("shopifyProductId",  String, ForeignKey("ShopifyProduct.id", ondelete="CASCADE"), nullable=True)
     configId          = Column("configId",          String, ForeignKey("ScrapingConfig.id"), nullable=True)
     prodId            = Column("prodId",            String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
-    url               = Column("url",               String, unique=True, nullable=False)
+    url               = Column("url",               String, nullable=False)
     status            = Column("status",            _url_status, nullable=False, default="ACTIVE")
     failCount         = Column("failCount",         Integer, default=0)
     lastScrapedAt     = Column("lastScrapedAt",     DateTime(timezone=True))
@@ -282,6 +282,10 @@ class ProductUrl(Base):
     shop    = relationship("ShopifyUser",    back_populates="productUrls")
     config  = relationship("ScrapingConfig", back_populates="product_urls")
     product = relationship("ScrapedProduct", back_populates="urls")
+
+    __table_args__ = (
+        UniqueConstraint("shopifyProductId", "url", name="ProductUrl_shopifyProductId_url_key"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

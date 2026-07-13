@@ -220,7 +220,7 @@ model ProductUrl {
   id                String          @id @default(cuid())
   configId          String?
   prodId            String
-  url               String          @unique
+  url               String
   status            UrlStatus       @default(ACTIVE)
   failCount         Int             @default(0)
   lastScrapedAt     DateTime?
@@ -233,6 +233,7 @@ model ProductUrl {
   ShopifyUser       ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
   ShopifyProduct    ShopifyProduct? @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
 
+  @@unique([shopifyProductId, url])
   @@index([shopDomain, status, nextRunAt])
   @@index([shopifyProductId])
 }
