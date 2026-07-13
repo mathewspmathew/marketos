@@ -32,7 +32,6 @@ from sqlalchemy import text
 
 from services.common.db import get_db
 from services.common import models
-from services.common.pane_config import PaneConfig, PaneConfigError, apply_pane_config
 
 
 GREEN = "\033[92m"
@@ -303,74 +302,16 @@ def check_decisions(product_id: str) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
-def build_arg_parser() -> "argparse.ArgumentParser":
-    import argparse
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("product_id", nargs="?", default=None)
-    parser.add_argument("--search-query-override")
-    parser.add_argument("--tier", choices=["BUDGET", "COMPETITIVE", "PREMIUM"])
-    parser.add_argument("--min-price", type=float)
-    parser.add_argument("--max-price", type=float)
-    parser.add_argument("--frequency-unit", choices=["never", "minute", "hour", "day"])
-    parser.add_argument("--frequency-interval", type=int)
-    parser.add_argument("--discovery-num-results", type=int)
-    parser.add_argument("--listing-expansion-cap", type=int)
-    parser.add_argument("--enable", action="store_true",
-                         help="Apply config (Save & Enable) with no other field changes.")
-    return parser
-
-
-def apply_pane_config_step(product_id: str, args) -> bool:
-    """Returns True if config was applied (and pipeline should proceed against
-    the freshly-configured product), False if no config flags were passed."""
-    config = PaneConfig(
-        search_query_override=args.search_query_override,
-        pricing_tier=args.tier,
-        min_price_override=args.min_price,
-        max_price_override=args.max_price,
-        frequency_unit=args.frequency_unit,
-        frequency_interval=args.frequency_interval,
-        discovery_num_results=args.discovery_num_results,
-        listing_expansion_cap=args.listing_expansion_cap,
-    )
-    any_flag = any(
-        v is not None
-        for v in (
-            args.search_query_override, args.tier, args.min_price, args.max_price,
-            args.frequency_unit, args.frequency_interval,
-            args.discovery_num_results, args.listing_expansion_cap,
-        )
-    ) or args.enable
-    if not any_flag:
-        return False
-
-    banner("2. Apply pane config (Save & Enable)")
-    with get_db() as db:
-        product = db.get(models.ShopifyProduct, product_id)
-        try:
-            result = apply_pane_config(db, product, config)
-        except PaneConfigError as exc:
-            fail(str(exc))
-            sys.exit(1)
-        old_enabled, new_enabled = result["dynamicPricingEnabled"]
-        ok(f"dynamicPricingEnabled: {old_enabled} → {new_enabled}")
-        ok(f"re-armed {result['rearmedCount']} ACTIVE ProductUrl row(s), nextRunAt={result['nextRunAt'].isoformat()}")
-    return True
-
-
 def main():
-    parser = build_arg_parser()
-    args = parser.parse_args()
+    product_id_arg = sys.argv[1] if len(sys.argv) > 1 else None
 
     test_serper()
     test_vertex()
     test_groq_search_query()
 
-    product = pick_product(args.product_id)
+    product = pick_product(product_id_arg)
     if not product:
         sys.exit(1)
-
-    apply_pane_config_step(product.id, args)
 
     n_candidates = run_discovery(product.id)
     candidate_ids = list_candidates(product.id)
