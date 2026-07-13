@@ -113,3 +113,15 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
     changes["nextRunAt"] = next_run
     changes["rearmedCount"] = rearmed
     return changes
+
+
+def pause_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -> dict:
+    """Pause DP but keep all pane config intact — just disable the flag.
+    Mirrors app.products.jsx's pauseDynamic intent exactly. If frequency is
+    set, rescraping stops on the next beat tick (celery_beat.py's
+    WHERE dynamicPricingEnabled = TRUE filter simply stops matching this
+    product — no ProductUrl rows are touched).
+    """
+    old = product.dynamicPricingEnabled
+    product.dynamicPricingEnabled = False
+    return {"dynamicPricingEnabled": {"old": old, "new": False}}
