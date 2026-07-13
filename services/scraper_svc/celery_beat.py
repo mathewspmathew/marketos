@@ -16,6 +16,9 @@ from sqlalchemy import text
 from services.common.celery_app import app
 from services.common.db import get_db
 # from services.common.models import ProductUrl, ShopifyVariant
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 _STUCK_TIMEOUT_HOURS    = 1
 _RESCRAPE_DOMAIN_GAP    = 30   # seconds between consecutive scrapes of the same domain
@@ -83,11 +86,12 @@ def _tick_product_urls() -> None:
             countdown = domain_next_countdown.get(domain, 0)
             domain_next_countdown[domain] = countdown + _RESCRAPE_DOMAIN_GAP
 
-            print(
-                f"[Beat] rescrape_url +{countdown}s id={r.id[:8]} "
-                f"due={r.nextRunAt.isoformat() if r.nextRunAt else '-'} "
-                f"url={r.url[:60]}",
-                flush=True,
+            logger.info(
+                "rescrape_url_dispatching",
+                product_url_id=r.id,
+                countdown=countdown,
+                due=r.nextRunAt.isoformat() if r.nextRunAt else None,
+                url=r.url,
             )
             try:
                 app.send_task(
@@ -98,14 +102,14 @@ def _tick_product_urls() -> None:
                 )
                 # nextRunAt was already set to NULL by the atomic UPDATE above.
                 # No per-row NULL update needed.
-            except Exception as exc:
-                print(f"[Beat] dispatch failed for ProductUrl {r.id}: {exc}", flush=True)
+            except Exception:
+                logger.exception("rescrape_url_dispatch_failed", product_url_id=r.id)
 
 
 @app.task(name='services.scraper_svc.celery_beat.check_idle_configs')
 def check_idle_configs():
     """Beat entry point. Name kept for compatibility with existing schedule."""
-    print("[Beat] tick", flush=True)
+    logger.debug("beat_tick")
     _tick_queued_discovery_jobs()
     _tick_product_urls()
     _shopify_semantic_backfill()
@@ -145,9 +149,9 @@ def _tick_queued_discovery_jobs() -> None:
                 args=[r.shopifyProductId, r.query],
                 queue="discovery_queue",
             )
-            print(f"[Beat] enqueued discovery job {r.id[:8]} q={r.query!r}", flush=True)
-        except Exception as exc:
-            print(f"[Beat] dispatch failed for discovery {r.id}: {exc}", flush=True)
+            logger.info("discovery_job_enqueued", discovery_job_id=r.id, query=r.query)
+        except Exception:
+            logger.exception("discovery_job_dispatch_failed", discovery_job_id=r.id)
 
 
 def _shopify_semantic_backfill() -> None:
@@ -158,4 +162,4 @@ def _shopify_semantic_backfill() -> None:
     with get_db() as session:
         claimed = claim_and_enqueue_semantics(session, ids=None)
     if claimed:
-        print(f"[Beat] semantic backfill: claimed {len(claimed)} product(s)", flush=True)
+        logger.info("semantic_backfill_claimed", product_count=len(claimed))
