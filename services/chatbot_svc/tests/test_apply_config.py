@@ -9,7 +9,9 @@ import pytest
 from services.common.db import get_db
 from services.common.models import ShopifyProduct
 from services.chatbot_svc.schemas import PaneConfigInput
-from services.chatbot_svc.tools.apply_config import apply_dynamic_pricing_config
+from services.chatbot_svc.tools.apply_config import (
+    apply_dynamic_pricing_config, pause_dynamic_pricing,
+)
 
 
 def _product_id(shop):
@@ -120,3 +122,42 @@ def test_apply_omitted_fields_leave_existing_values(seed_shop):
         product = s.get(ShopifyProduct, pid)
         assert product.searchQueryOverride == "existing override"
         assert product.pricingTier == "BUDGET"
+
+
+def test_pause_disables_flag_and_keeps_config(seed_shop):
+    pid = _product_id(seed_shop)
+    apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(
+            pricing_tier="PREMIUM",
+            min_price_override=800,
+            max_price_override=1200,
+            frequency_unit="hour",
+            frequency_interval=6,
+        ),
+    )
+
+    result = pause_dynamic_pricing(seed_shop, pid)
+    assert result.product_id == pid
+    assert result.dynamic_pricing_enabled_before is True
+    assert result.dynamic_pricing_enabled_after is False
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is False
+        # Config must survive the pause untouched.
+        assert product.pricingTier == "PREMIUM"
+        assert float(product.minPriceOverride) == 800.0
+        assert float(product.maxPriceOverride) == 1200.0
+        assert product.frequencyUnit == "hour"
+        assert product.frequencyInterval == 6
+
+
+def test_pause_rejects_product_from_another_shop(seed_shop, seed_other_shop):
+    other_pid = _product_id(seed_other_shop)
+    with pytest.raises(RuntimeError):
+        pause_dynamic_pricing(seed_shop, other_pid)
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, other_pid)
+        assert product.dynamicPricingEnabled is False  # untouched (was already False)

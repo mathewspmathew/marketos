@@ -7,8 +7,11 @@ from __future__ import annotations
 
 from services.common.db import get_db
 from services.common import models
-from services.common.pane_config import PaneConfig, PaneConfigError, apply_pane_config
-from services.chatbot_svc.schemas import PaneConfigInput, ApplyPaneConfigResult
+from services.common.pane_config import (
+    PaneConfig, PaneConfigError, apply_pane_config,
+    pause_dynamic_pricing as _pause_dynamic_pricing,
+)
+from services.chatbot_svc.schemas import PaneConfigInput, ApplyPaneConfigResult, PauseDynamicPricingResult
 
 
 def apply_dynamic_pricing_config(
@@ -48,4 +51,26 @@ def apply_dynamic_pricing_config(
                 f"Dynamic pricing is now on for {product.title}. "
                 f"{result['rearmedCount']} scrape schedule(s) re-armed."
             ),
+        )
+
+
+def pause_dynamic_pricing(shop_domain: str, product_id: str) -> PauseDynamicPricingResult:
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        if product is None or product.shopDomain != shop_domain:
+            raise RuntimeError(
+                f"Product {product_id} not found in this shop. "
+                f"Resolve it with resolve_product first."
+            )
+
+        result = _pause_dynamic_pricing(s, product)
+        before = result["dynamicPricingEnabled"]["old"]
+        after = result["dynamicPricingEnabled"]["new"]
+
+        return PauseDynamicPricingResult(
+            product_id=product.id,
+            product_title=product.title,
+            dynamic_pricing_enabled_before=before,
+            dynamic_pricing_enabled_after=after,
+            human_summary=f"Dynamic pricing is now paused for {product.title}.",
         )

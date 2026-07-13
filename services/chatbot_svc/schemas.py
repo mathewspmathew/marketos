@@ -59,6 +59,14 @@ class ApplyPaneConfigResult(BaseModel):
     human_summary: str
 
 
+class PauseDynamicPricingResult(BaseModel):
+    product_id: str
+    product_title: str
+    dynamic_pricing_enabled_before: bool
+    dynamic_pricing_enabled_after: bool
+    human_summary: str
+
+
 class VariantSummary(BaseModel):
     variant_id: str
     product_id: str
