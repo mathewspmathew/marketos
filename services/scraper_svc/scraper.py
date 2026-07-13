@@ -24,6 +24,10 @@ from services.common.celery_app import app
 from services.common.gcs_utils import upload_markdown_to_gcs
 from services.scraper_svc.helpers import _redis, update_config_status, set_next_scrap_at, URLS_KEY_TTL, PENDING_KEY_TTL
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 load_dotenv()
 
 _firecrawl_client = V1FirecrawlApp(api_key=os.getenv("FIRECRAWL_API_KEY", "not-set"))
@@ -77,20 +81,20 @@ def _scrape_product(product_url: str, proxy: str | None, domain: str) -> tuple[s
             result.get('markdown') if isinstance(result, dict)
             else getattr(result, 'markdown', None)
         ) or ""
-    except Exception as e:
-        print(f"    [!] Firecrawl failed for {product_url}: {e}", flush=True)
+    except Exception:
+        logger.exception("firecrawl_scrape_failed", product_url=product_url, domain=domain)
         return None
 
     if not markdown or len(markdown.strip()) < 400:
-        print(f"    [!] Markdown too short ({len(markdown)} chars) — skipping {product_url[:60]}", flush=True)
+        logger.warning("markdown_too_short", product_url=product_url, chars=len(markdown))
         return None
 
     gcs_ref = upload_markdown_to_gcs(markdown, domain, product_url)
     if not gcs_ref:
-        print(f"    [!] GCS upload failed — skipping {product_url[:60]}", flush=True)
+        logger.warning("gcs_upload_failed", product_url=product_url)
         return None
 
-    print(f"    [✓] Uploaded .md: {gcs_ref}", flush=True)
+    logger.info("product_scraped", product_url=product_url, gcs_ref=gcs_ref)
     return product_url, gcs_ref
 
 
@@ -104,7 +108,7 @@ def scrape_listing(config_id: str, shop_domain: str, listing_url: str, num_produ
     try:
         _scrape_listing_inner(config_id, shop_domain, listing_url, num_products)
     except SoftTimeLimitExceeded:
-        print(f"[!] scrape_listing soft time limit hit for config {config_id} — resetting to IDLE", flush=True)
+        logger.warning("scrape_listing_soft_time_limit_hit", config_id=config_id)
         update_config_status(config_id, "IDLE")
 
 
@@ -115,7 +119,7 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
     _use_stealth = any(d in domain for d in ('flipkart.com', 'amazon.', 'myntra.com'))
     _proxy       = 'stealth' if _use_stealth else None
 
-    print(f"[>] Discovering URLs: {listing_url} (proxy={_proxy})", flush=True)
+    logger.info("discovering_urls", listing_url=listing_url, proxy=_proxy)
     raw_links  = []
     listing_md = ""
 
@@ -126,9 +130,9 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
                 map_result.get('links') if isinstance(map_result, dict)
                 else getattr(map_result, 'links', None)
             ) or []
-            print(f"[>] map_url returned {len(raw_links)} links", flush=True)
-        except Exception as map_err:
-            print(f"[!] map_url failed ({map_err})", flush=True)
+            logger.info("map_url_succeeded", link_count=len(raw_links))
+        except Exception:
+            logger.exception("map_url_failed", listing_url=listing_url)
 
     if not raw_links:
         n_scrolls = max(2, math.ceil(num_products / 3))
@@ -154,9 +158,9 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
                 listing_result.get('markdown') if isinstance(listing_result, dict)
                 else getattr(listing_result, 'markdown', None)
             ) or ""
-            print(f"[>] scrape_url → {len(raw_links)} links | md={len(listing_md)} chars", flush=True)
-        except Exception as e:
-            print(f"[!] Firecrawl listing scrape failed: {e}", flush=True)
+            logger.info("listing_scrape_succeeded", link_count=len(raw_links), markdown_chars=len(listing_md))
+        except Exception:
+            logger.exception("firecrawl_listing_scrape_failed", listing_url=listing_url)
             update_config_status(config_id, "IDLE")
             return
 
@@ -178,7 +182,7 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
         rel_md_links = []
 
     if abs_md_links or rel_md_links:
-        print(f"[>] Mined {len(abs_md_links)} abs + {len(rel_md_links)} rel URLs from markdown", flush=True)
+        logger.info("mined_urls_from_markdown", abs_link_count=len(abs_md_links), rel_link_count=len(rel_md_links))
 
     raw_links = list(dict.fromkeys(raw_links + abs_md_links + rel_md_links))
 
@@ -191,10 +195,10 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
             if len(product_urls) == num_products:
                 break
 
-    print(f"[>] {len(raw_links)} links → {len(product_urls)} product URLs after filter", flush=True)
+    logger.info("filtered_product_urls", raw_link_count=len(raw_links), product_url_count=len(product_urls))
 
     if not _use_stealth and len(product_urls) < num_products:
-        print(f"[>] Only {len(product_urls)}/{num_products} — trying crawl_url fallback...", flush=True)
+        logger.info("trying_crawl_url_fallback", found=len(product_urls), wanted=num_products)
         try:
             crawl_result = _firecrawl_client.crawl_url(
                 listing_url,
@@ -220,22 +224,22 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
                     product_urls.append(u)
                     if len(product_urls) == num_products:
                         break
-            print(f"[>] After crawl_url fallback: {len(product_urls)} product URLs", flush=True)
-        except Exception as crawl_err:
-            print(f"[!] crawl_url fallback failed: {crawl_err}", flush=True)
+            logger.info("crawl_url_fallback_succeeded", product_url_count=len(product_urls))
+        except Exception:
+            logger.exception("crawl_url_fallback_failed", listing_url=listing_url)
 
     if raw_links and not product_urls:
         id_links = [u for u in raw_links if _PRODUCT_ID_RE.search(urlparse(u).path)]
-        print(f"[DEBUG] ID-pattern links: {id_links[:5]}", flush=True)
+        logger.debug("id_pattern_links", sample=id_links[:5])
 
     if not product_urls:
-        print("[!] No product URLs found — resetting to IDLE.", flush=True)
+        logger.warning("no_product_urls_found", listing_url=listing_url)
         update_config_status(config_id, "IDLE")
         return
 
     _redis.set(f"scrape_urls:{config_id}", json.dumps(product_urls), ex=URLS_KEY_TTL)
 
-    print(f"[>] Scraping {len(product_urls)} pages concurrently (workers={_MAX_SCRAPE_WORKERS})...", flush=True)
+    logger.info("concurrent_scrape_starting", product_url_count=len(product_urls), workers=_MAX_SCRAPE_WORKERS)
     uploaded_pages: list[tuple[str, str]] = []
 
     with ThreadPoolExecutor(max_workers=_MAX_SCRAPE_WORKERS) as pool:
@@ -245,11 +249,11 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
                 result = future.result()
                 if result:
                     uploaded_pages.append(result)
-            except Exception as fut_err:
-                print(f"    [!] Scrape thread error: {fut_err}", flush=True)
+            except Exception:
+                logger.exception("scrape_thread_error", url=futures[future])
 
     n = len(uploaded_pages)
-    print(f"[✓] {n} pages uploaded — queuing extraction.", flush=True)
+    logger.info("pages_uploaded", count=n)
 
     if not uploaded_pages:
         update_config_status(config_id, "IDLE")
@@ -266,9 +270,9 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
                 args=[config_id, shop_domain, product_url, gcs_ref],
                 queue='extraction_queue',
             )
-            print(f"    [✓] Queued extraction: {product_url[:70]}", flush=True)
-        except Exception as send_err:
-            print(f"    [!] Failed to queue extraction for {product_url[:60]}: {send_err}", flush=True)
+            logger.info("extraction_queued", product_url=product_url)
+        except Exception:
+            logger.exception("extraction_queue_failed", product_url=product_url)
             remaining = _redis.decr(f"scrape_pending:{config_id}")
             if remaining <= 0:
                 _redis.delete(f"scrape_pending:{config_id}")
@@ -286,13 +290,13 @@ def rescrape_product(self, config_id: str, shop_domain: str, product_url: str, p
     _use_stealth = any(d in domain for d in ('flipkart.com', 'amazon.', 'myntra.com'))
     _proxy       = 'stealth' if _use_stealth else None
 
-    print(f"[Rescrape] {product_url[:80]}", flush=True)
+    logger.info("rescrape_starting", product_url=product_url)
     # Human-like delay before hitting the site — on top of the jitter inside _scrape_product
     time.sleep(random.uniform(2, 5))
     result = _scrape_product(product_url, _proxy, domain)
     if not result:
         if self.request.retries >= self.max_retries:
-            print(f"[Rescrape] Giving up on {product_url[:60]} after {self.max_retries} retries", flush=True)
+            logger.warning("rescrape_giving_up", product_url=product_url, max_retries=self.max_retries)
             set_next_scrap_at(config_id, product_url)
             return
         raise self.retry(exc=ValueError(f"Rescrape failed: {product_url}"))
@@ -303,4 +307,4 @@ def rescrape_product(self, config_id: str, shop_domain: str, product_url: str, p
         args=[config_id, shop_domain, product_url, gcs_ref, prod_id],
         queue='extraction_queue',
     )
-    print(f"[Rescrape] Queued targeted extraction for {product_url[:70]}", flush=True)
+    logger.info("rescrape_extraction_queued", product_url=product_url)
