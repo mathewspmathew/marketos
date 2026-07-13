@@ -91,7 +91,7 @@ def _tick_product_urls() -> None:
                 product_url_id=r.id,
                 countdown=countdown,
                 due=r.nextRunAt.isoformat() if r.nextRunAt else None,
-                url=r.url,
+                product_url=r.url,
             )
             try:
                 app.send_task(

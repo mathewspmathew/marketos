@@ -250,7 +250,7 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
                 if result:
                     uploaded_pages.append(result)
             except Exception:
-                logger.exception("scrape_thread_error", url=futures[future])
+                logger.exception("scrape_thread_error", product_url=futures[future])
 
     n = len(uploaded_pages)
     logger.info("pages_uploaded", count=n)
