@@ -9,11 +9,11 @@ Task 2 — extract_product (extraction_queue)
 
 import json
 import os
-import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
+import structlog
 from dotenv import load_dotenv
 from groq import RateLimitError as GroqRateLimitError
 
@@ -35,6 +35,8 @@ from services.common.schemas import ProductSchema
 from services.scraper_svc.helpers import log_error, mark_task_done, set_next_scrap_at
 
 load_dotenv()
+
+logger = structlog.get_logger(__name__)
 
 _groq_client = make_groq_client()
 
@@ -124,9 +126,9 @@ def extract_with_groq(markdown: str, url: str) -> ProductSchema | None:
         return ProductSchema(**data)
     except GroqRateLimitError:
         raise
-    except Exception as e:
+    except Exception:
         raw_preview = locals().get("raw", "")[:300]
-        print(f"[!] Groq extraction error for {url}: {e}\n    Raw: {raw_preview}")
+        logger.exception("groq_extraction_failed", product_url=url, raw_preview=raw_preview)
         return None
 
 
@@ -181,9 +183,9 @@ def extract_listing_with_groq(markdown: str, url: str) -> list[dict] | None:
         return out
     except GroqRateLimitError:
         raise
-    except Exception as e:
+    except Exception:
         raw_preview = locals().get("raw", "")[:300]
-        print(f"[!] Groq listing extraction error for {url}: {e}\n    Raw: {raw_preview}")
+        logger.exception("groq_listing_extraction_failed", listing_url=url, raw_preview=raw_preview)
         return None
 
 
@@ -311,7 +313,7 @@ def upsert_to_db(
 
             variants = product.variants or []
             if not variants:
-                print(f"    [!] No variants for {product.title[:40]}")
+                logger.warning("upsert_no_variants", product_title=product.title)
                 return product_id
 
             if len(variants) == 1:
@@ -350,11 +352,11 @@ def upsert_to_db(
                     if row["currentPrice"] and row["currentPrice"] > 0
                 ],
             )
-            print(f"    [✓] DB saved: {product.title[:40]} | {len(variants)} variant(s)")
+            logger.info("upsert_db_saved", product_title=product.title, variant_count=len(variants))
             return product_id
 
-    except Exception as e:
-        print(f"    [!] DB error for {url}: {e}\n{traceback.format_exc()}")
+    except Exception:
+        logger.exception("upsert_db_error", product_url=url)
         return None
 
 
@@ -375,7 +377,7 @@ def update_prices_in_db(
     now      = datetime.now(timezone.utc)
     extracted = product.variants or []
     if not extracted:
-        print(f"    [!] No variants in re-scrape payload for {product_url[:60]}")
+        logger.warning("rescrape_no_variants_in_payload", product_url=product_url)
         return False
 
     try:
@@ -386,7 +388,7 @@ def update_prices_in_db(
                 .all()
             )
             if not existing:
-                print(f"    [!] No existing variants for product {prod_id} — cannot update prices")
+                logger.warning("rescrape_no_existing_variants", prod_id=prod_id)
                 return False
 
             # Fetch product metadata for logging
@@ -395,7 +397,7 @@ def update_prices_in_db(
                 .where(ScrapedProduct.id == prod_id)
             ).first()
             if not product_meta:
-                print(f"    [!] No product metadata for {prod_id}")
+                logger.warning("rescrape_no_product_metadata", prod_id=prod_id)
                 return False
 
             product_title, shop_domain, competitor_domain = product_meta
@@ -465,11 +467,11 @@ def update_prices_in_db(
             if observation_rows:
                 _record_observations(session, shop_domain, observation_rows)
 
-            print(f"    [✓] Price/stock updated: {updated}/{len(existing)} variant(s) for {product_url[:60]}")
+            logger.info("price_stock_updated", updated_count=updated, total_count=len(existing), product_url=product_url)
             return updated > 0
 
-    except Exception as e:
-        print(f"    [!] Price update DB error for {product_url}: {e}\n{traceback.format_exc()}")
+    except Exception:
+        logger.exception("price_update_db_error", product_url=product_url)
         return False
 
 
@@ -480,10 +482,10 @@ def update_prices_in_db(
 @app.task(name='scraper.rescrape_extract', bind=True, max_retries=3, default_retry_delay=30, rate_limit='3/m')
 def rescrape_extract(self, config_id: str, shop_domain: str, product_url: str, gcs_ref: str, prod_id: str):
     """GCS download → Groq extract → targeted price/stock update → stamp timestamps."""
-    print(f"[RescrapeExtract] {product_url[:70]}")
+    logger.info("rescrape_extract_starting", product_url=product_url)
 
     def give_up(error_type: str, detail: str) -> None:
-        print(f"    [!] Giving up rescrape extract {product_url[:60]}: {detail}")
+        logger.warning("rescrape_extract_giving_up", product_url=product_url, detail=detail)
         log_error(shop_domain, config_id, product_url, error_type, 'scraper.rescrape_extract', gcs_ref, detail)
         set_next_scrap_at(config_id, product_url)
 
@@ -525,10 +527,10 @@ def rescrape_extract(self, config_id: str, shop_domain: str, product_url: str, g
 @app.task(name='scraper.extract_product', bind=True, max_retries=5, default_retry_delay=30, rate_limit='3/m')
 def extract_product(self, config_id: str, shop_domain: str, product_url: str, gcs_ref: str):
     """Download .md → Groq extract → DB upsert → queue semantic generation."""
-    print(f"[>] Extracting: {product_url}")
+    logger.info("extract_product_starting", product_url=product_url)
 
     def give_up(error_type: str, detail: str) -> None:
-        print(f"    [!] Giving up on {product_url[:60]}: {detail}")
+        logger.warning("extract_product_giving_up", product_url=product_url, detail=detail)
         log_error(shop_domain, config_id, product_url, error_type, 'scraper.extract_product', gcs_ref, detail)
         mark_task_done(config_id)
 
@@ -542,7 +544,7 @@ def extract_product(self, config_id: str, shop_domain: str, product_url: str, gc
     try:
         product = extract_with_groq(markdown, product_url)
     except GroqRateLimitError:
-        print("    [!] Groq rate limited — retrying in 65s")
+        logger.warning("groq_rate_limited_retrying", product_url=product_url, countdown=65)
         if self.request.retries >= self.max_retries:
             give_up("GROQ_FAILED", "Groq rate limited after max retries")
             return
@@ -558,7 +560,7 @@ def extract_product(self, config_id: str, shop_domain: str, product_url: str, gc
     if product.image_url and product.image_url.startswith("http"):
         image_url = upload_image_to_gcs(product.image_url)
     else:
-        print(f"    [-] No image for: {product.title[:40]}")
+        logger.info("no_product_image", product_title=product.title)
 
     prod_id = upsert_to_db(config_id, shop_domain, product_url, product, image_url)
 
@@ -570,5 +572,5 @@ def extract_product(self, config_id: str, shop_domain: str, product_url: str, gc
 
     set_next_scrap_at(config_id, product_url)
     app.send_task('scraper.generate_variant_semantics', args=[prod_id, config_id, shop_domain, product_url], queue='semantic_queue')
-    print(f"    [>] Queued semantic generation: {prod_id}")
+    logger.info("semantic_generation_queued", prod_id=prod_id)
     mark_task_done(config_id)
