@@ -185,6 +185,154 @@ def scrape_candidate(self, candidate_id: str):
     return {"status": "queued_extract", "gcs_ref": gcs_ref}
 
 
+def _upsert_scraped_product(
+    db,
+    *,
+    shopify_product_id: str,
+    shop_domain: str,
+    domain: str,
+    url: str,
+    product,  # ProductSchema
+    image_url: str,
+    now: datetime,
+) -> str:
+    """Dedup/write ScrapedProduct + ScrapedVariants + a product-rooted
+    ProductUrl row, scoped exclusively to shopify_product_id — never reuses
+    another product's ScrapedProduct even if the URL matches. Returns prodId.
+    """
+    shopify_product = db.get(models.ShopifyProduct, shopify_product_id)
+    settings        = db.get(models.ShopSettings, shop_domain)
+
+    existing = (
+        db.query(models.ProductUrl)
+        .filter(
+            models.ProductUrl.shopifyProductId == shopify_product_id,
+            models.ProductUrl.url == url,
+        )
+        .first()
+    )
+    if existing:
+        prod_id = existing.prodId
+        db.execute(
+            sa_update(models.ScrapedProduct)
+            .where(models.ScrapedProduct.id == prod_id)
+            .values(
+                title=product.title,
+                description=product.description or "",
+                vendor=product.vendor or "",
+                productType=product.product_type or "",
+                tags=product.tags or [],
+                imageUrl=image_url,
+                specifications=(
+                    json.loads(json.dumps(product.specifications))
+                    if product.specifications else None
+                ),
+                updatedAt=now,
+            )
+        )
+    else:
+        prod_id = str(uuid.uuid4())
+        db.execute(
+            pg_insert(models.ScrapedProduct).values(
+                id=prod_id,
+                shopDomain=shop_domain,
+                domain=domain,
+                title=product.title,
+                description=product.description or "",
+                vendor=product.vendor or "",
+                productType=product.product_type or "",
+                tags=product.tags or [],
+                imageUrl=image_url,
+                specifications=(
+                    json.loads(json.dumps(product.specifications))
+                    if product.specifications else None
+                ),
+                updatedAt=now,
+            )
+        )
+
+    # Product-rooted URL row. configId is null (new flow).
+    next_run = _next_run_at(shopify_product, settings) if shopify_product else None
+    db.execute(
+        pg_insert(models.ProductUrl)
+        .values(
+            id=str(uuid.uuid4()),
+            shopDomain=shop_domain,
+            shopifyProductId=shopify_product_id,
+            configId=None,
+            prodId=prod_id,
+            url=url,
+            status="ACTIVE",
+            failCount=0,
+            lastScrapedAt=now,
+            nextRunAt=next_run,
+        )
+        .on_conflict_do_update(
+            index_elements=["shopifyProductId", "url"],
+            set_={
+                "prodId":        prod_id,
+                "status":        "ACTIVE",
+                "failCount":     0,
+                "lastScrapedAt": now,
+                "nextRunAt":     next_run,
+            },
+        )
+    )
+
+    # Replace variants for this product.
+    db.query(models.ScrapedVariant).filter(
+        models.ScrapedVariant.productId == prod_id
+    ).delete(synchronize_session=False)
+
+    variants = product.variants or []
+    if len(variants) == 1:
+        variants[0].title = product.title
+
+    variant_rows = [
+        {
+            "id":            str(uuid.uuid4()),
+            "productId":     prod_id,
+            "sku":           str(v.sku or ""),
+            "barcode":       v.barcode,
+            "title":         v.title,
+            "options":       v.options,
+            "currentPrice":  float(v.current_price or 0),
+            "originalPrice": float(v.original_price) if v.original_price else None,
+            "isInStock":     bool(v.is_in_stock),
+            "stockQuantity": v.stock_quantity,
+            "updatedAt":     now,
+        }
+        for v in variants
+    ]
+    if variant_rows:
+        db.execute(pg_insert(models.ScrapedVariant), variant_rows)
+
+        obs_rows = [
+            {
+                "competitorVariantId": r["id"],
+                "competitorProductId": prod_id,
+                "price":               r["currentPrice"],
+                "isInStock":           r["isInStock"],
+                "competitorTitle":     product.title,
+                "competitorDomain":    domain,
+            }
+            for r in variant_rows
+            if r["currentPrice"] and r["currentPrice"] > 0
+        ]
+        logger.info(
+            "recording_observations",
+            observation_count=len(obs_rows),
+            shop_domain=shop_domain,
+            url=url,
+            product_title=product.title,
+            domain=domain,
+            product_id=prod_id,
+        )
+        _record_observations(db, shop_domain, obs_rows)
+
+    return prod_id
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Task 2 — extract_candidate
 # ─────────────────────────────────────────────────────────────────────────────
@@ -234,137 +382,18 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
 
     # ── DB write ───────────────────────────────────────────────────────────
     now = datetime.now(timezone.utc)
-    prod_id: str | None = None
     try:
         with get_db() as db:
-            shopify_product = db.get(models.ShopifyProduct, shopify_product_id)
-            settings        = db.get(models.ShopSettings, shop_domain)
-
-            existing = (
-                db.query(models.ProductUrl)
-                .filter(models.ProductUrl.url == url)
-                .first()
+            prod_id = _upsert_scraped_product(
+                db,
+                shopify_product_id=shopify_product_id,
+                shop_domain=shop_domain,
+                domain=domain,
+                url=url,
+                product=product,
+                image_url=image_url,
+                now=now,
             )
-            if existing:
-                prod_id = existing.prodId
-                db.execute(
-                    sa_update(models.ScrapedProduct)
-                    .where(models.ScrapedProduct.id == prod_id)
-                    .values(
-                        title=product.title,
-                        description=product.description or "",
-                        vendor=product.vendor or "",
-                        productType=product.product_type or "",
-                        tags=product.tags or [],
-                        imageUrl=image_url,
-                        specifications=(
-                            json.loads(json.dumps(product.specifications))
-                            if product.specifications else None
-                        ),
-                        updatedAt=now,
-                    )
-                )
-            else:
-                prod_id = str(uuid.uuid4())
-                db.execute(
-                    pg_insert(models.ScrapedProduct).values(
-                        id=prod_id,
-                        shopDomain=shop_domain,
-                        domain=domain,
-                        title=product.title,
-                        description=product.description or "",
-                        vendor=product.vendor or "",
-                        productType=product.product_type or "",
-                        tags=product.tags or [],
-                        imageUrl=image_url,
-                        specifications=(
-                            json.loads(json.dumps(product.specifications))
-                            if product.specifications else None
-                        ),
-                        updatedAt=now,
-                    )
-                )
-
-            # Product-rooted URL row. configId is null (new flow).
-            next_run = _next_run_at(shopify_product, settings) if shopify_product else None
-            db.execute(
-                pg_insert(models.ProductUrl)
-                .values(
-                    id=str(uuid.uuid4()),
-                    shopDomain=shop_domain,
-                    shopifyProductId=shopify_product_id,
-                    configId=None,
-                    prodId=prod_id,
-                    url=url,
-                    status="ACTIVE",
-                    failCount=0,
-                    lastScrapedAt=now,
-                    nextRunAt=next_run,
-                )
-                .on_conflict_do_update(
-                    index_elements=["url"],
-                    set_={
-                        "shopifyProductId": shopify_product_id,
-                        "prodId":           prod_id,
-                        "status":           "ACTIVE",
-                        "failCount":        0,
-                        "lastScrapedAt":    now,
-                        "nextRunAt":        next_run,
-                    },
-                )
-            )
-
-            # Replace variants for this product.
-            db.query(models.ScrapedVariant).filter(
-                models.ScrapedVariant.productId == prod_id
-            ).delete(synchronize_session=False)
-
-            variants = product.variants or []
-            if len(variants) == 1:
-                variants[0].title = product.title
-
-            variant_rows = [
-                {
-                    "id":            str(uuid.uuid4()),
-                    "productId":     prod_id,
-                    "sku":           str(v.sku or ""),
-                    "barcode":       v.barcode,
-                    "title":         v.title,
-                    "options":       v.options,
-                    "currentPrice":  float(v.current_price or 0),
-                    "originalPrice": float(v.original_price) if v.original_price else None,
-                    "isInStock":     bool(v.is_in_stock),
-                    "stockQuantity": v.stock_quantity,
-                    "updatedAt":     now,
-                }
-                for v in variants
-            ]
-            if variant_rows:
-                db.execute(pg_insert(models.ScrapedVariant), variant_rows)
-
-                obs_rows = [
-                    {
-                        "competitorVariantId": r["id"],
-                        "competitorProductId": prod_id,
-                        "price":               r["currentPrice"],
-                        "isInStock":           r["isInStock"],
-                        "competitorTitle":     product.title,
-                        "competitorDomain":    domain,
-                    }
-                    for r in variant_rows
-                    if r["currentPrice"] and r["currentPrice"] > 0
-                ]
-                logger.info(
-                    "recording_observations",
-                    observation_count=len(obs_rows),
-                    shop_domain=shop_domain,
-                    url=url,
-                    product_title=product.title,
-                    domain=domain,
-                    product_id=prod_id,
-                )
-                _record_observations(db, shop_domain, obs_rows)
-
             _set_candidate_status(
                 db, candidate_id,
                 status="SCRAPED",
