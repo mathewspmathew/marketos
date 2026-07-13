@@ -16,7 +16,10 @@ import os
 import threading
 from typing import Any
 
+import structlog
 from groq import AuthenticationError, Groq, PermissionDeniedError
+
+logger = structlog.get_logger(__name__)
 
 
 class _FallbackGroq:
@@ -39,7 +42,7 @@ class _FallbackGroq:
                 return False
             self._client = Groq(api_key=self._backup_key)
             self._using_backup = True
-            print("[groq_client] primary key auth failed — switching to GROQ_API_KEY_BACKUP", flush=True)
+            logger.warning("groq_backup_key_activated")
             return True
 
 

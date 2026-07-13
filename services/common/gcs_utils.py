@@ -3,12 +3,15 @@ import socket
 import uuid
 import tempfile
 import requests
+import structlog
 from urllib.parse import urlparse
 from datetime import datetime
 from google.cloud import storage
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = structlog.get_logger(__name__)
 
 GCS_IMAGE_BUCKET    = os.getenv("GCS_IMAGE_BUCKET",    "scraped_images_marketos")
 GCS_MARKDOWN_BUCKET = os.getenv("GCS_MARKDOWN_BUCKET", "scraped_html_marketos")
@@ -50,7 +53,7 @@ def upload_image_to_gcs(image_url: str) -> str:
 
         content_length = int(response.headers.get('content-length', 0))
         if content_length > _MAX_IMAGE_BYTES:
-            print(f"GCS image skip: too large ({content_length} bytes) — {image_url[:80]}")
+            logger.info("gcs_image_skip_too_large", content_length=content_length, image_url=image_url[:80])
             return ""
 
         ext = os.path.splitext(urlparse(image_url).path)[1]
@@ -61,7 +64,7 @@ def upload_image_to_gcs(image_url: str) -> str:
             for chunk in response.iter_content(chunk_size=8192):
                 downloaded += len(chunk)
                 if downloaded > _MAX_IMAGE_BYTES:
-                    print(f"GCS image skip: exceeded {_MAX_IMAGE_BYTES} bytes mid-stream — {image_url[:80]}")
+                    logger.info("gcs_image_skip_stream_exceeded", max_bytes=_MAX_IMAGE_BYTES, image_url=image_url[:80])
                     return ""
                 tmp.write(chunk)
             temp_file_path = tmp.name
@@ -71,8 +74,8 @@ def upload_image_to_gcs(image_url: str) -> str:
         blob.upload_from_filename(temp_file_path, content_type=response.headers.get('content-type', 'image/jpeg'))
 
         return f"https://storage.googleapis.com/{GCS_IMAGE_BUCKET}/{blob_path}"
-    except Exception as e:
-        print(f"GCS image upload error: {e}")
+    except Exception:
+        logger.exception("gcs_image_upload_failed", image_url=image_url[:80])
         return ""
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
@@ -95,8 +98,8 @@ def upload_markdown_to_gcs(markdown_content: str, domain: str, product_url: str 
         blob = _client().bucket(GCS_MARKDOWN_BUCKET).blob(blob_path)
         blob.upload_from_filename(temp_file_path, content_type="text/markdown")
         return f"gs://{GCS_MARKDOWN_BUCKET}/{blob_path}"
-    except Exception as e:
-        print(f"GCS markdown upload error: {e}")
+    except Exception:
+        logger.exception("gcs_markdown_upload_failed", domain=domain, product_url=product_url)
         return ""
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
@@ -110,6 +113,6 @@ def download_markdown_from_gcs(gcs_ref: str) -> str:
         path = gcs_ref[5:]
         bucket_name, blob_path = path.split("/", 1)
         return _client().bucket(bucket_name).blob(blob_path).download_as_text()
-    except Exception as e:
-        print(f"GCS download error: {e}")
+    except Exception:
+        logger.exception("gcs_download_failed", gcs_ref=gcs_ref)
         return ""

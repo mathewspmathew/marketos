@@ -13,8 +13,11 @@ from __future__ import annotations
 import os
 from typing import Iterable
 
+import structlog
 from google import genai
 from google.genai.types import EmbedContentConfig
+
+logger = structlog.get_logger(__name__)
 
 VERTEX_PROJECT  = os.getenv("VERTEX_PROJECT", "marketos-494011")
 VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
@@ -80,9 +83,9 @@ def embed_texts(
             )
             for slot, emb in zip(chunk_idx, result.embeddings):
                 out[slot] = list(emb.values)
-        except Exception as exc:
+        except Exception:
             # Leave None for this chunk; caller decides how to handle.
-            print(f"[vertex_embed] batch failed ({len(chunk_idx)} items): {exc}")
+            logger.exception("vertex_embed_batch_failed", chunk_size=len(chunk_idx), task_type=task_type)
 
     return out
 
