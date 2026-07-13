@@ -537,10 +537,14 @@ def expand_listing(self, candidate_id: str, gcs_ref: str):
             scrapedAt=now,
         )
 
-    print(
-        f"[expand_listing] parent={candidate_id[:8]} url={parent_url[:60]} "
-        f"cards_seen={len(cards)} same_domain_kept={len(kept)} cap={cap} queued={queued}",
-        flush=True,
+    logger.info(
+        "listing_expanded",
+        candidate_id=candidate_id,
+        parent_url=parent_url,
+        cards_seen=len(cards),
+        same_domain_kept=len(kept),
+        cap=cap,
+        queued=queued,
     )
     return {"status": "expanded", "queued": queued}
 
