@@ -10,8 +10,12 @@ from services.common import models
 from services.common.pane_config import (
     PaneConfig, PaneConfigError, apply_pane_config,
     pause_dynamic_pricing as _pause_dynamic_pricing,
+    delete_dynamic_pricing as _delete_dynamic_pricing,
 )
-from services.chatbot_svc.schemas import PaneConfigInput, ApplyPaneConfigResult, PauseDynamicPricingResult
+from services.chatbot_svc.tools.toggle_settings import compute_disable_counts
+from services.chatbot_svc.schemas import (
+    PaneConfigInput, ApplyPaneConfigResult, PauseDynamicPricingResult, DeleteDynamicPricingResult,
+)
 
 
 def apply_dynamic_pricing_config(
@@ -94,4 +98,37 @@ def pause_dynamic_pricing(shop_domain: str, product_id: str) -> PauseDynamicPric
             dynamic_pricing_enabled_before=before,
             dynamic_pricing_enabled_after=after,
             human_summary=f"Dynamic pricing is now paused for {product.title}.",
+        )
+
+
+def get_delete_preview(shop_domain: str, product_id: str) -> dict:
+    return compute_disable_counts(shop_domain, product_id)
+
+
+def delete_dynamic_pricing(shop_domain: str, product_id: str, confirmed: bool) -> DeleteDynamicPricingResult:
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        if product is None or product.shopDomain != shop_domain:
+            raise RuntimeError(
+                f"Product {product_id} not found in this shop. "
+                f"Resolve it with resolve_product first."
+            )
+
+        if not confirmed:
+            raise RuntimeError(
+                "Deletion is permanent and was not confirmed. Warn the merchant with "
+                "the counts from get_delete_preview and ask via ask_user first; only "
+                "call this tool again with confirmed=True after they explicitly agree."
+            )
+
+        result = _delete_dynamic_pricing(s, product)
+
+        return DeleteDynamicPricingResult(
+            product_id=product.id,
+            product_title=product.title,
+            deleted_scraped_products=result["deletedScrapedProducts"],
+            human_summary=(
+                f"Deleted all dynamic-pricing data for {product.title} "
+                f"({result['deletedScrapedProducts']} competitor product(s) removed)."
+            ),
         )

@@ -8,9 +8,11 @@ import pytest
 
 from services.common.db import get_db
 from services.common.models import ShopifyProduct
+from services.common.models import CompetitorCandidate, ScrapedProduct
 from services.chatbot_svc.schemas import PaneConfigInput
 from services.chatbot_svc.tools.apply_config import (
     apply_dynamic_pricing_config, pause_dynamic_pricing,
+    get_delete_preview, delete_dynamic_pricing,
 )
 
 
@@ -281,3 +283,66 @@ def test_paused_product_partial_reconfigure_not_gated_on_frequency(seed_shop):
         assert product.pricingTier == "BUDGET"
         assert product.frequencyUnit == "hour"
         assert product.frequencyInterval == 6
+
+
+def test_delete_without_confirmation_is_rejected(seed_shop):
+    pid = _product_id(seed_shop)
+    with pytest.raises(RuntimeError, match="not confirmed"):
+        delete_dynamic_pricing(seed_shop, pid, confirmed=False)
+
+
+def test_delete_rejects_product_from_another_shop(seed_shop, seed_other_shop):
+    other_pid = _product_id(seed_other_shop)
+    with pytest.raises(RuntimeError):
+        delete_dynamic_pricing(seed_shop, other_pid, confirmed=True)
+
+
+def test_delete_with_confirmation_removes_data(seed_shop):
+    pid = _product_id(seed_shop)
+    scraped_id = str(uuid.uuid4())
+    cand_id = str(uuid.uuid4())
+
+    with get_db() as s:
+        s.add(ScrapedProduct(id=scraped_id, shopDomain=seed_shop, domain="example.com", title="Competitor"))
+        s.flush()
+        s.add(CompetitorCandidate(
+            id=cand_id, shopDomain=seed_shop, shopifyProductId=pid,
+            url=f"https://example.com/{cand_id}", domain="example.com", source="serper",
+            scrapedProductId=scraped_id,
+        ))
+
+    result = delete_dynamic_pricing(seed_shop, pid, confirmed=True)
+    assert result.product_id == pid
+    assert result.deleted_scraped_products == 1
+
+    with get_db() as s:
+        assert s.get(ScrapedProduct, scraped_id) is None
+        assert s.get(CompetitorCandidate, cand_id) is None
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is False
+        assert product.pricingTier == "COMPETITIVE"  # reset to default
+
+
+def test_get_delete_preview_returns_real_counts(seed_shop):
+    pid = _product_id(seed_shop)
+    scraped_id = str(uuid.uuid4())
+    cand_id = str(uuid.uuid4())
+
+    with get_db() as s:
+        s.add(ScrapedProduct(id=scraped_id, shopDomain=seed_shop, domain="example.com", title="Competitor"))
+        s.flush()
+        s.add(CompetitorCandidate(
+            id=cand_id, shopDomain=seed_shop, shopifyProductId=pid,
+            url=f"https://example.com/{cand_id}", domain="example.com", source="serper",
+            scrapedProductId=scraped_id,
+        ))
+
+    try:
+        counts = get_delete_preview(seed_shop, pid)
+        assert counts["competitor_products"] == 1
+        assert counts["discovered_links"] == 1
+        assert "price_stats_variants" in counts
+    finally:
+        with get_db() as s:
+            s.query(CompetitorCandidate).filter(CompetitorCandidate.id == cand_id).delete(synchronize_session=False)
+            s.query(ScrapedProduct).filter(ScrapedProduct.id == scraped_id).delete(synchronize_session=False)

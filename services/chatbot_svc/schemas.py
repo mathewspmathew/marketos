@@ -67,6 +67,13 @@ class PauseDynamicPricingResult(BaseModel):
     human_summary: str
 
 
+class DeleteDynamicPricingResult(BaseModel):
+    product_id: str
+    product_title: str
+    deleted_scraped_products: int
+    human_summary: str
+
+
 class VariantSummary(BaseModel):
     variant_id: str
     product_id: str
