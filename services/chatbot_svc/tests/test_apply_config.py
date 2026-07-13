@@ -246,3 +246,38 @@ def test_update_on_already_active_product_is_not_gated(seed_shop):
         assert product.pricingTier == "PREMIUM"
         assert product.frequencyUnit == "hour"
         assert product.frequencyInterval == 6
+
+
+def test_paused_product_partial_reconfigure_not_gated_on_frequency(seed_shop):
+    """A paused product (dynamicPricingEnabled=False) already has a frequency
+    on file — the first-enable guard must not treat that as "missing" just
+    because this message doesn't repeat it. Regression test for a gap found
+    in the final whole-branch review: the guard originally checked only the
+    incoming config, not the product's existing DB value, so a paused
+    product's partial reconfigure was wrongly forced through the ask-for-
+    frequency gate even though the frequency was already configured."""
+    pid = _product_id(seed_shop)
+    # Enable, then pause — leaves dynamicPricingEnabled=False with tier/frequency intact.
+    apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6),
+    )
+    pause_dynamic_pricing(seed_shop, pid)
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is False  # confirms this is the paused case
+
+    # Tier-only update, frequency omitted from this message — must NOT raise,
+    # since the product's existing frequency (hour/6) satisfies the guard.
+    result = apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="BUDGET"),
+    )
+    assert result.dynamic_pricing_enabled_after is True
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.pricingTier == "BUDGET"
+        assert product.frequencyUnit == "hour"
+        assert product.frequencyInterval == 6
