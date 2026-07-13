@@ -111,6 +111,15 @@ def test_pane_config_input_requires_every_field_present():
 
 def test_apply_omitted_fields_leave_existing_values(seed_shop):
     pid = _product_id(seed_shop)
+    # First enable (tier + frequency required) before testing that a later
+    # partial update leaves other fields untouched — the omitted-fields
+    # semantics this test targets apply to already-active updates, which
+    # the first-enable required-field guard doesn't gate (see
+    # test_update_on_already_active_product_is_not_gated).
+    apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1),
+    )
     with get_db() as s:
         product = s.get(ShopifyProduct, pid)
         product.searchQueryOverride = "existing override"
@@ -161,3 +170,79 @@ def test_pause_rejects_product_from_another_shop(seed_shop, seed_other_shop):
     with get_db() as s:
         product = s.get(ShopifyProduct, other_pid)
         assert product.dynamicPricingEnabled is False  # untouched (was already False)
+
+
+def test_first_enable_missing_tier_is_rejected(seed_shop):
+    pid = _product_id(seed_shop)
+    with pytest.raises(RuntimeError, match="pricing tier"):
+        apply_dynamic_pricing_config(
+            seed_shop, pid,
+            _blank_config(frequency_unit="hour", frequency_interval=6),
+        )
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is False  # no partial write
+
+
+def test_first_enable_missing_frequency_is_rejected(seed_shop):
+    pid = _product_id(seed_shop)
+    with pytest.raises(RuntimeError, match="rescrape frequency"):
+        apply_dynamic_pricing_config(
+            seed_shop, pid,
+            _blank_config(pricing_tier="PREMIUM"),
+        )
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is False
+
+
+def test_first_enable_missing_both_names_both_in_error(seed_shop):
+    pid = _product_id(seed_shop)
+    with pytest.raises(RuntimeError) as exc_info:
+        apply_dynamic_pricing_config(seed_shop, pid, _blank_config())
+    assert "pricing tier" in str(exc_info.value)
+    assert "rescrape frequency" in str(exc_info.value)
+
+
+def test_first_enable_with_tier_and_frequency_succeeds_other_fields_optional(seed_shop):
+    pid = _product_id(seed_shop)
+    result = apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="BUDGET", frequency_unit="day", frequency_interval=1),
+    )
+    assert result.dynamic_pricing_enabled_after is True
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is True
+        assert product.pricingTier == "BUDGET"
+        assert product.frequencyUnit == "day"
+        assert product.frequencyInterval == 1
+
+
+def test_update_on_already_active_product_is_not_gated(seed_shop):
+    pid = _product_id(seed_shop)
+    # First enable with tier + frequency (satisfies the gate).
+    apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6),
+    )
+
+    # Follow-up tweak with tier/frequency omitted — must NOT be gated,
+    # since the product is already active.
+    result = apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(min_price_override=500),
+    )
+    assert result.dynamic_pricing_enabled_after is True
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert float(product.minPriceOverride) == 500.0
+        # Existing tier/frequency survive untouched (apply_pane_config's
+        # existing "None = unchanged" semantics, unaffected by this plan).
+        assert product.pricingTier == "PREMIUM"
+        assert product.frequencyUnit == "hour"
+        assert product.frequencyInterval == 6

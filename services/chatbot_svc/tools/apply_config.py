@@ -25,6 +25,19 @@ def apply_dynamic_pricing_config(
                 f"Resolve it with resolve_product first."
             )
 
+        if not product.dynamicPricingEnabled:
+            missing = []
+            if config.pricing_tier is None:
+                missing.append("pricing tier (BUDGET, COMPETITIVE, or PREMIUM)")
+            if config.frequency_unit is None or config.frequency_interval is None:
+                missing.append("rescrape frequency (both a unit and a number, e.g. every 6 hours)")
+            if missing:
+                raise RuntimeError(
+                    f"{product.title} isn't tracking dynamic pricing yet. Turning it on for "
+                    f"the first time needs: {'; '.join(missing)}. Ask the merchant for the "
+                    f"missing value(s), then call this tool again with the complete config."
+                )
+
         pane_config = PaneConfig(
             search_query_override=config.search_query_override,
             pricing_tier=config.pricing_tier,
