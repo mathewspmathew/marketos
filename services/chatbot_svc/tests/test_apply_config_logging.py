@@ -2,17 +2,16 @@ import os
 os.environ.setdefault("GROQ_API_KEY", "test")
 
 import json
+import logging
+import sys
 
 import pytest
+import structlog
 
 from services.common.db import get_db
 from services.common.models import ShopifyProduct
-from services.common import logging_config
 from services.chatbot_svc.schemas import PaneConfigInput
 from services.chatbot_svc.tools import apply_config as t_apply_config
-
-# Set up JSON logging at module import time, before pytest runs any tests
-logging_config.setup_logging()
 
 
 def _blank_config(**overrides):
@@ -35,45 +34,90 @@ def _product_id(shop):
         return s.query(ShopifyProduct.id).filter(ShopifyProduct.shopDomain == shop).scalar()
 
 
-def _get_structlog_records(caplog):
-    """Extract structlog records from pytest's caplog records.
+class CaptureHandler(logging.StreamHandler):
+    """Custom handler that also stores formatted messages for easy access."""
+    def __init__(self, stream):
+        super().__init__(stream)
+        self.messages = []
 
-    When structlog logs through stdlib logging with the ProcessorFormatter,
-    the entire structured dict is packed into record.msg.
-    """
-    records = []
-
-    for record in caplog.records:
-        # structlog packs the entire structured dict into record.msg
-        if isinstance(record.msg, dict):
-            parsed = dict(record.msg)
-            # Ensure level is lowercase
-            if "level" in parsed:
-                parsed["level"] = parsed["level"].lower()
-        else:
-            # Fallback: build from record attributes
-            parsed = {
-                "event": str(record.msg),
-                "level": record.levelname.lower(),
-            }
-
-        records.append(parsed)
-
-    return records
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.messages.append(msg)
+            super().emit(record)
+        except Exception:
+            self.handleError(record)
 
 
-def test_apply_missing_fields_logs_warning(seed_shop, caplog):
+@pytest.fixture(autouse=True)
+def _json_logging(capsys):
+    """Route structlog through the real JSON stdout pipeline for this test
+    file, so we can assert on the actual rendered event/level/fields."""
+    # Clear any existing handlers to ensure clean state
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+
+    # Configure structlog processors
+    _SHARED_PROCESSORS = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+    ]
+
+    structlog.configure(
+        processors=_SHARED_PROCESSORS
+        + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=False,  # Don't cache so we get fresh loggers
+    )
+
+    # Create formatter
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=_SHARED_PROCESSORS,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.dict_tracebacks,
+            structlog.processors.JSONRenderer(),
+        ],
+    )
+
+    # Use custom handler that stores messages and also writes to stdout
+    handler = CaptureHandler(sys.stdout)
+    handler.setFormatter(formatter)
+
+    # Set up root logger with this handler only
+    root_logger.handlers = [handler]
+    root_logger.setLevel(logging.INFO)
+
+    # Store handler on capsys so _last_log_lines can access it
+    capsys._json_handler = handler
+
+    yield capsys
+
+
+def _last_log_lines(capsys, n=1):
+    # Get messages from the custom handler we installed in the fixture
+    if hasattr(capsys, '_json_handler'):
+        messages = capsys._json_handler.messages[-n:]
+        return [json.loads(msg) for msg in messages if msg.strip()]
+    # Fallback to reading from capsys (in case handler is not available)
+    out = capsys.readouterr().out.strip().splitlines()
+    return [json.loads(line) for line in out[-n:]]
+
+
+def test_apply_missing_fields_logs_warning(seed_shop, capsys):
     # seed_shop's product starts with dynamicPricingEnabled=False and no
     # frequencyUnit/pricingTier set — an all-null config hits the
     # first-enable missing-fields gate.
     pid = _product_id(seed_shop)
-    with caplog.at_level("WARNING"):
-        with pytest.raises(RuntimeError):
-            t_apply_config.apply_dynamic_pricing_config(seed_shop, pid, _blank_config())
+    with pytest.raises(RuntimeError):
+        t_apply_config.apply_dynamic_pricing_config(seed_shop, pid, _blank_config())
 
-    # Extract the structured log records
-    records = _get_structlog_records(caplog)
-    matches = [r for r in records if r.get("event") == "dynamic_pricing_apply_missing_fields"]
+    lines = _last_log_lines(capsys, 5)
+    matches = [l for l in lines if l["event"] == "dynamic_pricing_apply_missing_fields"]
     assert len(matches) == 1
     assert matches[0]["level"] == "warning"
     assert matches[0]["shop_domain"] == seed_shop
@@ -81,17 +125,16 @@ def test_apply_missing_fields_logs_warning(seed_shop, caplog):
     assert "missing" in matches[0]
 
 
-def test_apply_success_logs_info(seed_shop, caplog):
+def test_apply_success_logs_info(seed_shop, capsys):
     pid = _product_id(seed_shop)
-    with caplog.at_level("INFO"):
-        t_apply_config.apply_dynamic_pricing_config(
-            seed_shop, pid,
-            _blank_config(
-                pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6,
-            ),
-        )
-    records = _get_structlog_records(caplog)
-    matches = [r for r in records if r.get("event") == "dynamic_pricing_applied"]
+    t_apply_config.apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(
+            pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6,
+        ),
+    )
+    lines = _last_log_lines(capsys, 5)
+    matches = [l for l in lines if l["event"] == "dynamic_pricing_applied"]
     assert len(matches) == 1
     assert matches[0]["level"] == "info"
     assert matches[0]["pricing_tier"] == "PREMIUM"
@@ -100,56 +143,52 @@ def test_apply_success_logs_info(seed_shop, caplog):
     assert matches[0]["enabled_after"] is True
 
 
-def test_pause_success_logs_info(seed_shop, caplog):
+def test_pause_success_logs_info(seed_shop, capsys):
     pid = _product_id(seed_shop)
-    with caplog.at_level("INFO"):
-        t_apply_config.apply_dynamic_pricing_config(
-            seed_shop, pid,
-            _blank_config(pricing_tier="BUDGET", frequency_unit="day", frequency_interval=1),
-        )
-        caplog.clear()  # discard the apply's own log line
-        t_apply_config.pause_dynamic_pricing(seed_shop, pid)
-    records = _get_structlog_records(caplog)
-    matches = [r for r in records if r.get("event") == "dynamic_pricing_paused"]
+    t_apply_config.apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="BUDGET", frequency_unit="day", frequency_interval=1),
+    )
+    capsys.readouterr()  # discard the apply's own log line
+    t_apply_config.pause_dynamic_pricing(seed_shop, pid)
+    lines = _last_log_lines(capsys, 5)
+    matches = [l for l in lines if l["event"] == "dynamic_pricing_paused"]
     assert len(matches) == 1
     assert matches[0]["level"] == "info"
     assert matches[0]["enabled_before"] is True
     assert matches[0]["enabled_after"] is False
 
 
-def test_delete_not_confirmed_logs_warning(seed_shop, caplog):
+def test_delete_not_confirmed_logs_warning(seed_shop, capsys):
     pid = _product_id(seed_shop)
-    with caplog.at_level("WARNING"):
-        with pytest.raises(RuntimeError):
-            t_apply_config.delete_dynamic_pricing(seed_shop, pid, confirmed=False)
-    records = _get_structlog_records(caplog)
-    matches = [r for r in records if r.get("event") == "dynamic_pricing_delete_not_confirmed"]
+    with pytest.raises(RuntimeError):
+        t_apply_config.delete_dynamic_pricing(seed_shop, pid, confirmed=False)
+    lines = _last_log_lines(capsys, 5)
+    matches = [l for l in lines if l["event"] == "dynamic_pricing_delete_not_confirmed"]
     assert len(matches) == 1
     assert matches[0]["level"] == "warning"
 
 
-def test_delete_success_logs_info(seed_shop, caplog):
+def test_delete_success_logs_info(seed_shop, capsys):
     pid = _product_id(seed_shop)
-    with caplog.at_level("INFO"):
-        t_apply_config.delete_dynamic_pricing(seed_shop, pid, confirmed=True)
-    records = _get_structlog_records(caplog)
-    matches = [r for r in records if r.get("event") == "dynamic_pricing_deleted"]
+    t_apply_config.delete_dynamic_pricing(seed_shop, pid, confirmed=True)
+    lines = _last_log_lines(capsys, 5)
+    matches = [l for l in lines if l["event"] == "dynamic_pricing_deleted"]
     assert len(matches) == 1
     assert matches[0]["level"] == "info"
     assert "deleted_scraped_products" in matches[0]
 
 
-def test_product_not_found_logs_warning(caplog):
-    with caplog.at_level("WARNING"):
-        with pytest.raises(RuntimeError):
-            t_apply_config.pause_dynamic_pricing("no-such-shop.myshopify.com", "no-such-product")
-    records = _get_structlog_records(caplog)
-    matches = [r for r in records if r.get("event") == "dynamic_pricing_product_not_found"]
+def test_product_not_found_logs_warning(capsys):
+    with pytest.raises(RuntimeError):
+        t_apply_config.pause_dynamic_pricing("no-such-shop.myshopify.com", "no-such-product")
+    lines = _last_log_lines(capsys, 5)
+    matches = [l for l in lines if l["event"] == "dynamic_pricing_product_not_found"]
     assert len(matches) == 1
     assert matches[0]["level"] == "warning"
 
 
-def test_apply_unexpected_exception_logs_error_and_hides_internal_message(seed_shop, caplog, monkeypatch):
+def test_apply_unexpected_exception_logs_error_and_hides_internal_message(seed_shop, capsys, monkeypatch):
     pid = _product_id(seed_shop)
 
     def _boom(*args, **kwargs):
@@ -157,17 +196,16 @@ def test_apply_unexpected_exception_logs_error_and_hides_internal_message(seed_s
 
     monkeypatch.setattr(t_apply_config, "apply_pane_config", _boom)
 
-    with caplog.at_level("ERROR"):
-        with pytest.raises(RuntimeError) as excinfo:
-            t_apply_config.apply_dynamic_pricing_config(
-                seed_shop, pid,
-                _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6),
-            )
+    with pytest.raises(RuntimeError) as excinfo:
+        t_apply_config.apply_dynamic_pricing_config(
+            seed_shop, pid,
+            _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6),
+        )
 
     assert "some internal SQL detail" not in str(excinfo.value)
 
-    records = _get_structlog_records(caplog)
-    matches = [r for r in records if r.get("event") == "dynamic_pricing_apply_failed"]
+    lines = _last_log_lines(capsys, 5)
+    matches = [l for l in lines if l["event"] == "dynamic_pricing_apply_failed"]
     assert len(matches) == 1
     assert matches[0]["level"] == "error"
     assert "some internal SQL detail" in matches[0]["error"]
