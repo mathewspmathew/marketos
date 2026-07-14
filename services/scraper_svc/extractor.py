@@ -42,24 +42,6 @@ _groq_client = make_groq_client()
 
 _UNIT_TO_SECONDS = {"min": 60, "hr": 3600, "day": 86400}
 
-
-def _compute_next_run_at(config_id: str | None) -> datetime | None:
-    """Compute next rescrap time from ScrapingConfig frequency. Returns None if no valid config."""
-    if not config_id:
-        return None
-    try:
-        with get_db() as session:
-            config = session.query(ScrapingConfig).filter(ScrapingConfig.id == config_id).first()
-            if not config:
-                return None
-            unit = config.frequencyUnit or "nofreq"
-            interval = config.frequencyInterval or 1
-            if unit not in _UNIT_TO_SECONDS:
-                return None
-            return datetime.now(timezone.utc) + timedelta(seconds=interval * _UNIT_TO_SECONDS[unit])
-    except Exception:
-        return None
-
 GROQ_EXTRACT_PROMPT = """You are a professional e-commerce data extractor.
 Extract structured product data from the markdown of this product page: {url}
 

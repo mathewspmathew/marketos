@@ -26,12 +26,15 @@ URLS_KEY_TTL    = 7200
 
 
 def update_config_status(config_id: str, status: str) -> None:
-    with get_db() as session:
-        session.execute(
-            sa_update(ScrapingConfig)
-            .where(ScrapingConfig.id == config_id)
-            .values(status=status, updatedAt=func.now())
-        )
+    try:
+        with get_db() as session:
+            session.execute(
+                sa_update(ScrapingConfig)
+                .where(ScrapingConfig.id == config_id)
+                .values(status=status, updatedAt=func.now())
+            )
+    except Exception:
+        logger.exception("update_config_status_failed", config_id=config_id, status=status)
 
 
 def log_error(

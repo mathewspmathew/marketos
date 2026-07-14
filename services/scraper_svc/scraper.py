@@ -237,7 +237,10 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
         update_config_status(config_id, "IDLE")
         return
 
-    _redis.set(f"scrape_urls:{config_id}", json.dumps(product_urls), ex=URLS_KEY_TTL)
+    try:
+        _redis.set(f"scrape_urls:{config_id}", json.dumps(product_urls), ex=URLS_KEY_TTL)
+    except Exception:
+        logger.exception("redis_set_scrape_urls_failed", config_id=config_id)
 
     logger.info("concurrent_scrape_starting", product_url_count=len(product_urls), workers=_MAX_SCRAPE_WORKERS)
     uploaded_pages: list[tuple[str, str]] = []
@@ -261,7 +264,10 @@ def _scrape_listing_inner(config_id: str, shop_domain: str, listing_url: str, nu
 
     # Set counter before sending so tasks that finish fast find the key.
     # Decrement for any send that fails so the counter stays accurate.
-    _redis.set(f"scrape_pending:{config_id}", n, ex=PENDING_KEY_TTL)
+    try:
+        _redis.set(f"scrape_pending:{config_id}", n, ex=PENDING_KEY_TTL)
+    except Exception:
+        logger.exception("redis_set_scrape_pending_failed", config_id=config_id)
 
     for product_url, gcs_ref in uploaded_pages:
         try:
@@ -302,9 +308,16 @@ def rescrape_product(self, config_id: str, shop_domain: str, product_url: str, p
         raise self.retry(exc=ValueError(f"Rescrape failed: {product_url}"))
 
     _, gcs_ref = result
-    app.send_task(
-        'scraper.rescrape_extract',
-        args=[config_id, shop_domain, product_url, gcs_ref, prod_id],
-        queue='extraction_queue',
-    )
-    logger.info("rescrape_extraction_queued", product_url=product_url)
+    try:
+        app.send_task(
+            'scraper.rescrape_extract',
+            args=[config_id, shop_domain, product_url, gcs_ref, prod_id],
+            queue='extraction_queue',
+        )
+        logger.info("rescrape_extraction_queued", product_url=product_url)
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            logger.exception("rescrape_extraction_queue_failed_giving_up", product_url=product_url)
+            set_next_scrap_at(config_id, product_url)
+            return
+        raise self.retry(exc=exc)
