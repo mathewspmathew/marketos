@@ -79,8 +79,10 @@ def upload_image_to_gcs(image_url: str) -> str:
         return ""
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
-            try: os.remove(temp_file_path)
-            except: pass
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                logger.debug("temp_file_cleanup_failed", path=temp_file_path)
 
 
 def upload_markdown_to_gcs(markdown_content: str, domain: str, product_url: str = "") -> str:
@@ -103,8 +105,10 @@ def upload_markdown_to_gcs(markdown_content: str, domain: str, product_url: str 
         return ""
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
-            try: os.remove(temp_file_path)
-            except: pass
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                logger.debug("temp_file_cleanup_failed", path=temp_file_path)
 
 
 def download_markdown_from_gcs(gcs_ref: str) -> str:
