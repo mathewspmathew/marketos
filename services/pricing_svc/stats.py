@@ -134,11 +134,14 @@ def recompute_for_variant(self, shop_domain: str, shopify_variant_id: str):
         raise self.retry(exc=exc)
 
     if product_id:
-        app.send_task(
-            "pricing.decide_for_product",
-            args=[shop_domain, product_id],
-            queue="pricing_queue",
-        )
+        try:
+            app.send_task(
+                "pricing.decide_for_product",
+                args=[shop_domain, product_id],
+                queue="pricing_queue",
+            )
+        except Exception:
+            logger.exception("decide_for_product_dispatch_failed", shop_domain=shop_domain, product_id=product_id)
     return {"ok": True, "product_id": product_id}
 
 
@@ -186,15 +189,21 @@ def recompute_after_observation(self, shop_domain: str, competitor_variant_id: s
         raise self.retry(exc=exc)
 
     for pid in product_ids:
-        app.send_task(
-            "pricing.decide_for_product",
-            args=[shop_domain, pid],
-            queue="pricing_queue",
-        )
+        try:
+            app.send_task(
+                "pricing.decide_for_product",
+                args=[shop_domain, pid],
+                queue="pricing_queue",
+            )
+        except Exception:
+            logger.exception("decide_for_product_dispatch_failed", shop_domain=shop_domain, product_id=pid)
     for vid in variant_ids:
-        app.send_task(
-            "stats.recompute_for_variant",
-            args=[shop_domain, vid],
-            queue="stats_queue",
-        )
+        try:
+            app.send_task(
+                "stats.recompute_for_variant",
+                args=[shop_domain, vid],
+                queue="stats_queue",
+            )
+        except Exception:
+            logger.exception("recompute_for_variant_dispatch_failed", shop_domain=shop_domain, shopify_variant_id=vid)
     return {"ok": True, "products": len(product_ids), "variants": len(variant_ids)}
