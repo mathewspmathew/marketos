@@ -223,6 +223,7 @@ async def chat(req: ChatRequest):
             yield {"event": "done", "data": "{}"}
 
         except Exception as exc:
+            logger.exception("chat_request_failed", user_message=req.message)
             yield {"event": "error", "data": json.dumps({"message": str(exc)})}
 
         finally:
@@ -237,14 +238,21 @@ async def chat(req: ChatRequest):
 async def query_studio(req: QueryStudioRequest):
     """Stateless Query Studio turn: propose 3 candidate competitor-search queries,
     or refine the prior ones per an instruction. Shop-scoped via the engine."""
-    if req.mode == "refine":
-        cands = t_query_studio.refine_queries(
-            req.shop_domain, req.product_id, req.focus,
-            req.prior or [], req.instruction or "",
+    try:
+        if req.mode == "refine":
+            cands = t_query_studio.refine_queries(
+                req.shop_domain, req.product_id, req.focus,
+                req.prior or [], req.instruction or "",
+            )
+        else:
+            cands = t_query_studio.propose_queries(req.shop_domain, req.product_id, req.focus)
+        return {"candidates": [c.model_dump() for c in cands]}
+    except Exception as exc:
+        logger.exception(
+            "query_studio_request_failed",
+            shop_domain=req.shop_domain, product_id=req.product_id,
         )
-    else:
-        cands = t_query_studio.propose_queries(req.shop_domain, req.product_id, req.focus)
-    return {"candidates": [c.model_dump() for c in cands]}
+        raise HTTPException(status_code=500, detail="Query Studio request failed.") from exc
 
 
 @app.post("/apply-callback")
