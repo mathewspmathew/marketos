@@ -438,11 +438,24 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
     # Enqueue the Shopify push outside the DB session. One per product, not per
     # variant — apply_price fans out to all variants of the product internally.
     if applied_any and first_decision_id:
-        app.send_task(
-            "pricing.apply_price",
-            args=[shop_domain, shopify_product_id, first_decision_id],
-            queue="pricing_queue",
-        )
+        try:
+            app.send_task(
+                "pricing.apply_price",
+                args=[shop_domain, shopify_product_id, first_decision_id],
+                queue="pricing_queue",
+            )
+        except Exception:
+            logger.exception(
+                "apply_price_dispatch_failed",
+                shop_domain=shop_domain,
+                shopify_product_id=shopify_product_id,
+                decision_id=first_decision_id,
+            )
+            with get_db() as session:
+                session.execute(
+                    text('UPDATE "PriceDecision" SET "applyError" = :e WHERE id = :id'),
+                    {"e": "dispatch_failed", "id": first_decision_id},
+                )
 
     return {
         "ok": True, "written": written,

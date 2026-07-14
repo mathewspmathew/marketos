@@ -29,26 +29,13 @@ from services.common.shopify_auth import (
 logger = structlog.get_logger(__name__)
 
 
-def _stamp_error(session, decision_ids: list[str], err: str, shop_domain: str = "", pending: list[tuple] = None) -> None:
+def _stamp_error(session, decision_ids: list[str], err: str) -> None:
     if not decision_ids:
         return
     session.execute(
         text('UPDATE "PriceDecision" SET "applyError" = :e WHERE id = ANY(:ids)'),
         {"e": err[:500], "ids": decision_ids},
     )
-    # Log failures for activity tracking
-    if pending and shop_domain:
-        for did, vid, _ in pending:
-            if did in decision_ids:
-                try:
-                    # Try to fetch the product ID from the variant
-                    product_result = session.execute(
-                        text('SELECT "productId" FROM "ShopifyVariant" WHERE id = :v'),
-                        {"v": vid},
-                    ).scalar()
-                    product_id = product_result if product_result else ""
-                except Exception as e:
-                    logger.exception("price_decision_update_failed", error=str(e))
 
 
 def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) -> dict:
@@ -106,11 +93,11 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
             )
         except ShopifyAuthError as exc:
             msg = f"auth_error: {str(exc)}"
-            _stamp_error(session, [d for d, _, _ in pending], msg, shop_domain, pending)
+            _stamp_error(session, [d for d, _, _ in pending], msg)
             return {"ok": False, "reason": "unauthorized", "error": msg}
         except ShopifyAPIError as exc:
             msg = f"api_error: {str(exc)}"
-            _stamp_error(session, [d for d, _, _ in pending], msg, shop_domain, pending)
+            _stamp_error(session, [d for d, _, _ in pending], msg)
             return {"ok": False, "reason": "api_error", "error": msg}
 
         # Extract response data (GraphQL response format)
@@ -121,8 +108,6 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
                 session,
                 [d for d, _, _ in pending],
                 f"user_errors: {json.dumps(user_errors)[:400]}",
-                shop_domain,
-                pending,
             )
             return {"ok": False, "reason": "user_errors", "userErrors": user_errors}
 
@@ -142,18 +127,6 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
                 {"p": float(price), "v": vid},
             )
 
-        # Log successful applies for activity tracking
-        for did, vid, _ in pending:
-            try:
-                # Try to fetch the product ID from the variant
-                product_result = session.execute(
-                    text('SELECT "productId" FROM "ShopifyVariant" WHERE id = :v'),
-                    {"v": vid},
-                ).scalar()
-                product_id = product_result if product_result else ""
-            except Exception as e:
-                logger.exception("price_decision_update_failed", error=str(e))
-
     return {"ok": True, "applied": len(pending), "decisionIds": decision_ids}
 
 
@@ -163,11 +136,10 @@ def apply_price(self, shop_domain: str, shopify_product_id: str, trigger_decisio
         return _apply(shop_domain, shopify_product_id, trigger_decision_id)
     except Exception as exc:
         if self.request.retries >= self.max_retries:
-            logger.error(
+            logger.exception(
                 "apply_price_permanently_failed",
                 shopify_product_id=shopify_product_id,
                 trigger_decision_id=trigger_decision_id,
-                error=str(exc),
             )
             return {"ok": False, "reason": "exception", "error": str(exc)}
         raise self.retry(exc=exc)
