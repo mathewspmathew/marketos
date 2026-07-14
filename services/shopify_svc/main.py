@@ -450,11 +450,14 @@ def refresh_all_sales_aggregates(self):
             ).all()
         ]
     for shop in shops:
-        app.send_task(
-            "shopify_sync.recompute_sales_aggregate",
-            args=[shop],
-            queue="shopify_sync_queue",
-        )
+        try:
+            app.send_task(
+                "shopify_sync.recompute_sales_aggregate",
+                args=[shop],
+                queue="shopify_sync_queue",
+            )
+        except Exception:
+            logger.exception("sales_aggregate_dispatch_failed", shop_domain=shop)
     logger.info("daily_sales_refresh_queued", shop_count=len(shops))
     return len(shops)
 
@@ -625,7 +628,10 @@ def sweep_pending(self):
             """),
         ).all()
     for (did,) in rows:
-        app.send_task("shopify_writer.apply_decision", args=[did], queue="writer_queue")
+        try:
+            app.send_task("shopify_writer.apply_decision", args=[did], queue="writer_queue")
+        except Exception:
+            logger.exception("apply_decision_dispatch_failed", decision_id=did)
     if rows:
         logger.info("pending_decisions_swept", count=len(rows))
     return len(rows)
