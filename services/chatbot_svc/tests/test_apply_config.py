@@ -8,7 +8,7 @@ import pytest
 
 from services.common.db import get_db
 from services.common.models import ShopifyProduct
-from services.common.models import CompetitorCandidate, ScrapedProduct
+from services.common.models import CompetitorCandidate, ScrapedProduct, ProductUrl, ShopSettings
 from services.chatbot_svc.schemas import PaneConfigInput
 from services.chatbot_svc.tools.apply_config import (
     apply_dynamic_pricing_config, pause_dynamic_pricing,
@@ -388,3 +388,52 @@ def test_fresh_product_still_requires_tier_even_with_frequency_given(seed_shop):
             seed_shop, pid,
             _blank_config(frequency_unit="hour", frequency_interval=6),
         )
+
+
+def test_browser_paused_product_resumes_via_history_not_frequency(seed_shop):
+    """Regression test for a gap found in the final whole-branch review:
+    the browser's own pause action (app.products.jsx's toggleDynamic OFF
+    branch) wipes frequencyUnit/frequencyInterval/pricingTier back to
+    defaults — unlike the chat pause, which only flips the flag. A plain
+    resume via chat on a browser-paused product must not be wrongly
+    treated as a first-time enable just because frequency is null; real
+    scrape history (a ProductUrl row) must also count as "previously
+    configured". The resumed product must also get a real schedule from
+    ShopSettings, not silently stay frequency-null forever."""
+    pid = _product_id(seed_shop)
+    scraped_id = str(uuid.uuid4())
+    url_id = str(uuid.uuid4())
+
+    with get_db() as s:
+        # Shape the product exactly like the browser's toggleDynamic OFF
+        # branch leaves it: flag off, frequency nulled, tier reset to default.
+        product = s.get(ShopifyProduct, pid)
+        product.dynamicPricingEnabled = False
+        product.frequencyUnit = None
+        product.frequencyInterval = None
+        product.pricingTier = "COMPETITIVE"
+        s.flush()
+
+        s.add(ScrapedProduct(id=scraped_id, shopDomain=seed_shop, domain="example.com", title="Competitor"))
+        s.flush()
+        s.add(ProductUrl(
+            id=url_id, shopDomain=seed_shop, shopifyProductId=pid, prodId=scraped_id,
+            url=f"https://example.com/{url_id}", status="ACTIVE",
+        ))
+        s.add(ShopSettings(shopDomain=seed_shop, frequencyUnit="hour", frequencyInterval=4))
+
+    try:
+        result = apply_dynamic_pricing_config(seed_shop, pid, _blank_config())
+        assert result.dynamic_pricing_enabled_after is True
+
+        with get_db() as s:
+            product = s.get(ShopifyProduct, pid)
+            assert product.dynamicPricingEnabled is True
+            # Frequency must be filled from ShopSettings, not left null.
+            assert product.frequencyUnit == "hour"
+            assert product.frequencyInterval == 4
+    finally:
+        with get_db() as s:
+            s.query(ProductUrl).filter(ProductUrl.id == url_id).delete(synchronize_session=False)
+            s.query(ScrapedProduct).filter(ScrapedProduct.id == scraped_id).delete(synchronize_session=False)
+            s.query(ShopSettings).filter(ShopSettings.shopDomain == seed_shop).delete(synchronize_session=False)

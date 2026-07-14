@@ -29,22 +29,34 @@ def apply_dynamic_pricing_config(
                 f"Resolve it with resolve_product first."
             )
 
+        previously_configured = False
         if not product.dynamicPricingEnabled:
-            # "Ever configured before" signal: frequencyUnit is nullable and only
-            # ever set by a real configure action, unlike pricingTier (which has a
-            # NOT NULL "COMPETITIVE" DB default and so can never distinguish "never
-            # chosen" from "chose COMPETITIVE"). A paused product that was
-            # configured before has frequencyUnit set — use that as the proxy to
-            # also rescue tier, so a plain resume (all-null config) on a
-            # previously-configured product doesn't get wrongly asked to repeat a
-            # tier it already has.
-            previously_configured = product.frequencyUnit is not None or product.frequencyInterval is not None
+            # "Ever configured before" signal. frequencyUnit survives a CHAT
+            # pause (pause_dynamic_pricing only flips the flag) but NOT a
+            # BROWSER pause (app.products.jsx's toggleDynamic OFF branch
+            # explicitly nulls frequencyUnit/frequencyInterval and resets
+            # pricingTier to COMPETITIVE) — so also check for real scrape
+            # history (a ProductUrl row), which neither pause path touches
+            # and only delete_dynamic_pricing removes. Without this, a
+            # product paused in the browser then resumed via chat would be
+            # wrongly treated as never-configured.
+            has_history = (
+                s.query(models.ProductUrl.id)
+                .filter(models.ProductUrl.shopifyProductId == product_id)
+                .first()
+                is not None
+            )
+            previously_configured = (
+                product.frequencyUnit is not None
+                or product.frequencyInterval is not None
+                or has_history
+            )
             missing = []
             if config.pricing_tier is None and not previously_configured:
                 missing.append("pricing tier (BUDGET, COMPETITIVE, or PREMIUM)")
             unit_missing = config.frequency_unit is None and product.frequencyUnit is None
             interval_missing = config.frequency_interval is None and product.frequencyInterval is None
-            if unit_missing or interval_missing:
+            if (unit_missing or interval_missing) and not previously_configured:
                 missing.append("rescrape frequency (both a unit and a number, e.g. every 6 hours)")
             if missing:
                 raise RuntimeError(
@@ -53,13 +65,33 @@ def apply_dynamic_pricing_config(
                     f"missing value(s), then call this tool again with the complete config."
                 )
 
+        # A previously-configured product whose frequency was wiped by a
+        # browser pause (see previously_configured above) must not resume
+        # with a permanently-null schedule — apply_pane_config's own
+        # "config value or existing value" fallback would leave it null
+        # forever, so the beat scheduler's frequencyUnit <> 'never' filter
+        # would silently never match. Fall back to the shop's default
+        # cadence instead, mirroring app.products.jsx's own toggleDynamic
+        # ON-branch fallback (copy ShopSettings when nothing is on file).
+        effective_frequency_unit = config.frequency_unit
+        effective_frequency_interval = config.frequency_interval
+        if (
+            previously_configured
+            and config.frequency_unit is None
+            and product.frequencyUnit is None
+        ):
+            settings = s.get(models.ShopSettings, shop_domain)
+            if settings is not None:
+                effective_frequency_unit = settings.frequencyUnit
+                effective_frequency_interval = settings.frequencyInterval
+
         pane_config = PaneConfig(
             search_query_override=config.search_query_override,
             pricing_tier=config.pricing_tier,
             min_price_override=config.min_price_override,
             max_price_override=config.max_price_override,
-            frequency_unit=config.frequency_unit,
-            frequency_interval=config.frequency_interval,
+            frequency_unit=effective_frequency_unit,
+            frequency_interval=effective_frequency_interval,
             discovery_num_results=config.discovery_num_results,
             listing_expansion_cap=config.listing_expansion_cap,
         )

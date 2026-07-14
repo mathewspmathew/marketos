@@ -43,7 +43,7 @@ from services.chatbot_svc.schemas import (
     ScopeFilter,
     PriceChange,
     PreviewSummary,
-    PanelSummary,
+    PanelSummary,  # noqa: F401 — kept for the commented-out open_dynamic_pricing_panel tool below
     ApplyResult,
     VariantSummary,
     ResolvedProduct,
@@ -59,7 +59,7 @@ from services.chatbot_svc.schemas import (
 from services.chatbot_svc.tools import search as t_search
 from services.chatbot_svc.tools import stats as t_stats
 from services.chatbot_svc.tools import preview as t_preview
-from services.chatbot_svc.tools import panel as t_panel
+from services.chatbot_svc.tools import panel as t_panel  # noqa: F401 — kept for the commented-out open_dynamic_pricing_panel tool below
 from services.chatbot_svc.tools import apply_config as t_apply_config
 from services.chatbot_svc.tools import status as t_status
 from services.chatbot_svc.tools import debug as t_debug
