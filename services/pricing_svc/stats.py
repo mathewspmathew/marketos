@@ -21,10 +21,13 @@ import statistics
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import structlog
 from sqlalchemy import text
 
 from services.common.celery_app import app
 from services.common.db import get_db
+
+logger = structlog.get_logger(__name__)
 
 
 def _percentile(sorted_vals: list[float], pct: float) -> float | None:
@@ -127,6 +130,7 @@ def recompute_for_variant(self, shop_domain: str, shopify_variant_id: str):
     try:
         product_id = _recompute_for_variant(shop_domain, shopify_variant_id)
     except Exception as exc:
+        logger.exception("recompute_for_variant_failed", shop_domain=shop_domain, shopify_variant_id=shopify_variant_id)
         raise self.retry(exc=exc)
 
     if product_id:
@@ -178,6 +182,7 @@ def recompute_after_observation(self, shop_domain: str, competitor_variant_id: s
             ).all()
             variant_ids = [r[0] for r in variant_rows]
     except Exception as exc:
+        logger.exception("recompute_after_observation_failed", shop_domain=shop_domain, competitor_variant_id=competitor_variant_id)
         raise self.retry(exc=exc)
 
     for pid in product_ids:
