@@ -29,6 +29,8 @@ from sse_starlette.sse import EventSourceResponse
 from services.chatbot_svc.schemas import QueryCandidate
 from services.chatbot_svc.tools import query_studio as t_query_studio
 
+import structlog
+
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps
@@ -36,7 +38,12 @@ from services.chatbot_svc.titling import maybe_set_title
 from services.chatbot_svc import sessions as sessions_svc
 from services.chatbot_svc.tools.ask import AskUserRequested
 from services.common.db import get_db
+from services.common.logging_config import setup_logging
 from services.common.models import ChatMessage, ChatPreview, ChatSession
+
+setup_logging()
+
+logger = structlog.get_logger(__name__)
 
 app = FastAPI(title="MarketOS Chatbot Service")
 
@@ -134,6 +141,22 @@ def _record(session_id: str, role: str, content: dict) -> None:
         )
 
 
+def _bind_request_context(shop_domain: str, session_id: str) -> None:
+    """Bind shop_domain/session_id as structlog contextvars for the rest of
+    this request. Every log line emitted anywhere during this request —
+    including from deep inside apply_config.py's mutation functions — picks
+    these up automatically, mirroring logging_config.py's Celery task_id
+    binding."""
+    structlog.contextvars.bind_contextvars(
+        shop_domain=shop_domain,
+        session_id=session_id,
+    )
+
+
+def _clear_request_context() -> None:
+    structlog.contextvars.clear_contextvars()
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -143,6 +166,7 @@ def _record(session_id: str, role: str, content: dict) -> None:
 async def chat(req: ChatRequest):
     """Stream agent output as Server-Sent Events."""
     sid = _ensure_session(req.shop_domain, req.user_id, req.session_id)
+    _bind_request_context(req.shop_domain, sid)
     # Build history BEFORE recording the new user message so the current
     # prompt isn't double-counted (pydantic-ai also receives it as the prompt).
     history = build_context(sid)
@@ -204,6 +228,7 @@ async def chat(req: ChatRequest):
         finally:
             # Always close the httpx client regardless of outcome.
             await deps.http.aclose()
+            _clear_request_context()
 
     return EventSourceResponse(event_stream())
 
