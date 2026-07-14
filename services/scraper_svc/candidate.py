@@ -551,13 +551,16 @@ def expand_listing(self, candidate_id: str, gcs_ref: str):
             if not result:
                 # URL already a candidate for this merchant product — skip.
                 continue
-            app.send_task(
-                "scraper.scrape_candidate",
-                args=[child_id],
-                queue="scraping_queue",
-                countdown=i * LISTING_CARD_STAGGER_SECONDS,
-            )
-            queued += 1
+            try:
+                app.send_task(
+                    "scraper.scrape_candidate",
+                    args=[child_id],
+                    queue="scraping_queue",
+                    countdown=i * LISTING_CARD_STAGGER_SECONDS,
+                )
+                queued += 1
+            except Exception:
+                logger.exception("scrape_candidate_dispatch_failed", candidate_id=child_id)
 
         _set_candidate_status(
             db, candidate_id,
