@@ -75,3 +75,33 @@ def test_get_delete_preview_tool_registered():
 
 def test_delete_dynamic_pricing_tool_registered():
     assert "delete_dynamic_pricing" in _tool_names()
+
+
+def test_system_prompt_requires_explicit_tier_options():
+    """Regression guard for a live-verified-but-prompt-only behavior: the
+    missing-tier ask_user call must pass explicit BUDGET/COMPETITIVE/PREMIUM
+    options, not an open-ended question. There is no code-level way to force
+    the LLM's actual ask_user call, so this pins the instruction text itself
+    — if a future system.md edit silently drops this requirement, this test
+    fails and signals "re-run the live disambiguation/tier-options test
+    before trusting this again" (see
+    docs/superpowers/plans/2026-07-14-disambiguation-tests-and-tier-options.md)."""
+    from services.chatbot_svc.agent import _PROMPT
+    assert 'options=["BUDGET", "COMPETITIVE", "PREMIUM"]' in _PROMPT
+
+
+def test_system_prompt_requires_titles_as_multi_match_options():
+    """Regression guard for the multi-match disambiguation instruction —
+    same rationale as test_system_prompt_requires_explicit_tier_options."""
+    from services.chatbot_svc.agent import _PROMPT
+    assert "candidates' titles as the `options` list" in _PROMPT
+
+
+def test_apply_dynamic_pricing_config_docstring_requires_tier_options():
+    """Same regression guard, on the tool docstring surface (agent.py),
+    which the LLM also reads directly from the tool's own definition."""
+    from services.chatbot_svc.agent import agent
+    tool = agent._function_toolset.tools["apply_dynamic_pricing_config"]
+    docstring = tool.function.__doc__ or ""
+    assert "ask_user's options MUST be" in docstring
+    assert '["BUDGET", "COMPETITIVE", "PREMIUM"]' in docstring
