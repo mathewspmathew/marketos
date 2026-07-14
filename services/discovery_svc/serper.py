@@ -13,6 +13,9 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 SERPER_BASE = "https://google.serper.dev"
 SERPER_TIMEOUT = 20.0
@@ -34,6 +37,7 @@ def _domain_of(url: str) -> str:
     try:
         return urlparse(url).netloc.lower().removeprefix("www.")
     except Exception:
+        logger.debug("domain_parse_failed", url=url)
         return ""
 
 

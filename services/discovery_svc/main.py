@@ -78,6 +78,7 @@ def _normalize_url(url: str) -> str:
             "",
         ))
     except Exception:
+        logger.debug("url_normalize_failed", url=url)
         return url
 
 
@@ -85,6 +86,7 @@ def _domain_of(url: str) -> str:
     try:
         return urlparse(url).netloc.lower().removeprefix("www.")
     except Exception:
+        logger.debug("domain_parse_failed", url=url)
         return ""
 
 
