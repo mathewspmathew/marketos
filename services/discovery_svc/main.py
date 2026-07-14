@@ -243,6 +243,9 @@ def search_products(
             raise
 
     for cid in saved_ids:
-        app.send_task("scraper.scrape_candidate", args=[cid], queue="scraping_queue")
+        try:
+            app.send_task("scraper.scrape_candidate", args=[cid], queue="scraping_queue")
+        except Exception:
+            logger.exception("scrape_candidate_dispatch_failed", candidate_id=cid)
 
     return {"job_id": job_id_out, "candidates": len(saved_ids)}
