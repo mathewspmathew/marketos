@@ -386,10 +386,17 @@ def match_for_scraped_product(self, scraped_product_id: str):
     # Stats recomputation per merchant variant whose match set changed.
     assert shop_domain is not None
     for svid in touched_variants:
-        app.send_task(
-            "stats.recompute_for_variant",
-            args=[shop_domain, svid],
-            queue="stats_queue",
-        )
+        try:
+            app.send_task(
+                "stats.recompute_for_variant",
+                args=[shop_domain, svid],
+                queue="stats_queue",
+            )
+        except Exception:
+            logger.exception(
+                "recompute_for_variant_dispatch_failed",
+                shop_domain=shop_domain,
+                shopify_variant_id=svid,
+            )
 
     return total_written
