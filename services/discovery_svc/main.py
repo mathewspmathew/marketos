@@ -240,6 +240,11 @@ def search_products(
             job.error       = str(exc)[:1000]
             job.completedAt = datetime.now(timezone.utc)
             db.flush()
+            logger.exception(
+                "search_products_failed",
+                shopify_product_id=shopify_product_id,
+                job_id=job.id,
+            )
             raise
 
     for cid in saved_ids:
