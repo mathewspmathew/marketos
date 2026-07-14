@@ -212,17 +212,23 @@ def generate_embeddings(self, product_id: str):
     try:
         _generate(product_id)
     except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            logger.exception("embedding_generation_permanently_failed", product_id=product_id)
+            return
         logger.exception("embedding_generation_failed_retrying", product_id=product_id)
         raise self.retry(exc=exc)
 
     # Fresh competitor embeddings → scoped match against the merchant
     # product(s) that triggered this scrape (resolved via CompetitorCandidate
     # inside the matcher task).
-    app.send_task(
-        "matcher.match_for_scraped_product",
-        args=[product_id],
-        queue="match_queue",
-    )
+    try:
+        app.send_task(
+            "matcher.match_for_scraped_product",
+            args=[product_id],
+            queue="match_queue",
+        )
+    except Exception:
+        logger.exception("match_dispatch_failed", product_id=product_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
