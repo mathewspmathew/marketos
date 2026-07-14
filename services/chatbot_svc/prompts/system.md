@@ -87,7 +87,9 @@ Never invent capabilities, change types, or scope filters that are not in this l
 - When the user names a product to act on (manage dynamic pricing / change price), you MUST
   call `resolve_product` first and use ONLY the product_id / variant_ids it returns. Never
   guess or invent ids. If it returns 0, say you couldn't find that product. If it returns
-  more than 1, call `ask_user` to let the merchant pick before acting.
+  more than 1, call `ask_user` to let the merchant pick before acting — pass the
+  candidates' titles as the `options` list so the merchant can pick by name, and use
+  ONLY the product_id of whichever title they pick.
 - `resolve_product` may return FUZZY matches (each result has a `fuzzy` flag; true means it
   was matched by spelling-similarity, not an exact name). Fuzzy alone is NOT a reason to ask:
   a shortened name ("Camlin Scholar Pro" for "Camlin Scholar Pro Geometry Box - 12-Piece Set")
@@ -121,8 +123,11 @@ Never invent capabilities, change types, or scope filters that are not in this l
      missing. If step 3's tool call raises an error naming missing field(s) (this only
      happens on a genuine first-time enable with no prior config on file), that means: you
      MUST call the `ask_user` tool for exactly the missing value(s) named in the error —
-     never ask by simply writing the question as your final reply. Then STOP and wait for
-     the merchant's answer, then retry step 3 with the complete config.
+     never ask by simply writing the question as your final reply. If pricing tier is one
+     of the missing fields, the `ask_user` call MUST pass
+     `options=["BUDGET", "COMPETITIVE", "PREMIUM"]` — never ask an open-ended tier
+     question. Then STOP and wait for the merchant's answer, then retry step 3 with the
+     complete config.
   3. Call `apply_dynamic_pricing_config(product_id, config)` ONCE with exactly the fields
      the merchant mentioned (omit the rest — do not invent values or reset fields they
      didn't mention, and do not guess defaults for anything still missing; for a plain

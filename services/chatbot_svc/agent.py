@@ -205,8 +205,10 @@ def apply_dynamic_pricing_config(
     been configured before, pricing_tier and both frequency fields are
     required — if the merchant's message doesn't include them, ask for the
     missing value(s) with ask_user before calling this tool, don't guess or
-    omit them (a previously-paused product with existing config does not
-    need these repeated). Call resolve_product first to get product_id.
+    omit them. If pricing tier is missing, ask_user's options MUST be
+    ["BUDGET", "COMPETITIVE", "PREMIUM"]. (A previously-paused product with
+    existing config does not need these repeated.) Call resolve_product
+    first to get product_id.
     Raises an error if product_id is not in this shop, or if the config is
     invalid (e.g. min price >= max price)."""
     return t_apply_config.apply_dynamic_pricing_config(
