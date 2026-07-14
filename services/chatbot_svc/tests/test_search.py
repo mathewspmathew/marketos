@@ -143,3 +143,46 @@ def test_resolve_product_weak_match_flagged(seed_shop):
     matches = resolve_product(seed_shop, "Boat White", strong_sim=0.99)
     assert matches and all(m.weak for m in matches)
     assert 0 < matches[0].score < 0.99
+
+
+def test_resolve_product_multiple_similar_names_returns_all(seed_shop):
+    """The real risk this covers: resolve_product must genuinely return
+    every match when two products have similar names, not silently pick
+    one — this is what the Hard rule's ">1 candidate -> ask_user" branch
+    depends on, and it has never had a test proving it actually happens."""
+    from services.common.db import get_db
+    from services.common.models import ShopifyProduct, ShopifyVariant
+    from services.chatbot_svc.tools.search import resolve_product
+    import uuid
+
+    second_product_id = f"gid://shopify/Product/{uuid.uuid4().hex[:8]}"
+    second_variant_id = f"gid://shopify/ProductVariant/{uuid.uuid4().hex[:8]}"
+    try:
+        with get_db() as s:
+            s.add(ShopifyProduct(
+                id=second_product_id,
+                shopDomain=seed_shop,
+                title="Boat Speaker Black",
+                vendor="Boat",
+                productType="audio",
+                tags=["audio", "black"],
+                dynamicPricingEnabled=False,
+            ))
+            s.flush()
+            s.add(ShopifyVariant(
+                id=second_variant_id,
+                productId=second_product_id,
+                title="black",
+                currentPrice=89.0,
+                options={"color": "black"},
+            ))
+
+        matches = resolve_product(seed_shop, "Boat Speaker")
+        titles = {m.title for m in matches}
+        assert len(matches) >= 2, f"expected multiple candidates, got {matches}"
+        assert "Boat Speaker White" in titles
+        assert "Boat Speaker Black" in titles
+    finally:
+        with get_db() as s:
+            s.query(ShopifyVariant).filter(ShopifyVariant.id == second_variant_id).delete(synchronize_session=False)
+            s.query(ShopifyProduct).filter(ShopifyProduct.id == second_product_id).delete(synchronize_session=False)
