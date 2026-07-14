@@ -2,14 +2,12 @@ import os
 os.environ.setdefault("GROQ_API_KEY", "test")
 
 import json
-import logging
-import sys
 
 import pytest
-import structlog
 
 from services.common.db import get_db
 from services.common.models import ShopifyProduct
+from services.common import logging_config
 from services.chatbot_svc.schemas import PaneConfigInput
 from services.chatbot_svc.tools import apply_config as t_apply_config
 
@@ -34,76 +32,17 @@ def _product_id(shop):
         return s.query(ShopifyProduct.id).filter(ShopifyProduct.shopDomain == shop).scalar()
 
 
-class CaptureHandler(logging.StreamHandler):
-    """Custom handler that also stores formatted messages for easy access."""
-    def __init__(self, stream):
-        super().__init__(stream)
-        self.messages = []
-
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            self.messages.append(msg)
-            super().emit(record)
-        except Exception:
-            self.handleError(record)
-
-
-@pytest.fixture(autouse=True)
-def _json_logging(capsys):
-    """Route structlog through the real JSON stdout pipeline for this test
-    file, so we can assert on the actual rendered event/level/fields."""
-    # Clear any existing handlers to ensure clean state
-    root_logger = logging.getLogger()
-    for handler in list(root_logger.handlers):
-        root_logger.removeHandler(handler)
-
-    # Configure structlog processors
-    _SHARED_PROCESSORS = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-    ]
-
-    structlog.configure(
-        processors=_SHARED_PROCESSORS
-        + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=False,  # Don't cache so we get fresh loggers
-    )
-
-    # Create formatter
-    formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=_SHARED_PROCESSORS,
-        processors=[
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.processors.dict_tracebacks,
-            structlog.processors.JSONRenderer(),
-        ],
-    )
-
-    # Use custom handler that stores messages and also writes to stdout
-    handler = CaptureHandler(sys.stdout)
-    handler.setFormatter(formatter)
-
-    # Set up root logger with this handler only
-    root_logger.handlers = [handler]
-    root_logger.setLevel(logging.INFO)
-
-    # Store handler on capsys so _last_log_lines can access it
-    capsys._json_handler = handler
-
-    yield capsys
+def _reset_json_logging() -> None:
+    """Reuse the same setup_logging() every Celery worker calls — no second
+    config. Called at the top of each test (not via an autouse fixture)
+    because pytest's capsys gives a distinct stdout-capture object per test
+    phase; binding the StreamHandler during fixture setup would leave it
+    pointed at a stream that's already closed by the time the test body's
+    log calls and capsys.readouterr() run in the call phase."""
+    logging_config.setup_logging()
 
 
 def _last_log_lines(capsys, n=1):
-    # Get messages from the custom handler we installed in the fixture
-    if hasattr(capsys, '_json_handler'):
-        messages = capsys._json_handler.messages[-n:]
-        return [json.loads(msg) for msg in messages if msg.strip()]
-    # Fallback to reading from capsys (in case handler is not available)
     out = capsys.readouterr().out.strip().splitlines()
     return [json.loads(line) for line in out[-n:]]
 
@@ -112,6 +51,7 @@ def test_apply_missing_fields_logs_warning(seed_shop, capsys):
     # seed_shop's product starts with dynamicPricingEnabled=False and no
     # frequencyUnit/pricingTier set — an all-null config hits the
     # first-enable missing-fields gate.
+    _reset_json_logging()
     pid = _product_id(seed_shop)
     with pytest.raises(RuntimeError):
         t_apply_config.apply_dynamic_pricing_config(seed_shop, pid, _blank_config())
@@ -126,6 +66,7 @@ def test_apply_missing_fields_logs_warning(seed_shop, capsys):
 
 
 def test_apply_success_logs_info(seed_shop, capsys):
+    _reset_json_logging()
     pid = _product_id(seed_shop)
     t_apply_config.apply_dynamic_pricing_config(
         seed_shop, pid,
@@ -144,6 +85,7 @@ def test_apply_success_logs_info(seed_shop, capsys):
 
 
 def test_pause_success_logs_info(seed_shop, capsys):
+    _reset_json_logging()
     pid = _product_id(seed_shop)
     t_apply_config.apply_dynamic_pricing_config(
         seed_shop, pid,
@@ -160,6 +102,7 @@ def test_pause_success_logs_info(seed_shop, capsys):
 
 
 def test_delete_not_confirmed_logs_warning(seed_shop, capsys):
+    _reset_json_logging()
     pid = _product_id(seed_shop)
     with pytest.raises(RuntimeError):
         t_apply_config.delete_dynamic_pricing(seed_shop, pid, confirmed=False)
@@ -170,6 +113,7 @@ def test_delete_not_confirmed_logs_warning(seed_shop, capsys):
 
 
 def test_delete_success_logs_info(seed_shop, capsys):
+    _reset_json_logging()
     pid = _product_id(seed_shop)
     t_apply_config.delete_dynamic_pricing(seed_shop, pid, confirmed=True)
     lines = _last_log_lines(capsys, 5)
@@ -180,6 +124,7 @@ def test_delete_success_logs_info(seed_shop, capsys):
 
 
 def test_product_not_found_logs_warning(capsys):
+    _reset_json_logging()
     with pytest.raises(RuntimeError):
         t_apply_config.pause_dynamic_pricing("no-such-shop.myshopify.com", "no-such-product")
     lines = _last_log_lines(capsys, 5)
@@ -189,6 +134,7 @@ def test_product_not_found_logs_warning(capsys):
 
 
 def test_apply_unexpected_exception_logs_error_and_hides_internal_message(seed_shop, capsys, monkeypatch):
+    _reset_json_logging()
     pid = _product_id(seed_shop)
 
     def _boom(*args, **kwargs):
