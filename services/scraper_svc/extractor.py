@@ -8,9 +8,8 @@ Task 2 — extract_product (extraction_queue)
 """
 
 import json
-import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import structlog
@@ -29,7 +28,6 @@ from services.common.models import (
     ProductUrl,
     ScrapedProduct,
     ScrapedVariant,
-    ScrapingConfig,
 )
 from services.common.schemas import ProductSchema
 from services.scraper_svc.helpers import log_error, mark_task_done, set_next_scrap_at
@@ -39,8 +37,6 @@ load_dotenv()
 logger = structlog.get_logger(__name__)
 
 _groq_client = make_groq_client()
-
-_UNIT_TO_SECONDS = {"min": 60, "hr": 3600, "day": 86400}
 
 GROQ_EXTRACT_PROMPT = """You are a professional e-commerce data extractor.
 Extract structured product data from the markdown of this product page: {url}
