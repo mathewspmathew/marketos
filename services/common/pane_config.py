@@ -96,6 +96,8 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
         product.listingExpansionCap = min(config.listing_expansion_cap, 50)
 
     product.dynamicPricingEnabled = True
+    if product.dynamicPricingConfiguredAt is None:
+        product.dynamicPricingConfiguredAt = datetime.now(timezone.utc)
 
     effective_unit = config.frequency_unit or product.frequencyUnit
     effective_interval = config.frequency_interval or product.frequencyInterval
@@ -238,6 +240,7 @@ def delete_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -
         ).delete(synchronize_session=False)
 
     product.dynamicPricingEnabled = False
+    product.dynamicPricingConfiguredAt = None
     product.frequencyInterval     = None
     product.frequencyUnit         = None
     product.pricingTier           = "COMPETITIVE"

@@ -121,3 +121,34 @@ def test_apply_omitted_fields_leave_existing_values(seeded_product_with_url):
         product = s.get(models.ShopifyProduct, product_id)
         assert product.searchQueryOverride == "existing override"
         assert product.pricingTier == "BUDGET"
+
+
+def test_apply_sets_dynamic_pricing_configured_at_on_first_configure(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.dynamicPricingConfiguredAt is None  # never configured yet
+        apply_pane_config(s, product, PaneConfig(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.dynamicPricingConfiguredAt is not None
+
+
+def test_apply_does_not_overwrite_existing_configured_at(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        first_timestamp = product.dynamicPricingConfiguredAt
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(min_price_override=500))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.dynamicPricingConfiguredAt == first_timestamp

@@ -6,6 +6,7 @@ constructed directly via the models, since new scrapes can no longer
 produce it), and ScrapingConfig cleanup.
 """
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -195,3 +196,25 @@ def test_delete_removes_referenced_scraping_config():
             assert s.get(models.ScrapingConfig, config_id) is None
     finally:
         _cleanup_all(shop, [product_id], [], [scraped_id], [config_id])
+
+
+def test_delete_clears_dynamic_pricing_configured_at():
+    shop = f"del-configured-at-{uuid.uuid4().hex[:8]}.myshopify.com"
+    product_id = f"gid://shopify/Product/{uuid.uuid4().hex[:8]}"
+
+    _make_shop_and_product(shop, product_id)
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.dynamicPricingConfiguredAt = datetime.now(timezone.utc)
+
+    try:
+        with get_db() as s:
+            product = s.get(models.ShopifyProduct, product_id)
+            assert product.dynamicPricingConfiguredAt is not None
+            delete_dynamic_pricing(s, product)
+
+        with get_db() as s:
+            product = s.get(models.ShopifyProduct, product_id)
+            assert product.dynamicPricingConfiguredAt is None
+    finally:
+        _cleanup_all(shop, [product_id], [], [], [])
