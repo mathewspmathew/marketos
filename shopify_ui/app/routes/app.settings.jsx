@@ -15,10 +15,19 @@ const FREQ_UNITS = [
 ];
 const ALLOWED_UNITS = new Set(FREQ_UNITS.map((u) => u.value));
 
+// Keep in sync with services/common/pane_config.py::PRICING_TIERS.
+const PRICING_TIERS = [
+  { value: "BUDGET",      label: "Budget"      },
+  { value: "COMPETITIVE", label: "Competitive" },
+  { value: "PREMIUM",     label: "Premium"     },
+];
+const ALLOWED_TIERS = new Set(PRICING_TIERS.map((t) => t.value));
+
 const DEFAULTS = {
   markupPct: 0.02,
   frequencyInterval: 1,
   frequencyUnit: "day",
+  defaultPricingTier: "COMPETITIVE",
   listingExpansionCap: 5,
   discoveryNumResults: 10,
   marketplaceBlocklist: [],
@@ -59,6 +68,7 @@ export const loader = async ({ request }) => {
       markupPct:                Number(s.markupPct), // "Discount applied to competitive tier products"
       frequencyInterval:        s.frequencyInterval, // "Every" N (with frequencyUnit)
       frequencyUnit:            s.frequencyUnit, // "Unit" (minute, hour, day, never)
+      defaultPricingTier:       s.defaultPricingTier, // "Default pricing tier for new products"
       listingExpansionCap:      s.listingExpansionCap, // "Products per listing page"
       discoveryNumResults:      s.discoveryNumResults, // "Competitor products per run"
       marketplaceBlocklist:     s.marketplaceBlocklist, // "Exclude these marketplaces"
@@ -102,6 +112,9 @@ export const action = async ({ request }) => {
   const unitRaw = (formData.get("frequencyUnit") || "").toString();
   const unit    = ALLOWED_UNITS.has(unitRaw) ? unitRaw : DEFAULTS.frequencyUnit;
 
+  const tierRaw = (formData.get("defaultPricingTier") || "").toString();
+  const tier    = ALLOWED_TIERS.has(tierRaw) ? tierRaw : DEFAULTS.defaultPricingTier;
+
   const blocklistRaw = (formData.get("marketplaceBlocklist") || "").toString();
   const blocklist = blocklistRaw
     .split(/[\n,]+/)
@@ -112,6 +125,7 @@ export const action = async ({ request }) => {
     markupPct: parsePctish(formData.get("markupPct")) ?? DEFAULTS.markupPct,
     frequencyInterval:        parsePositiveInt(formData.get("frequencyInterval"),        DEFAULTS.frequencyInterval),
     frequencyUnit:            unit,
+    defaultPricingTier:       tier,
     listingExpansionCap:      parsePositiveInt(formData.get("listingExpansionCap"),      DEFAULTS.listingExpansionCap),
     discoveryNumResults:      parsePositiveInt(formData.get("discoveryNumResults"),      DEFAULTS.discoveryNumResults),
     marketplaceBlocklist:     { set: blocklist },
@@ -210,6 +224,7 @@ export default function SettingsPage() {
     minFreshnessHours: String(settings.minFreshnessHours),
     frequencyInterval: String(settings.frequencyInterval),
     frequencyUnit: settings.frequencyUnit,
+    defaultPricingTier: settings.defaultPricingTier,
     autoRescrapeEnabled: settings.autoRescrapeEnabled,
     includeOosInPricing: settings.includeOosInPricing,
     currency: settings.currency,
@@ -239,6 +254,7 @@ export default function SettingsPage() {
         markupPct: form.markupPct,
         frequencyInterval: form.frequencyInterval,
         frequencyUnit: form.frequencyUnit,
+        defaultPricingTier: form.defaultPricingTier,
         listingExpansionCap: form.listingExpansionCap,
         discoveryNumResults: form.discoveryNumResults,
         marketplaceBlocklist: form.marketplaceBlocklist,
@@ -547,6 +563,20 @@ export default function SettingsPage() {
             </s-select>
           </div>
         </s-stack>
+      </s-section>
+
+      <s-section heading="🏷️ Default Pricing Tier">
+        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
+          Used for new products when the chatbot isn't told a tier explicitly.
+        </s-text>
+        <s-select
+          value={form.defaultPricingTier}
+          onChange={(e) => setField("defaultPricingTier", e.currentTarget.value)}
+        >
+          {PRICING_TIERS.map((t) => (
+            <s-option key={t.value} value={t.value}>{t.label}</s-option>
+          ))}
+        </s-select>
       </s-section>
 
       {/* 5. Controls */}
