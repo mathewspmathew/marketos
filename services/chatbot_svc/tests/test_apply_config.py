@@ -416,11 +416,11 @@ def test_paused_product_resumes_via_configured_at_not_history(seed_shop):
         product.dynamicPricingEnabled = False
         product.frequencyUnit = None
         product.frequencyInterval = None
-        product.pricingTier = "COMPETITIVE"
+        product.pricingTier = "PREMIUM"
         s.flush()
 
     with get_db() as s:
-        s.add(ShopSettings(shopDomain=seed_shop, frequencyUnit="hour", frequencyInterval=4))
+        s.add(ShopSettings(shopDomain=seed_shop, frequencyUnit="hour", frequencyInterval=4, defaultPricingTier="BUDGET"))
 
     try:
         result = apply_dynamic_pricing_config(seed_shop, pid, _blank_config())
@@ -431,6 +431,7 @@ def test_paused_product_resumes_via_configured_at_not_history(seed_shop):
             assert product.dynamicPricingEnabled is True
             assert product.frequencyUnit == "hour"
             assert product.frequencyInterval == 4
+            assert product.pricingTier == "PREMIUM"
     finally:
         with get_db() as s:
             s.query(ShopSettings).filter(ShopSettings.shopDomain == seed_shop).delete(synchronize_session=False)
