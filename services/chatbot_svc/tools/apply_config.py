@@ -121,7 +121,7 @@ def apply_dynamic_pricing_config(
             logger.info(
                 "dynamic_pricing_applied",
                 shop_domain=shop_domain, product_id=product_id,
-                pricing_tier=config.pricing_tier,
+                pricing_tier=product.pricingTier,
                 frequency_unit=effective_frequency_unit,
                 frequency_interval=effective_frequency_interval,
                 rearmed_count=result["rearmedCount"],

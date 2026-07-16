@@ -22,15 +22,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
+import structlog
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from services.chatbot_svc.schemas import QueryCandidate
 from services.chatbot_svc.tools import query_studio as t_query_studio
-
-import structlog
-
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps

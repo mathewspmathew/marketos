@@ -1,9 +1,30 @@
 import os
 os.environ.setdefault("GROQ_API_KEY", "test")
 
-import structlog
+import json
+import logging
 
+import pytest
+import structlog
+from fastapi.testclient import TestClient
+
+from services.common import logging_config
 from services.chatbot_svc.app import app  # noqa: F401 — import triggers setup_logging()
+from services.chatbot_svc import app as app_module
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logger_handlers():
+    """setup_logging() replaces the root logger's handlers wholesale with no
+    teardown of its own — restore whatever was there before this test so a
+    handler bound to this test's now-closed capsys stream doesn't leak into
+    later test files."""
+    root_logger = logging.getLogger()
+    original_handlers = root_logger.handlers[:]
+    original_level = root_logger.level
+    yield
+    root_logger.handlers = original_handlers
+    root_logger.level = original_level
 
 
 def test_setup_logging_called_at_import_configures_structlog():
@@ -24,15 +45,6 @@ def test_bind_request_context_sets_and_clears_contextvars():
 
     _clear_request_context()
     assert structlog.contextvars.get_contextvars() == {}
-
-
-import json
-
-import pytest
-from fastapi.testclient import TestClient
-
-from services.common import logging_config
-from services.chatbot_svc import app as app_module
 
 
 def test_chat_endpoint_logs_exception_before_responding(monkeypatch, capsys):
@@ -68,6 +80,11 @@ def test_chat_endpoint_logs_exception_before_responding(monkeypatch, capsys):
     assert len(matches) == 1
     assert matches[0]["level"] == "error"
     assert "simulated agent failure" in str(matches[0].get("exception", "")) or matches[0].get("exc_info")
+    # The whole point of binding shop_domain/session_id as contextvars in
+    # chat() is that they show up on every log line for the request,
+    # including this failure log emitted deep inside the except block.
+    assert matches[0]["shop_domain"] == "shop1.myshopify.com"
+    assert matches[0]["session_id"] == "sess-test-123"
 
 
 def test_query_studio_unexpected_exception_returns_500_and_logs(monkeypatch, capsys):

@@ -2,6 +2,7 @@ import os
 os.environ.setdefault("GROQ_API_KEY", "test")
 
 import json
+import logging
 
 import pytest
 
@@ -30,6 +31,23 @@ def _blank_config(**overrides):
 def _product_id(shop):
     with get_db() as s:
         return s.query(ShopifyProduct.id).filter(ShopifyProduct.shopDomain == shop).scalar()
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logger_handlers():
+    """setup_logging() replaces the root logger's handlers wholesale with no
+    teardown of its own — restore whatever was there before this test so a
+    handler bound to this test's now-closed capsys stream doesn't leak into
+    later test files. Safe to snapshot/restore here (fixture setup/teardown)
+    because it only reads/replaces the handler list; it never binds a new
+    handler to capsys itself — that still has to happen inside the test body
+    via _reset_json_logging(), for the phase-timing reason documented there."""
+    root_logger = logging.getLogger()
+    original_handlers = root_logger.handlers[:]
+    original_level = root_logger.level
+    yield
+    root_logger.handlers = original_handlers
+    root_logger.level = original_level
 
 
 def _reset_json_logging() -> None:
