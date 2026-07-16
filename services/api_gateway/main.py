@@ -7,6 +7,7 @@ Not exposed publicly — only reachable within the Docker network.
 Run: uvicorn services.api_gateway.main:app --host 0.0.0.0 --port 8000
 """
 
+import structlog
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
@@ -17,6 +18,8 @@ from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
 load_dotenv()
 
+logger = structlog.get_logger(__name__)
+
 app = FastAPI(title="MarketOS Internal API", docs_url=None, redoc_url=None)
 
 
@@ -26,8 +29,12 @@ def shopify_product_updated(product_id: str):
     Claims the product (PENDING -> QUEUED) and enqueues one semantic task."""
     if not product_id:
         raise HTTPException(status_code=422, detail="product_id is required")
-    with get_db() as session:
-        claim_and_enqueue_semantics(session, ids=[product_id])
+    try:
+        with get_db() as session:
+            claim_and_enqueue_semantics(session, ids=[product_id])
+    except Exception:
+        logger.exception("shopify_product_updated_failed", product_id=product_id)
+        raise HTTPException(status_code=500, detail="failed to queue semantics")
     return {"queued": True, "product_id": product_id}
 
 
@@ -37,14 +44,18 @@ def retry_failed_semantics(shop_domain: str):
     next beat tick re-claims them."""
     if not shop_domain:
         raise HTTPException(status_code=422, detail="shop_domain is required")
-    with get_db() as session:
-        rc = session.execute(text('''
-            UPDATE "ShopifyProduct"
-               SET "semanticStatus"='PENDING', "semanticVersion"="semanticVersion"+1,
-                   "semanticFailureReason"=NULL
-             WHERE "shopDomain"=:sd AND "semanticStatus"='FAILED'
-        '''), {"sd": shop_domain}).rowcount
-        session.commit()
+    try:
+        with get_db() as session:
+            rc = session.execute(text('''
+                UPDATE "ShopifyProduct"
+                   SET "semanticStatus"='PENDING', "semanticVersion"="semanticVersion"+1,
+                       "semanticFailureReason"=NULL
+                 WHERE "shopDomain"=:sd AND "semanticStatus"='FAILED'
+            '''), {"sd": shop_domain}).rowcount
+            session.commit()
+    except Exception:
+        logger.exception("retry_failed_semantics_failed", shop_domain=shop_domain)
+        raise HTTPException(status_code=500, detail="failed to reset semantics")
     return {"ok": True, "reset": rc}
 
 
@@ -53,8 +64,12 @@ def backfill_shopify_semantics():
     """Manual kick of the semantic backfill — same bounded claim the beat uses.
     Claims PENDING/stale-QUEUED products (at most the claim's batch limit) and
     enqueues one task each; never bypasses the claim."""
-    with get_db() as session:
-        claimed = claim_and_enqueue_semantics(session, ids=None)
+    try:
+        with get_db() as session:
+            claimed = claim_and_enqueue_semantics(session, ids=None)
+    except Exception:
+        logger.exception("backfill_shopify_semantics_failed")
+        raise HTTPException(status_code=500, detail="failed to queue semantics backfill")
     return {"queued": len(claimed), "product_ids": claimed}
 
 
@@ -65,11 +80,15 @@ def shopify_sync_products(shop_domain: str):
     if not shop_domain:
         raise HTTPException(status_code=422, detail="shop_domain is required")
 
-    celery_app.send_task(
-        "shopify_sync.pull_products",
-        args=[shop_domain],
-        queue="shopify_sync_queue",
-    )
+    try:
+        celery_app.send_task(
+            "shopify_sync.pull_products",
+            args=[shop_domain],
+            queue="shopify_sync_queue",
+        )
+    except Exception:
+        logger.exception("pull_products_dispatch_failed", shop_domain=shop_domain)
+        raise HTTPException(status_code=503, detail="failed to queue product sync")
     return {"queued": True, "shop_domain": shop_domain}
 
 
