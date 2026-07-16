@@ -245,7 +245,22 @@ def search_products(
                 shopify_product_id=shopify_product_id,
                 job_id=job.id,
             )
-            raise
+            if self.request.retries >= self.max_retries:
+                return {"status": "failed", "job_id": job.id, "error": job.error}
+            # Pass job.id forward explicitly so the retry reuses this same
+            # DiscoveryJob row instead of creating a new one (job_id is None
+            # on a fresh job's original call — a plain self.retry() would
+            # resend the original args and hit the "create new job" branch
+            # above again on every attempt).
+            raise self.retry(
+                exc=exc,
+                kwargs={
+                    "shopify_product_id": shopify_product_id,
+                    "query": query,
+                    "num_results": num_results,
+                    "job_id": job.id,
+                },
+            )
 
     for cid in saved_ids:
         try:
