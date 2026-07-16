@@ -39,29 +39,25 @@ def apply_dynamic_pricing_config(
                 )
 
             previously_configured = False
+            effective_pricing_tier_for_gate = config.pricing_tier
             if not product.dynamicPricingEnabled:
-                # "Ever configured before" signal. frequencyUnit survives a CHAT
-                # pause (pause_dynamic_pricing only flips the flag) but NOT a
-                # BROWSER pause (app.products.jsx's toggleDynamic OFF branch
-                # explicitly nulls frequencyUnit/frequencyInterval and resets
-                # pricingTier to COMPETITIVE) — so also check for real scrape
-                # history (a ProductUrl row), which neither pause path touches
-                # and only delete_dynamic_pricing removes. Without this, a
-                # product paused in the browser then resumed via chat would be
-                # wrongly treated as never-configured.
-                has_history = (
-                    s.query(models.ProductUrl.id)
-                    .filter(models.ProductUrl.shopifyProductId == product_id)
-                    .first()
-                    is not None
-                )
-                previously_configured = (
-                    product.frequencyUnit is not None
-                    or product.frequencyInterval is not None
-                    or has_history
-                )
-                missing = []
+                # "Ever configured before" signal — set once by apply_pane_config
+                # the first time it configures this product, never cleared by
+                # pause, only cleared by delete_dynamic_pricing. See
+                # docs/superpowers/specs/2026-07-14-pricing-tier-configured-signal-design.md.
+                previously_configured = product.dynamicPricingConfiguredAt is not None
+
                 if config.pricing_tier is None and not previously_configured:
+                    # No tier given and this product has never been configured
+                    # before — fall back to the shop's default tier before
+                    # asking the merchant, mirroring the existing frequency
+                    # fallback below.
+                    settings = s.get(models.ShopSettings, shop_domain)
+                    if settings is not None:
+                        effective_pricing_tier_for_gate = settings.defaultPricingTier
+
+                missing = []
+                if effective_pricing_tier_for_gate is None and not previously_configured:
                     missing.append("pricing tier (BUDGET, COMPETITIVE, or PREMIUM)")
                 unit_missing = config.frequency_unit is None and product.frequencyUnit is None
                 interval_missing = config.frequency_interval is None and product.frequencyInterval is None
@@ -100,7 +96,7 @@ def apply_dynamic_pricing_config(
 
             pane_config = PaneConfig(
                 search_query_override=config.search_query_override,
-                pricing_tier=config.pricing_tier,
+                pricing_tier=effective_pricing_tier_for_gate,
                 min_price_override=config.min_price_override,
                 max_price_override=config.max_price_override,
                 frequency_unit=effective_frequency_unit,

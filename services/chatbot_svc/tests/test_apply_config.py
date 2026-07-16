@@ -390,36 +390,36 @@ def test_fresh_product_still_requires_tier_even_with_frequency_given(seed_shop):
         )
 
 
-def test_browser_paused_product_resumes_via_history_not_frequency(seed_shop):
-    """Regression test for a gap found in the final whole-branch review:
-    the browser's own pause action (app.products.jsx's toggleDynamic OFF
-    branch) wipes frequencyUnit/frequencyInterval/pricingTier back to
-    defaults — unlike the chat pause, which only flips the flag. A plain
-    resume via chat on a browser-paused product must not be wrongly
-    treated as a first-time enable just because frequency is null; real
-    scrape history (a ProductUrl row) must also count as "previously
-    configured". The resumed product must also get a real schedule from
-    ShopSettings, not silently stay frequency-null forever."""
+def test_paused_product_resumes_via_configured_at_not_history(seed_shop):
+    """Regression test, updated for the new dynamicPricingConfiguredAt
+    signal (replaces the old ProductUrl-history heuristic this test used
+    to exercise — see docs/superpowers/specs/2026-07-14-pricing-tier-configured-signal-design.md).
+    A product with NO ProductUrl scrape history at all, but a real
+    dynamicPricingConfiguredAt timestamp (set by a prior apply), must still
+    resume without being asked for a tier again. Also confirms frequency
+    still gets filled from ShopSettings when the product's own frequency
+    was wiped (mirrors the browser pause path's behavior, unrelated to the
+    signal-source change in this task)."""
     pid = _product_id(seed_shop)
-    scraped_id = str(uuid.uuid4())
-    url_id = str(uuid.uuid4())
+    # First real configure — sets dynamicPricingConfiguredAt.
+    apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6),
+    )
 
     with get_db() as s:
-        # Shape the product exactly like the browser's toggleDynamic OFF
-        # branch leaves it: flag off, frequency nulled, tier reset to default.
         product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingConfiguredAt is not None
+        # Simulate a browser pause that wipes frequency/tier but does NOT
+        # touch dynamicPricingConfiguredAt (matches app.products.jsx's real
+        # OFF-branch behavior, which this plan does not modify).
         product.dynamicPricingEnabled = False
         product.frequencyUnit = None
         product.frequencyInterval = None
         product.pricingTier = "COMPETITIVE"
         s.flush()
 
-        s.add(ScrapedProduct(id=scraped_id, shopDomain=seed_shop, domain="example.com", title="Competitor"))
-        s.flush()
-        s.add(ProductUrl(
-            id=url_id, shopDomain=seed_shop, shopifyProductId=pid, prodId=scraped_id,
-            url=f"https://example.com/{url_id}", status="ACTIVE",
-        ))
+    with get_db() as s:
         s.add(ShopSettings(shopDomain=seed_shop, frequencyUnit="hour", frequencyInterval=4))
 
     try:
@@ -429,11 +429,48 @@ def test_browser_paused_product_resumes_via_history_not_frequency(seed_shop):
         with get_db() as s:
             product = s.get(ShopifyProduct, pid)
             assert product.dynamicPricingEnabled is True
-            # Frequency must be filled from ShopSettings, not left null.
             assert product.frequencyUnit == "hour"
             assert product.frequencyInterval == 4
     finally:
         with get_db() as s:
-            s.query(ProductUrl).filter(ProductUrl.id == url_id).delete(synchronize_session=False)
-            s.query(ScrapedProduct).filter(ScrapedProduct.id == scraped_id).delete(synchronize_session=False)
             s.query(ShopSettings).filter(ShopSettings.shopDomain == seed_shop).delete(synchronize_session=False)
+
+
+def test_fresh_product_uses_shop_default_tier_instead_of_asking(seed_shop):
+    """A genuinely never-configured product (dynamicPricingConfiguredAt is
+    None) with a ShopSettings row present must use
+    ShopSettings.defaultPricingTier instead of raising the missing-tier
+    error, as long as frequency is also given."""
+    pid = _product_id(seed_shop)
+    with get_db() as s:
+        s.add(ShopSettings(shopDomain=seed_shop, defaultPricingTier="PREMIUM"))
+
+    try:
+        result = apply_dynamic_pricing_config(
+            seed_shop, pid,
+            _blank_config(frequency_unit="hour", frequency_interval=6),
+        )
+        assert result.dynamic_pricing_enabled_after is True
+
+        with get_db() as s:
+            product = s.get(ShopifyProduct, pid)
+            assert product.pricingTier == "PREMIUM"
+    finally:
+        with get_db() as s:
+            s.query(ShopSettings).filter(ShopSettings.shopDomain == seed_shop).delete(synchronize_session=False)
+
+
+def test_fresh_product_with_no_shop_settings_still_asks_for_tier(seed_shop):
+    """A never-configured product with NO ShopSettings row at all (shop has
+    never visited the Settings page) must still be asked for a tier — there
+    is no fallback to use."""
+    pid = _product_id(seed_shop)
+    with get_db() as s:
+        existing = s.get(ShopSettings, seed_shop)
+        assert existing is None  # seed_shop fixture doesn't create one
+
+    with pytest.raises(RuntimeError, match="pricing tier"):
+        apply_dynamic_pricing_config(
+            seed_shop, pid,
+            _blank_config(frequency_unit="hour", frequency_interval=6),
+        )
