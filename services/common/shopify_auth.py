@@ -170,17 +170,22 @@ def get_access_token(shop_domain: str, session) -> tuple[str, datetime]:
             set_clauses += ['"refreshToken" = :rt', '"refreshTokenExpires" = :rte']
             params["rt"] = new_refresh_token
             params["rte"] = new_refresh_expires.replace(tzinfo=None)
-        session.execute(
-            text(
-                f'UPDATE "Session" SET {", ".join(set_clauses)} '
-                'WHERE shop = :shop AND "isOnline" = false'
-            ),
-            params,
-        )
-        session.commit()
+        # Persisted in its own transaction, not the caller's `session` — the
+        # caller may be holding a transaction-scoped resource (e.g.
+        # pg_try_advisory_xact_lock in pricing_svc/apply.py) that must stay
+        # held until the caller's own work finishes. Committing the caller's
+        # session here would end that transaction early and release it.
+        with get_db() as token_session:
+            token_session.execute(
+                text(
+                    f'UPDATE "Session" SET {", ".join(set_clauses)} '
+                    'WHERE shop = :shop AND "isOnline" = false'
+                ),
+                params,
+            )
         logger.info("token_persisted", shop_domain=shop_domain)
-    except Exception as e:
-        logger.error("token_persist_failed", error=str(e))
+    except Exception:
+        logger.exception("token_persist_failed", shop_domain=shop_domain)
         # Don't fail - token exchange succeeded, just couldn't persist new token
 
     return access_token, expires_at

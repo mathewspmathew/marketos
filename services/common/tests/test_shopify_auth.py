@@ -5,6 +5,7 @@ requests.post — no database or network.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -52,6 +53,22 @@ def creds(monkeypatch):
     monkeypatch.setenv("SHOPIFY_API_SECRET", "secret")
 
 
+@pytest.fixture
+def token_session(monkeypatch):
+    """Token persistence now runs in its own get_db() session, not the
+    caller's — this fakes that standalone session so tests can assert
+    against it without a real database."""
+    ts = FakeSession(None)
+
+    @contextmanager
+    def _fake_get_db():
+        yield ts
+        ts.commit()
+
+    monkeypatch.setattr(auth, "get_db", _fake_get_db)
+    return ts
+
+
 def _patch_exchange(monkeypatch, payload):
     calls = []
 
@@ -76,7 +93,7 @@ def test_reuses_stored_token_while_valid(monkeypatch):
     assert s.commits == 0
 
 
-def test_expired_token_exchanges_and_persists(monkeypatch):
+def test_expired_token_exchanges_and_persists(monkeypatch, token_session):
     calls = _patch_exchange(monkeypatch, {
         "access_token": "new-tok",
         "refresh_token": "refresh-2",
@@ -91,16 +108,21 @@ def test_expired_token_exchanges_and_persists(monkeypatch):
     assert len(calls) == 1
     assert calls[0][1]["json"]["refresh_token"] == "refresh-1"
 
-    (stmt, params), = s.updates()
+    (stmt, params), = token_session.updates()
     assert '"accessToken"' in stmt and '"isOnline" = false' in stmt
     assert params["t"] == "new-tok"
     assert params["e"].tzinfo is None            # naive UTC for the column
     assert params["rt"] == "refresh-2"           # rotation persisted
     assert params["rte"].tzinfo is None
-    assert s.commits == 1
+    assert token_session.commits == 1
+    # The caller's own session/transaction must be untouched by the persist —
+    # that's the whole point of isolating it (advisory-lock safety in
+    # pricing_svc/apply.py).
+    assert s.updates() == []
+    assert s.commits == 0
 
 
-def test_near_expiry_token_is_refreshed(monkeypatch):
+def test_near_expiry_token_is_refreshed(monkeypatch, token_session):
     # Inside the 300s margin -> treated as expired.
     _patch_exchange(monkeypatch, {"access_token": "new-tok", "expires_in": 3600})
     s = FakeSession(("stale-tok", _naive_utc(60), "refresh-1", None))
@@ -109,8 +131,9 @@ def test_near_expiry_token_is_refreshed(monkeypatch):
 
     assert token == "new-tok"
     # No rotation in the response -> UPDATE touches only accessToken/expires.
-    (_, params), = s.updates()
+    (_, params), = token_session.updates()
     assert "rt" not in params
+    assert s.commits == 0
 
 
 def test_no_offline_session(monkeypatch):
