@@ -327,6 +327,7 @@ model ShopSettings {
   updatedAt                DateTime
   frequencyInterval        Int         @default(1)
   frequencyUnit            String      @default("day")
+  defaultPricingTier       PricingTier @default(COMPETITIVE)
   maxCompetitorsPerProduct Int         @default(8)
   listingExpansionCap      Int?
   serperGl                 String      @default("in")
@@ -373,6 +374,7 @@ model ShopifyProduct {
   createdAt                     DateTime              @default(now())
   updatedAt                     DateTime
   dynamicPricingEnabled         Boolean               @default(false)
+  dynamicPricingConfiguredAt    DateTime?
   handle                        String?
   shopDomain                    String
   syncPrice                     Boolean               @default(true)
