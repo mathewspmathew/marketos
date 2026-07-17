@@ -84,7 +84,7 @@ def test_apply_rearms_active_product_urls(seeded_product_with_url):
     product_id, url_id = seeded_product_with_url
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)
-        apply_pane_config(s, product, PaneConfig(frequency_unit="hour", frequency_interval=6))
+        apply_pane_config(s, product, PaneConfig(pricing_tier="COMPETITIVE", frequency_unit="hour", frequency_interval=6))
 
     with get_db() as s:
         url = s.get(models.ProductUrl, url_id)
@@ -115,7 +115,7 @@ def test_apply_omitted_fields_leave_existing_values(seeded_product_with_url):
         product = s.get(models.ShopifyProduct, product_id)
         product.searchQueryOverride = "existing override"
         s.flush()
-        apply_pane_config(s, product, PaneConfig(pricing_tier="BUDGET"))
+        apply_pane_config(s, product, PaneConfig(pricing_tier="BUDGET", frequency_unit="hour", frequency_interval=6))
 
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)
@@ -152,3 +152,60 @@ def test_apply_does_not_overwrite_existing_configured_at(seeded_product_with_url
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)
         assert product.dynamicPricingConfiguredAt == first_timestamp
+
+
+def test_apply_raises_missing_fields_when_never_configured_and_no_tier(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        with pytest.raises(PaneConfigError) as exc_info:
+            apply_pane_config(s, product, PaneConfig(frequency_unit="hour", frequency_interval=6))
+        assert exc_info.value.missing_fields == ["pricing tier (BUDGET, COMPETITIVE, or PREMIUM)"]
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.dynamicPricingEnabled is False  # no partial write
+
+
+def test_apply_falls_back_to_shop_default_tier_when_never_configured(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        shop = product.shopDomain
+        s.add(models.ShopSettings(shopDomain=shop, defaultPricingTier="BUDGET"))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.pricingTier == "BUDGET"
+
+    with get_db() as s:
+        s.query(models.ShopSettings).filter(models.ShopSettings.shopDomain == shop).delete()
+
+
+def test_apply_ignores_discovery_and_listing_cap_after_first_configure(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6,
+            discovery_num_results=20, listing_expansion_cap=10,
+        ))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.discoveryNumResults == 20
+        assert product.listingExpansionCap == 10
+
+    # Second call (product already configured) tries to change both — must be ignored.
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(discovery_num_results=5, listing_expansion_cap=2))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.discoveryNumResults == 20  # unchanged
+        assert product.listingExpansionCap == 10   # unchanged

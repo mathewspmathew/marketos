@@ -21,7 +21,13 @@ PRICING_TIERS = ("BUDGET", "COMPETITIVE", "PREMIUM")
 
 
 class PaneConfigError(ValueError):
-    """Raised when pane config inputs fail validation. Caller must not write to the DB."""
+    """Raised when pane config inputs fail validation, or when a product's
+    first-ever enable is missing required fields. Caller must not write to
+    the DB. `missing_fields` is set only for the latter case."""
+
+    def __init__(self, message: str, missing_fields: Optional[list[str]] = None):
+        super().__init__(message)
+        self.missing_fields = missing_fields
 
 
 @dataclass
@@ -73,34 +79,94 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
     """Write `config`'s non-None fields onto `product`, enable dynamic pricing,
     and re-arm all ACTIVE ProductUrl rows for it. Raises PaneConfigError first
     if anything is invalid — no partial writes. Returns a summary dict.
+
+    On a product's first-ever enable (dynamicPricingConfiguredAt was None
+    going in), a missing pricing tier falls back to the shop's
+    ShopSettings.defaultPricingTier before the "missing fields" gate runs;
+    a missing frequency on an already-configured (but currently disabled)
+    product falls back to the shop's frequency defaults. If tier or
+    frequency are still missing after fallback on a first-ever enable,
+    raises PaneConfigError with `missing_fields` populated instead of
+    writing anything.
     """
-    validate_pane_config(config)
+    previously_configured = product.dynamicPricingConfiguredAt is not None
+    is_first_configure = not previously_configured
+
+    effective_pricing_tier = config.pricing_tier
+    if effective_pricing_tier is None and not previously_configured:
+        settings = session.get(models.ShopSettings, product.shopDomain)
+        if settings is not None:
+            effective_pricing_tier = settings.defaultPricingTier
+
+    effective_frequency_unit = config.frequency_unit
+    effective_frequency_interval = config.frequency_interval
+    if (
+        previously_configured
+        and config.frequency_unit is None
+        and product.frequencyUnit is None
+    ):
+        # A previously-configured product whose frequency is unset (e.g. a
+        # browser-side pause from before dynamicPricingConfiguredAt existed)
+        # must not resume with a permanently-null schedule.
+        settings = session.get(models.ShopSettings, product.shopDomain)
+        if settings is not None:
+            effective_frequency_unit = settings.frequencyUnit
+            effective_frequency_interval = settings.frequencyInterval
+
+    if not previously_configured:
+        missing = []
+        if effective_pricing_tier is None:
+            missing.append("pricing tier (BUDGET, COMPETITIVE, or PREMIUM)")
+        unit_missing = config.frequency_unit is None and product.frequencyUnit is None
+        interval_missing = config.frequency_interval is None and product.frequencyInterval is None
+        if unit_missing or interval_missing:
+            missing.append("rescrape frequency (both a unit and a number, e.g. every 6 hours)")
+        if missing:
+            raise PaneConfigError(
+                f"{product.title} isn't tracking dynamic pricing yet. Turning it on for "
+                f"the first time needs: {'; '.join(missing)}.",
+                missing_fields=missing,
+            )
+
+    effective_config = PaneConfig(
+        search_query_override=config.search_query_override,
+        pricing_tier=effective_pricing_tier,
+        min_price_override=config.min_price_override,
+        max_price_override=config.max_price_override,
+        frequency_unit=effective_frequency_unit,
+        frequency_interval=effective_frequency_interval,
+        discovery_num_results=config.discovery_num_results,
+        listing_expansion_cap=config.listing_expansion_cap,
+    )
+    validate_pane_config(effective_config)
 
     changes: dict = {"dynamicPricingEnabled": (product.dynamicPricingEnabled, True)}
 
-    if config.search_query_override is not None:
-        product.searchQueryOverride = config.search_query_override or None
-    if config.pricing_tier is not None:
-        product.pricingTier = config.pricing_tier
-    if config.min_price_override is not None:
-        product.minPriceOverride = config.min_price_override
-    if config.max_price_override is not None:
-        product.maxPriceOverride = config.max_price_override
-    if config.frequency_unit is not None:
-        product.frequencyUnit = config.frequency_unit
-    if config.frequency_interval is not None:
-        product.frequencyInterval = config.frequency_interval
-    if config.discovery_num_results is not None:
-        product.discoveryNumResults = min(config.discovery_num_results, 50)
-    if config.listing_expansion_cap is not None:
-        product.listingExpansionCap = min(config.listing_expansion_cap, 50)
+    if effective_config.search_query_override is not None:
+        product.searchQueryOverride = effective_config.search_query_override or None
+    if effective_config.pricing_tier is not None:
+        product.pricingTier = effective_config.pricing_tier
+    if effective_config.min_price_override is not None:
+        product.minPriceOverride = effective_config.min_price_override
+    if effective_config.max_price_override is not None:
+        product.maxPriceOverride = effective_config.max_price_override
+    if effective_config.frequency_unit is not None:
+        product.frequencyUnit = effective_config.frequency_unit
+    if effective_config.frequency_interval is not None:
+        product.frequencyInterval = effective_config.frequency_interval
+    # Frozen once a product has ever been configured — changing scrape scope
+    # after discovery has already run against the old scope doesn't make sense.
+    if effective_config.discovery_num_results is not None and is_first_configure:
+        product.discoveryNumResults = min(effective_config.discovery_num_results, 50)
+    if effective_config.listing_expansion_cap is not None and is_first_configure:
+        product.listingExpansionCap = min(effective_config.listing_expansion_cap, 50)
 
     product.dynamicPricingEnabled = True
     if product.dynamicPricingConfiguredAt is None:
         product.dynamicPricingConfiguredAt = datetime.now(timezone.utc)
 
-    effective_unit = config.frequency_unit or product.frequencyUnit
-    effective_interval = config.frequency_interval or product.frequencyInterval
+    effective_unit = effective_config.frequency_unit or product.frequencyUnit
+    effective_interval = effective_config.frequency_interval or product.frequencyInterval
     next_run = next_run_at(effective_interval, effective_unit) or datetime.now(timezone.utc)
 
     rearmed = (

@@ -38,75 +38,29 @@ def apply_dynamic_pricing_config(
                     f"Resolve it with resolve_product first."
                 )
 
-            previously_configured = False
-            effective_pricing_tier_for_gate = config.pricing_tier
-            if not product.dynamicPricingEnabled:
-                # "Ever configured before" signal — set once by apply_pane_config
-                # the first time it configures this product, never cleared by
-                # pause, only cleared by delete_dynamic_pricing. See
-                # docs/superpowers/specs/2026-07-14-pricing-tier-configured-signal-design.md.
-                previously_configured = product.dynamicPricingConfiguredAt is not None
-
-                if config.pricing_tier is None and not previously_configured:
-                    # No tier given and this product has never been configured
-                    # before — fall back to the shop's default tier before
-                    # asking the merchant, mirroring the existing frequency
-                    # fallback below.
-                    settings = s.get(models.ShopSettings, shop_domain)
-                    if settings is not None:
-                        effective_pricing_tier_for_gate = settings.defaultPricingTier
-
-                missing = []
-                if effective_pricing_tier_for_gate is None and not previously_configured:
-                    missing.append("pricing tier (BUDGET, COMPETITIVE, or PREMIUM)")
-                unit_missing = config.frequency_unit is None and product.frequencyUnit is None
-                interval_missing = config.frequency_interval is None and product.frequencyInterval is None
-                if (unit_missing or interval_missing) and not previously_configured:
-                    missing.append("rescrape frequency (both a unit and a number, e.g. every 6 hours)")
-                if missing:
-                    logger.warning(
-                        "dynamic_pricing_apply_missing_fields",
-                        shop_domain=shop_domain, product_id=product_id, missing=missing,
-                    )
-                    raise RuntimeError(
-                        f"{product.title} isn't tracking dynamic pricing yet. Turning it on for "
-                        f"the first time needs: {'; '.join(missing)}. Ask the merchant for the "
-                        f"missing value(s), then call this tool again with the complete config."
-                    )
-
-            # A previously-configured product whose frequency was wiped by a
-            # browser pause (see previously_configured above) must not resume
-            # with a permanently-null schedule — apply_pane_config's own
-            # "config value or existing value" fallback would leave it null
-            # forever, so the beat scheduler's frequencyUnit <> 'never' filter
-            # would silently never match. Fall back to the shop's default
-            # cadence instead, mirroring app.products.jsx's own toggleDynamic
-            # ON-branch fallback (copy ShopSettings when nothing is on file).
-            effective_frequency_unit = config.frequency_unit
-            effective_frequency_interval = config.frequency_interval
-            if (
-                previously_configured
-                and config.frequency_unit is None
-                and product.frequencyUnit is None
-            ):
-                settings = s.get(models.ShopSettings, shop_domain)
-                if settings is not None:
-                    effective_frequency_unit = settings.frequencyUnit
-                    effective_frequency_interval = settings.frequencyInterval
-
             pane_config = PaneConfig(
                 search_query_override=config.search_query_override,
-                pricing_tier=effective_pricing_tier_for_gate,
+                pricing_tier=config.pricing_tier,
                 min_price_override=config.min_price_override,
                 max_price_override=config.max_price_override,
-                frequency_unit=effective_frequency_unit,
-                frequency_interval=effective_frequency_interval,
+                frequency_unit=config.frequency_unit,
+                frequency_interval=config.frequency_interval,
                 discovery_num_results=config.discovery_num_results,
                 listing_expansion_cap=config.listing_expansion_cap,
             )
             try:
                 result = apply_pane_config(s, product, pane_config)
             except PaneConfigError as exc:
+                if exc.missing_fields:
+                    logger.warning(
+                        "dynamic_pricing_apply_missing_fields",
+                        shop_domain=shop_domain, product_id=product_id, missing=exc.missing_fields,
+                    )
+                    raise RuntimeError(
+                        f"{product.title} isn't tracking dynamic pricing yet. Turning it on for "
+                        f"the first time needs: {'; '.join(exc.missing_fields)}. Ask the merchant for "
+                        f"the missing value(s), then call this tool again with the complete config."
+                    ) from exc
                 logger.warning(
                     "dynamic_pricing_apply_invalid_config",
                     shop_domain=shop_domain, product_id=product_id, error=str(exc),
@@ -118,8 +72,8 @@ def apply_dynamic_pricing_config(
                 "dynamic_pricing_applied",
                 shop_domain=shop_domain, product_id=product_id,
                 pricing_tier=product.pricingTier,
-                frequency_unit=effective_frequency_unit,
-                frequency_interval=effective_frequency_interval,
+                frequency_unit=product.frequencyUnit,
+                frequency_interval=product.frequencyInterval,
                 rearmed_count=result["rearmedCount"],
                 enabled_before=before, enabled_after=after,
             )
