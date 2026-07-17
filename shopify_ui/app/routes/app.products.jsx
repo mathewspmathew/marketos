@@ -4,7 +4,6 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { getCurrencySymbol } from "../lib/currencyFormatter";
-import { computeNextRunAt } from "../lib/frequency.server";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
@@ -36,6 +35,7 @@ export const loader = async ({ request }) => {
     price: p.ShopifyVariant[0]?.currentPrice?.toString() ?? "0.00",
     compareAtPrice: p.ShopifyVariant[0]?.compareAtPrice?.toString() ?? null,
     dynamicPricingEnabled: p.dynamicPricingEnabled,
+    dynamicPricingConfigured: p.dynamicPricingConfiguredAt != null,
     syncPrice: p.syncPrice,
     searchQuery: p.searchQuery ?? "",
     searchQueryOverride: p.searchQueryOverride ?? "",
@@ -93,16 +93,17 @@ const FREQ_UNITS = [
 
 const SECTION_HELP_TEXT_STYLE = { fontSize: "0.9em", marginBottom: "8px", display: "block" };
 
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+
 // ─── Action ───────────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
   const productId = formData.get("productId");
+  const shopDomain = session.shop;
 
   if (intent === "syncProducts") {
-    const shopDomain = session.shop;
-    const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
     const user = await db.shopifyUser.findUnique({ where: { shopDomain } });
 
     // Guard against double-trigger: if a sync started < 10 min ago, no-op.
@@ -122,368 +123,61 @@ export const action = async ({ request }) => {
     return { ok: true };
   }
 
-  if (intent === "toggleDynamic") {
-    // Pause/resume model. The beat filter is the actual gate: it only
-    // dispatches rescrape when dynamicPricingEnabled=TRUE.
-    const enabled = formData.get("enabled") === "true";
+  if (intent === "saveAndEnable" || intent === "updateOverrides") {
+    const toNullableString = (raw) => {
+      const v = (raw || "").toString().trim();
+      return v === "" ? null : v;
+    };
+    const toNullableNumber = (raw) => (raw === "" || raw == null ? null : Number(raw));
 
-    const updateData = { dynamicPricingEnabled: enabled };
-
-    let product = null;
-    if (enabled) {
-      // Snapshot variant basePrice on enable (fills nulls only — the anchor
-      // is first-seen price, preserved across toggle off→on), then refresh
-      // the derived product avgBasePrice.
-      product = await db.shopifyProduct.findUnique({
-        where: { id: productId },
-        select: { frequencyUnit: true, frequencyInterval: true, ShopifyVariant: { select: { id: true, currentPrice: true, basePrice: true } } },
-      });
-      for (const v of product?.ShopifyVariant ?? []) {
-        if (v.basePrice == null && Number(v.currentPrice) > 0) {
-          await db.shopifyVariant.update({
-            where: { id: v.id },
-            data: { basePrice: v.currentPrice },
-          });
-        }
-      }
-      const bases = (product?.ShopifyVariant ?? [])
-        .map((v) => Number(v.basePrice ?? v.currentPrice))
-        .filter((n) => Number.isFinite(n) && n > 0);
-      if (bases.length > 0) {
-        updateData.avgBasePrice = bases.reduce((a, b) => a + b, 0) / bases.length;
-      }
-      // An ON product must always carry a concrete cadence — the plain toggle
-      // never opens the pane, so copy the shop defaults when nothing is saved.
-      if (!product?.frequencyUnit) {
-        const settings = await db.shopSettings.findUnique({
-          where: { shopDomain: session.shop },
-          select: { frequencyUnit: true, frequencyInterval: true },
-        });
-        if (settings?.frequencyUnit) {
-          updateData.frequencyUnit = settings.frequencyUnit;
-          updateData.frequencyInterval = settings.frequencyInterval;
-        }
-      }
-    } else {
-      // When turning off DP, clear all product-specific setting overrides
-      // so they revert to shop defaults when re-enabled.
-      updateData.frequencyInterval = null;
-      updateData.frequencyUnit = null;
-      updateData.pricingTier = "COMPETITIVE";
-      updateData.minPriceOverride = null;
-      updateData.maxPriceOverride = null;
-      updateData.searchQueryOverride = null;
-      updateData.listingExpansionCap = null;
-      updateData.discoveryNumResults = null;
-    }
-
-    await db.shopifyProduct.update({
-      where: { id: productId },
-      data: updateData,
-    });
-
-    if (enabled) {
-      // Resume: re-arm any URLs we already discovered so they enter the
-      // rescrape loop on the next beat tick. Only touches active rows whose
-      // current schedule has gone stale (nextRunAt NULL or in the past) so
-      // we don't trample a healthy upcoming schedule.
-      const nextRunAt = computeNextRunAt(
-        updateData.frequencyInterval ?? product.frequencyInterval,
-        updateData.frequencyUnit ?? product.frequencyUnit,
-      );
-      await db.productUrl.updateMany({
-        where: {
-          shopifyProductId: productId,
-          status: "ACTIVE",
-          OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
-        },
-        data: { nextRunAt: nextRunAt ?? new Date() },
-      });
-    }
-  } else if (intent === "toggleRescrape") {
-    // Per-product rescrape toggle. OFF parks frequencyUnit at 'never';
-    // ON restores a sensible default cadence if the product was 'never'
-    // (so the merchant can flip it on without first opening the editor).
-    const enabled = formData.get("enabled") === "true";
-    const current = await db.shopifyProduct.findUnique({
-      where: { id: productId },
-      select: { frequencyUnit: true, frequencyInterval: true },
-    });
-    if (enabled) {
-      const defaultsNeeded =
-        !current?.frequencyUnit || current.frequencyUnit === "never";
-      await db.shopifyProduct.update({
-        where: { id: productId },
-        data: defaultsNeeded
-          ? { frequencyUnit: "hour", frequencyInterval: 6 }
-          : {},
-      });
-      // Re-arm stale schedules so beat picks the URLs up on the next tick.
-      const effectiveUnit = defaultsNeeded ? "hour" : current.frequencyUnit;
-      const effectiveInterval = defaultsNeeded ? 6 : current.frequencyInterval;
-      const nextRunAt = computeNextRunAt(effectiveInterval, effectiveUnit);
-      await db.productUrl.updateMany({
-        where: {
-          shopifyProductId: productId,
-          status: "ACTIVE",
-          OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
-        },
-        data: { nextRunAt: nextRunAt ?? new Date() },
-      });
-    } else {
-      await db.shopifyProduct.update({
-        where: { id: productId },
-        data: { frequencyUnit: "never", frequencyInterval: null },
-      });
-    }
-  } else if (intent === "saveAndEnable" || intent === "updateOverrides") {
-    // Strict validation: frequencyUnit must be a canonical option; floor/ceiling
-    // must parse as positive numbers when provided.
-    const allowedUnits = new Set(["never", "minute", "hour", "day"]);
-    const rawUnit     = formData.get("frequencyUnit") || "";
-    const rawInterval = formData.get("frequencyInterval");
-    const rawOverride = (formData.get("searchQueryOverride") || "").toString().trim();
-    const rawNumResults = formData.get("discoveryNumResults");
-    const rawListingCap = formData.get("listingExpansionCap");
-
-    const data = {
-      searchQueryOverride: rawOverride === "" ? null : rawOverride,
+    const config = {
+      search_query_override: toNullableString(formData.get("searchQueryOverride")),
+      pricing_tier: toNullableString(formData.get("pricingTier")),
+      min_price_override: toNullableNumber(formData.get("minPriceOverride")),
+      max_price_override: toNullableNumber(formData.get("maxPriceOverride")),
+      frequency_unit: toNullableString(formData.get("frequencyUnit")),
+      frequency_interval: toNullableNumber(formData.get("frequencyInterval")),
+      discovery_num_results: toNullableNumber(formData.get("discoveryNumResults")),
+      listing_expansion_cap: toNullableNumber(formData.get("listingExpansionCap")),
     };
 
-    if (rawUnit && allowedUnits.has(rawUnit)) {
-      data.frequencyUnit = rawUnit;
-    } else if (rawUnit === "") {
-      data.frequencyUnit = null;
-    }
-
-    if (rawInterval === "" || rawInterval === null) {
-      data.frequencyInterval = null;
-    } else {
-      const n = parseInt(rawInterval, 10);
-      if (Number.isFinite(n) && n > 0) data.frequencyInterval = n;
-    }
-
-    const parseDecimal = (raw) => {
-      if (raw === "" || raw === null) return null;
-      const n = parseFloat(raw);
-      return Number.isFinite(n) && n >= 0 ? n : undefined;
-    };
-
-    // Auto-pricing per-product overrides. Tier is an enum; min/max override
-    // win over the basePrice × lifetimeCapPct fallback when present.
-    const rawTier = (formData.get("pricingTier") || "").toString();
-    if (["BUDGET", "COMPETITIVE", "PREMIUM"].includes(rawTier)) {
-      data.pricingTier = rawTier;
-    }
-    const minOverride = parseDecimal(formData.get("minPriceOverride"));
-    const maxOverride = parseDecimal(formData.get("maxPriceOverride"));
-    // Hard bounds validation (server-side safety net; the pane validates too):
-    // a persisted 0 would clamp every variant's price to 0 on the next cycle.
-    if ((minOverride != null && minOverride <= 0) || (maxOverride != null && maxOverride <= 0)) {
-      return { ok: false, error: "Price bounds must be greater than 0." };
-    }
-    if (minOverride != null && maxOverride != null && minOverride >= maxOverride) {
-      return { ok: false, error: "Minimum price must be below the maximum." };
-    }
-    if (minOverride !== undefined) data.minPriceOverride = minOverride;
-    if (maxOverride !== undefined) data.maxPriceOverride = maxOverride;
-
-    if (rawNumResults !== null && rawNumResults !== "") {
-      const n = parseInt(rawNumResults, 10);
-      if (Number.isFinite(n) && n > 0) data.discoveryNumResults = Math.min(n, 50);
-    }
-
-    if (rawListingCap !== null && rawListingCap !== "") {
-      const n = parseInt(rawListingCap, 10);
-      if (Number.isFinite(n) && n > 0) data.listingExpansionCap = Math.min(n, 50);
-    }
-
-    if (intent === "saveAndEnable") {
-      data.dynamicPricingEnabled = true;
-    }
-
-    // Detect frequency changes and rescrape state transitions
-    const prior = await db.shopifyProduct.findUnique({
-      where: { id: productId },
-      select: { frequencyUnit: true, frequencyInterval: true },
+    const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shopDomain, product_id: productId, config }),
     });
-    const priorUnit = prior?.frequencyUnit ?? null;
-    const priorInterval = prior?.frequencyInterval ?? null;
-    const newUnit = data.frequencyUnit ?? priorUnit;
-    const newInterval = data.frequencyInterval ?? priorInterval;
+    const data = await res.json();
+    return data.ok ? { ok: true } : { ok: false, error: data.error };
+  }
 
-    // Re-arm triggers on:
-    // 1. Frequency change (unit or interval) while rescraping is/will be active
-    // 2. Rescraping just enabled (null/'never' → real cadence)
-    const rescrapeJustEnabled =
-      (priorUnit === null || priorUnit === "never") &&
-      newUnit && newUnit !== "never";
-
-    const frequencyChanged =
-      newUnit && newUnit !== "never" &&
-      (newUnit !== priorUnit || newInterval !== priorInterval);
-
-    await db.shopifyProduct.update({
-      where: { id: productId },
-      data,
+  if (intent === "pauseDynamic") {
+    const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/pause`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shopDomain, product_id: productId }),
     });
+    const data = await res.json();
+    return data.ok ? { ok: true } : { ok: false, error: data.error };
+  }
 
-    // Re-arm ProductUrl entries when frequency changes or rescraping enables
-    if (rescrapeJustEnabled || frequencyChanged || intent === "saveAndEnable") {
-      // When frequency changes, re-arm ALL active URLs to pick up new schedule immediately.
-      // Scheduler will query nextRunAt <= NOW on next tick and dispatch tasks.
-      const nextRunAt = computeNextRunAt(newInterval, newUnit);
-      await db.productUrl.updateMany({
-        where: {
-          shopifyProductId: productId,
-          status: "ACTIVE",
-        },
-        data: { nextRunAt: nextRunAt ?? new Date() },
-      });
-
-      // Auto-queue discovery on saveAndEnable if this product has never been discovered.
-      if (intent === "saveAndEnable") {
-        const shopDomain = session.shop;
-        const product = await db.shopifyProduct.findUnique({
-          where: { id: productId },
-          select: { lastDiscoveryAt: true, searchQueryOverride: true, searchQuery: true },
-        });
-        const query = product?.searchQueryOverride || product?.searchQuery;
-
-        if (product?.lastDiscoveryAt === null && query) {
-          await db.discoveryJob.create({
-            data: {
-              shopDomain,
-              shopifyProductId: productId,
-              status: "QUEUED",
-              query,
-            },
-          });
-        }
-      }
-    }
-  } else if (intent === "pauseDynamic") {
-    // Pause DP but keep all config intact — just disable the flag.
-    // If frequency is set, rescraping will stop on next beat tick.
-    await db.shopifyProduct.update({
-      where: { id: productId },
-      data: { dynamicPricingEnabled: false },
+  if (intent === "resumeDynamic") {
+    const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shopDomain, product_id: productId }),
     });
-  } else if (intent === "resumeDynamic") {
-    // Resume paused DP — re-enable the flag and re-arm stale schedules.
-    await db.shopifyProduct.update({
-      where: { id: productId },
-      data: { dynamicPricingEnabled: true },
+    const data = await res.json();
+    return data.ok ? { ok: true } : { ok: false, error: data.error };
+  }
+
+  if (intent === "deleteDynamicWithData") {
+    const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shopDomain, product_id: productId, confirmed: true }),
     });
-    // Re-arm any URLs with stale schedules so beat picks them up on next tick.
-    const product = await db.shopifyProduct.findUnique({
-      where: { id: productId },
-      select: { frequencyUnit: true, frequencyInterval: true },
-    });
-    const nextRunAt = computeNextRunAt(product?.frequencyInterval, product?.frequencyUnit);
-    await db.productUrl.updateMany({
-      where: {
-        shopifyProductId: productId,
-        status: "ACTIVE",
-        OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
-      },
-      data: { nextRunAt: nextRunAt ?? new Date() },
-    });
-  } else if (intent === "deleteDynamicWithData") {
-    try {
-      // Get all variants for this product
-      const variants = await db.shopifyVariant.findMany({
-        where: { productId },
-        select: { id: true },
-      });
-      const variantIds = variants.map((v) => v.id);
-
-      // 1. Delete variant-level data (VariantCompetitorStats, PriceDecision)
-      if (variantIds.length > 0) {
-        await db.variantCompetitorStats.deleteMany({
-          where: { shopifyVariantId: { in: variantIds } },
-        });
-        await db.priceDecision.deleteMany({
-          where: { shopifyVariantId: { in: variantIds } },
-        });
-      }
-
-      // 2. Delete ProductMatch (matches between shopify variants and competitor variants)
-      if (variantIds.length > 0) {
-        await db.productMatch.deleteMany({
-          where: { shopifyVariantId: { in: variantIds } },
-        });
-      }
-
-      // 3. Delete ProductLevelMatch (product-level)
-      await db.productLevelMatch.deleteMany({
-        where: { shopifyProductId: productId },
-      });
-
-      // 4. Delete ProductUrl and get ScrapingConfigs to delete
-      const productUrls = await db.productUrl.findMany({
-        where: { shopifyProductId: productId },
-        select: { configId: true },
-      });
-      const configIds = productUrls.map((pu) => pu.configId).filter(Boolean);
-      await db.productUrl.deleteMany({
-        where: { shopifyProductId: productId },
-      });
-
-      // 5. Delete ScrapingConfigs
-      if (configIds.length > 0) {
-        await db.scrapingConfig.deleteMany({
-          where: { id: { in: configIds } },
-        });
-      }
-
-      // 6. Delete DiscoveryJob and CompetitorCandidate
-      await db.discoveryJob.deleteMany({
-        where: { shopifyProductId: productId },
-      });
-      await db.competitorCandidate.deleteMany({
-        where: { shopifyProductId: productId },
-      });
-
-      // 7. Delete ScrapedProducts and related data
-      const scrapedProducts = await db.scrapedProduct.findMany({
-        where: { CompetitorCandidate: { some: { shopifyProductId: productId } } },
-        select: { id: true },
-      });
-      const scrapedIds = scrapedProducts.map((s) => s.id);
-
-      if (scrapedIds.length > 0) {
-        await db.scrapedVariant.deleteMany({
-          where: { productId: { in: scrapedIds } },
-        });
-        await db.productEmbedding.deleteMany({
-          where: { prodId: { in: scrapedIds } },
-        });
-        await db.scrapedProduct.deleteMany({
-          where: { id: { in: scrapedIds } },
-        });
-      }
-
-      // 8. Clear DP config on ShopifyProduct
-      await db.shopifyProduct.update({
-        where: { id: productId },
-        data: {
-          dynamicPricingEnabled: false,
-          frequencyInterval: null,
-          frequencyUnit: null,
-          pricingTier: "COMPETITIVE",
-          minPriceOverride: null,
-          maxPriceOverride: null,
-          searchQueryOverride: null,
-          listingExpansionCap: null,
-          discoveryNumResults: null,
-          avgBasePrice: null,
-        },
-      });
-    } catch (error) {
-      console.error("Delete DP error:", error);
-      throw new Error(`Failed to delete dynamic pricing data: ${error.message}`);
-    }
+    const data = await res.json();
+    return data.ok ? { ok: true } : { ok: false, error: data.error };
   }
 
   return null;
@@ -685,36 +379,6 @@ export default function HomePage() {
     );
   };
 
-  // Toggle now opens the panel for enabling (commit deferred to Save) or
-  // disables immediately (no panel data to commit on the way down).
-  const handleToggle = (productId, currentValue) => {
-    if (currentValue) {
-      // Disable path — clear product-specific overrides and commit immediately.
-      setLocalState((prev) => ({
-        ...prev,
-        [productId]: {
-          ...prev[productId],
-          dynamicPricingEnabled: false,
-          frequencyInterval: "",
-          frequencyUnit: "",
-          pricingTier: "COMPETITIVE",
-          minPriceOverride: "",
-          maxPriceOverride: "",
-          searchQueryOverride: "",
-          listingExpansionCap: "",
-          discoveryNumResults: "",
-        },
-      }));
-      fetcher.submit(
-        { intent: "toggleDynamic", productId, enabled: "false" },
-        { method: "POST" },
-      );
-    } else {
-      // Enable path — just open the panel. Save button commits everything.
-      setExpandedId(productId);
-    }
-  };
-
   const handlePause = (productId) => {
     setLocalState((prev) => ({
       ...prev,
@@ -768,25 +432,6 @@ export default function HomePage() {
       { method: "POST" },
     );
     setDeleteConfirmId(null);
-  };
-
-  const handleRescrapeToggle = (productId, currentlyOn) => {
-    const nextUnit = currentlyOn ? "never" : "hour";
-    setLocalState((prev) => {
-      const local = prev[productId] ?? getLocal(productId);
-      return {
-        ...prev,
-        [productId]: {
-          ...local,
-          frequencyUnit: nextUnit,
-          frequencyInterval: currentlyOn ? null : (local.frequencyInterval ?? 6),
-        },
-      };
-    });
-    fetcher.submit(
-      { intent: "toggleRescrape", productId, enabled: currentlyOn ? "false" : "true" },
-      { method: "POST" },
-    );
   };
 
   /* REMOVED: handleFieldChange function
@@ -1091,8 +736,13 @@ export default function HomePage() {
                                 type="number"
                                 min="1"
                                 max="50"
+                                disabled={product.dynamicPricingConfigured}
                                 value={String(local.discoveryNumResults || getCurrentDefaults().discoveryNumResults || "")}
-                                helpText={`1–50 products per discovery run. Shop default: ${getCurrentDefaults().discoveryNumResults}`}
+                                helpText={
+                                  product.dynamicPricingConfigured
+                                    ? "Locked after first setup — scrape scope can't change once discovery has run."
+                                    : `1–50 products per discovery run. Shop default: ${getCurrentDefaults().discoveryNumResults}`
+                                }
                                 onInput={(e) =>
                                   setOverrideField(product.id, "discoveryNumResults", e.currentTarget.value)
                                 }
@@ -1105,8 +755,13 @@ export default function HomePage() {
                                 type="number"
                                 min="1"
                                 max="50"
+                                disabled={product.dynamicPricingConfigured}
                                 value={String(local.listingExpansionCap || getCurrentDefaults().listingExpansionCap || "")}
-                                helpText={`When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${getCurrentDefaults().listingExpansionCap}`}
+                                helpText={
+                                  product.dynamicPricingConfigured
+                                    ? "Locked after first setup — scrape scope can't change once discovery has run."
+                                    : `When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${getCurrentDefaults().listingExpansionCap}`
+                                }
                                 onInput={(e) =>
                                   setOverrideField(product.id, "listingExpansionCap", e.currentTarget.value)
                                 }
