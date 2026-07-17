@@ -27,17 +27,19 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from services.chatbot_svc.schemas import QueryCandidate
+from services.chatbot_svc.schemas import PaneConfigInput, QueryCandidate
 from services.chatbot_svc.tools import query_studio as t_query_studio
+from services.chatbot_svc.tools.toggle_settings import compute_disable_counts
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps
 from services.chatbot_svc.titling import maybe_set_title
 from services.chatbot_svc import sessions as sessions_svc
 from services.chatbot_svc.tools.ask import AskUserRequested
+from services.common import pane_config
 from services.common.db import get_db
 from services.common.logging_config import setup_logging
-from services.common.models import ChatMessage, ChatPreview, ChatSession
+from services.common.models import ChatMessage, ChatPreview, ChatSession, ShopifyProduct
 
 setup_logging()
 
@@ -74,6 +76,23 @@ class QueryStudioRequest(BaseModel):
 class ApplyCallback(BaseModel):
     preview_id: str
     result: dict
+
+
+class DynamicPricingApplyRequest(BaseModel):
+    shop_domain: str
+    product_id: str
+    config: PaneConfigInput
+
+
+class DynamicPricingProductRequest(BaseModel):
+    shop_domain: str
+    product_id: str
+
+
+class DynamicPricingDeleteRequest(BaseModel):
+    shop_domain: str
+    product_id: str
+    confirmed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +172,16 @@ def _bind_request_context(shop_domain: str, session_id: str) -> None:
 
 def _clear_request_context() -> None:
     structlog.contextvars.clear_contextvars()
+
+
+def _resolve_owned_product(session, shop_domain: str, product_id: str) -> ShopifyProduct:
+    """Look up a ShopifyProduct and verify shop ownership. Raises ValueError
+    if not found or not owned by shop_domain — endpoints convert this to a
+    plain {ok: false, error} response."""
+    product = session.get(ShopifyProduct, product_id)
+    if product is None or product.shopDomain != shop_domain:
+        raise ValueError(f"Product {product_id} not found in this shop.")
+    return product
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +311,108 @@ async def apply_callback(
             )
 
     return {"ok": True}
+
+
+@app.post("/internal/dynamic-pricing/apply")
+async def dynamic_pricing_apply(req: DynamicPricingApplyRequest):
+    try:
+        with get_db() as s:
+            product = _resolve_owned_product(s, req.shop_domain, req.product_id)
+            config = pane_config.PaneConfig(
+                search_query_override=req.config.search_query_override,
+                pricing_tier=req.config.pricing_tier,
+                min_price_override=req.config.min_price_override,
+                max_price_override=req.config.max_price_override,
+                frequency_unit=req.config.frequency_unit,
+                frequency_interval=req.config.frequency_interval,
+                discovery_num_results=req.config.discovery_num_results,
+                listing_expansion_cap=req.config.listing_expansion_cap,
+            )
+            try:
+                result = pane_config.apply_pane_config(s, product, config)
+            except pane_config.PaneConfigError as exc:
+                logger.warning(
+                    "dynamic_pricing_http_apply_rejected",
+                    shop_domain=req.shop_domain, product_id=req.product_id, error=str(exc),
+                )
+                return {"ok": False, "error": str(exc)}
+            logger.info(
+                "dynamic_pricing_http_applied",
+                shop_domain=req.shop_domain, product_id=req.product_id,
+                rearmed_count=result["rearmedCount"],
+            )
+            return {"ok": True, "rearmedCount": result["rearmedCount"]}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception(
+            "dynamic_pricing_http_apply_failed",
+            shop_domain=req.shop_domain, product_id=req.product_id,
+        )
+        return {"ok": False, "error": "Something went wrong applying dynamic pricing for this product."}
+
+
+@app.post("/internal/dynamic-pricing/pause")
+async def dynamic_pricing_pause(req: DynamicPricingProductRequest):
+    try:
+        with get_db() as s:
+            product = _resolve_owned_product(s, req.shop_domain, req.product_id)
+            pane_config.pause_dynamic_pricing(s, product)
+            logger.info("dynamic_pricing_http_paused", shop_domain=req.shop_domain, product_id=req.product_id)
+            return {"ok": True}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception("dynamic_pricing_http_pause_failed", shop_domain=req.shop_domain, product_id=req.product_id)
+        return {"ok": False, "error": "Something went wrong pausing dynamic pricing for this product."}
+
+
+@app.post("/internal/dynamic-pricing/resume")
+async def dynamic_pricing_resume(req: DynamicPricingProductRequest):
+    try:
+        with get_db() as s:
+            product = _resolve_owned_product(s, req.shop_domain, req.product_id)
+            pane_config.resume_dynamic_pricing(s, product)
+            logger.info("dynamic_pricing_http_resumed", shop_domain=req.shop_domain, product_id=req.product_id)
+            return {"ok": True}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception("dynamic_pricing_http_resume_failed", shop_domain=req.shop_domain, product_id=req.product_id)
+        return {"ok": False, "error": "Something went wrong resuming dynamic pricing for this product."}
+
+
+@app.get("/internal/dynamic-pricing/delete-preview")
+async def dynamic_pricing_delete_preview(shop_domain: str, product_id: str):
+    try:
+        return {"ok": True, **compute_disable_counts(shop_domain, product_id)}
+    except Exception:
+        logger.exception(
+            "dynamic_pricing_http_delete_preview_failed",
+            shop_domain=shop_domain, product_id=product_id,
+        )
+        return {"ok": False, "error": "Something went wrong previewing the delete for this product."}
+
+
+@app.post("/internal/dynamic-pricing/delete")
+async def dynamic_pricing_delete(req: DynamicPricingDeleteRequest):
+    if not req.confirmed:
+        return {"ok": False, "error": "Deletion must be confirmed."}
+    try:
+        with get_db() as s:
+            product = _resolve_owned_product(s, req.shop_domain, req.product_id)
+            result = pane_config.delete_dynamic_pricing(s, product)
+            logger.info(
+                "dynamic_pricing_http_deleted",
+                shop_domain=req.shop_domain, product_id=req.product_id,
+                deleted_scraped_products=result["deletedScrapedProducts"],
+            )
+            return {"ok": True, "deletedScrapedProducts": result["deletedScrapedProducts"]}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception("dynamic_pricing_http_delete_failed", shop_domain=req.shop_domain, product_id=req.product_id)
+        return {"ok": False, "error": "Something went wrong deleting dynamic-pricing data for this product."}
 
 
 @app.get("/sessions")

@@ -1,0 +1,112 @@
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+from services.chatbot_svc.app import app
+from services.common.db import get_db
+from services.common import models
+
+_client = TestClient(app)
+
+
+@pytest.fixture
+def seeded_product():
+    shop = f"http-dp-test-{uuid.uuid4().hex[:8]}.myshopify.com"
+    product_id = f"gid://shopify/Product/{uuid.uuid4().hex[:8]}"
+    with get_db() as s:
+        s.add(models.ShopifyUser(shopDomain=shop))
+        s.flush()
+        s.add(models.ShopifyProduct(
+            id=product_id, shopDomain=shop, title="HTTP Test Product",
+            dynamicPricingEnabled=False,
+        ))
+
+    yield shop, product_id
+
+    with get_db() as s:
+        s.query(models.DiscoveryJob).filter(models.DiscoveryJob.shopifyProductId == product_id).delete(synchronize_session=False)
+        s.query(models.ShopifyProduct).filter(models.ShopifyProduct.id == product_id).delete(synchronize_session=False)
+        s.query(models.ShopifyUser).filter(models.ShopifyUser.shopDomain == shop).delete(synchronize_session=False)
+
+
+def _blank_config(**overrides):
+    defaults = dict(
+        search_query_override=None, pricing_tier=None, min_price_override=None,
+        max_price_override=None, frequency_unit=None, frequency_interval=None,
+        discovery_num_results=None, listing_expansion_cap=None,
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def test_apply_endpoint_success(seeded_product):
+    shop, pid = seeded_product
+    r = _client.post("/internal/dynamic-pricing/apply", json={
+        "shop_domain": shop, "product_id": pid,
+        "config": _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6),
+    })
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is True
+        assert product.pricingTier == "PREMIUM"
+
+
+def test_apply_endpoint_missing_fields_returns_ok_false(seeded_product):
+    shop, pid = seeded_product
+    r = _client.post("/internal/dynamic-pricing/apply", json={
+        "shop_domain": shop, "product_id": pid, "config": _blank_config(),
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert "pricing tier" in body["error"]
+
+
+def test_apply_endpoint_unknown_product_returns_ok_false(seeded_product):
+    shop, _ = seeded_product
+    r = _client.post("/internal/dynamic-pricing/apply", json={
+        "shop_domain": shop, "product_id": "nonexistent", "config": _blank_config(),
+    })
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+
+
+def test_pause_then_resume_endpoints(seeded_product):
+    shop, pid = seeded_product
+    _client.post("/internal/dynamic-pricing/apply", json={
+        "shop_domain": shop, "product_id": pid,
+        "config": _blank_config(pricing_tier="BUDGET", frequency_unit="day", frequency_interval=1),
+    })
+
+    r = _client.post("/internal/dynamic-pricing/pause", json={"shop_domain": shop, "product_id": pid})
+    assert r.json()["ok"] is True
+    with get_db() as s:
+        assert s.get(models.ShopifyProduct, pid).dynamicPricingEnabled is False
+
+    r = _client.post("/internal/dynamic-pricing/resume", json={"shop_domain": shop, "product_id": pid})
+    assert r.json()["ok"] is True
+    with get_db() as s:
+        assert s.get(models.ShopifyProduct, pid).dynamicPricingEnabled is True
+
+
+def test_delete_preview_endpoint(seeded_product):
+    shop, pid = seeded_product
+    r = _client.get("/internal/dynamic-pricing/delete-preview", params={"shop_domain": shop, "product_id": pid})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+
+def test_delete_endpoint_requires_confirmation(seeded_product):
+    shop, pid = seeded_product
+    r = _client.post("/internal/dynamic-pricing/delete", json={"shop_domain": shop, "product_id": pid, "confirmed": False})
+    assert r.json()["ok"] is False
+
+    r = _client.post("/internal/dynamic-pricing/delete", json={"shop_domain": shop, "product_id": pid, "confirmed": True})
+    assert r.json()["ok"] is True
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is False
