@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from services.common import models
@@ -213,6 +214,33 @@ def pause_dynamic_pricing(session: Session, product: "models.ShopifyProduct") ->
     old = product.dynamicPricingEnabled
     product.dynamicPricingEnabled = False
     return {"dynamicPricingEnabled": {"old": old, "new": False}}
+
+
+def resume_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -> dict:
+    """Resume a paused product: re-enable the flag and re-arm any ACTIVE
+    ProductUrl rows whose schedule has gone stale (null or past nextRunAt).
+    No gate/validation — mirrors app.products.jsx's resumeDynamic intent
+    exactly. A paused product was already configured once before pausing,
+    so re-validating on resume would only add friction, never catch a real
+    problem.
+    """
+    old = product.dynamicPricingEnabled
+    product.dynamicPricingEnabled = True
+
+    next_run = next_run_at(product.frequencyInterval, product.frequencyUnit) or datetime.now(timezone.utc)
+    rearmed = (
+        session.query(models.ProductUrl)
+        .filter(
+            models.ProductUrl.shopifyProductId == product.id,
+            models.ProductUrl.status == "ACTIVE",
+            or_(
+                models.ProductUrl.nextRunAt.is_(None),
+                models.ProductUrl.nextRunAt <= datetime.now(timezone.utc),
+            ),
+        )
+        .update({"nextRunAt": next_run}, synchronize_session=False)
+    )
+    return {"dynamicPricingEnabled": {"old": old, "new": True}, "rearmedCount": rearmed}
 
 
 def delete_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -> dict:

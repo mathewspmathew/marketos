@@ -11,7 +11,7 @@ import pytest
 
 from services.common.db import get_db
 from services.common import models
-from services.common.pane_config import PaneConfig, PaneConfigError, apply_pane_config
+from services.common.pane_config import PaneConfig, PaneConfigError, apply_pane_config, resume_dynamic_pricing
 
 
 @pytest.fixture
@@ -280,6 +280,38 @@ def test_apply_snapshots_base_price_on_first_enable(seeded_product_with_url):
         assert float(variant.basePrice) == 49.99
         assert float(product.avgBasePrice) == 49.99
         s.query(models.ShopifyVariant).filter(models.ShopifyVariant.id == variant_id).delete()
+
+
+def test_resume_flips_flag_and_rearms_stale_urls(seeded_product_with_url):
+    product_id, url_id = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.dynamicPricingEnabled = False
+        product.frequencyUnit = "hour"
+        product.frequencyInterval = 6
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        result = resume_dynamic_pricing(s, product)
+        assert result["dynamicPricingEnabled"] == {"old": False, "new": True}
+        assert result["rearmedCount"] == 1
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        url = s.get(models.ProductUrl, url_id)
+        assert product.dynamicPricingEnabled is True
+        assert url.nextRunAt > datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def test_resume_requires_no_config_at_all(seeded_product_with_url):
+    """Bare resume works even with no tier/frequency ever set — no gate,
+    unlike apply_pane_config. Mirrors app.products.jsx's resumeDynamic."""
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.pricingTier == "COMPETITIVE"  # DB default, never explicitly set
+        result = resume_dynamic_pricing(s, product)
+        assert result["dynamicPricingEnabled"]["new"] is True
 
 
 def test_apply_does_not_overwrite_existing_base_price(seeded_product_with_url):

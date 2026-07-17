@@ -11,7 +11,7 @@ from services.common.models import ShopifyProduct
 from services.common.models import CompetitorCandidate, ScrapedProduct, ProductUrl, ShopSettings
 from services.chatbot_svc.schemas import PaneConfigInput
 from services.chatbot_svc.tools.apply_config import (
-    apply_dynamic_pricing_config, pause_dynamic_pricing,
+    apply_dynamic_pricing_config, pause_dynamic_pricing, resume_dynamic_pricing,
     get_delete_preview, delete_dynamic_pricing,
 )
 
@@ -172,6 +172,22 @@ def test_pause_rejects_product_from_another_shop(seed_shop, seed_other_shop):
     with get_db() as s:
         product = s.get(ShopifyProduct, other_pid)
         assert product.dynamicPricingEnabled is False  # untouched (was already False)
+
+
+def test_resume_flips_flag_without_gate(seed_shop):
+    pid = _product_id(seed_shop)
+    result = resume_dynamic_pricing(seed_shop, pid)
+    assert result.dynamic_pricing_enabled_before is False
+    assert result.dynamic_pricing_enabled_after is True
+
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.dynamicPricingEnabled is True
+
+
+def test_resume_unknown_product_raises(seed_shop):
+    with pytest.raises(RuntimeError, match="not found"):
+        resume_dynamic_pricing(seed_shop, "nonexistent-id")
 
 
 def test_first_enable_missing_tier_is_rejected(seed_shop):

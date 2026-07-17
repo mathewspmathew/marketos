@@ -12,6 +12,7 @@ from services.common import models
 from services.common.pane_config import (
     PaneConfig, PaneConfigError, apply_pane_config,
     pause_dynamic_pricing as _pause_dynamic_pricing,
+    resume_dynamic_pricing as _resume_dynamic_pricing,
     delete_dynamic_pricing as _delete_dynamic_pricing,
 )
 from services.chatbot_svc.tools.toggle_settings import compute_disable_counts
@@ -142,6 +143,51 @@ def pause_dynamic_pricing(shop_domain: str, product_id: str) -> PauseDynamicPric
         )
         raise RuntimeError(
             f"Something went wrong pausing dynamic pricing for this product. "
+            f"Please try again."
+        ) from exc
+
+
+def resume_dynamic_pricing(shop_domain: str, product_id: str) -> PauseDynamicPricingResult:
+    try:
+        with get_db() as s:
+            product = s.get(models.ShopifyProduct, product_id)
+            if product is None or product.shopDomain != shop_domain:
+                logger.warning(
+                    "dynamic_pricing_product_not_found",
+                    shop_domain=shop_domain, product_id=product_id, action="resume",
+                )
+                raise RuntimeError(
+                    f"Product {product_id} not found in this shop. "
+                    f"Resolve it with resolve_product first."
+                )
+
+            result = _resume_dynamic_pricing(s, product)
+            before = result["dynamicPricingEnabled"]["old"]
+            after = result["dynamicPricingEnabled"]["new"]
+
+            logger.info(
+                "dynamic_pricing_resumed",
+                shop_domain=shop_domain, product_id=product_id,
+                enabled_before=before, enabled_after=after,
+                rearmed_count=result["rearmedCount"],
+            )
+            return PauseDynamicPricingResult(
+                product_id=product.id,
+                product_title=product.title,
+                dynamic_pricing_enabled_before=before,
+                dynamic_pricing_enabled_after=after,
+                human_summary=f"Dynamic pricing is now resumed for {product.title}.",
+            )
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "dynamic_pricing_resume_failed",
+            shop_domain=shop_domain, product_id=product_id, error=str(exc),
+            exc_info=True,
+        )
+        raise RuntimeError(
+            f"Something went wrong resuming dynamic pricing for this product. "
             f"Please try again."
         ) from exc
 
