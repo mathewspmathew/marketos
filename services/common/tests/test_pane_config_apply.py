@@ -99,7 +99,13 @@ def test_apply_invalid_bounds_writes_nothing(seeded_product_with_url):
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)
         with pytest.raises(PaneConfigError):
-            apply_pane_config(s, product, PaneConfig(min_price_override=100, max_price_override=50))
+            apply_pane_config(s, product, PaneConfig(
+                pricing_tier="PREMIUM",
+                frequency_unit="hour",
+                frequency_interval=6,
+                min_price_override=100,
+                max_price_override=50,
+            ))
 
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)

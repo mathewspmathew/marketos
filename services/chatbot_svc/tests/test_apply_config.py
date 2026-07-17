@@ -83,7 +83,7 @@ def test_apply_invalid_bounds_raises_runtime_error_not_pane_config_error(seed_sh
     with pytest.raises(RuntimeError):
         apply_dynamic_pricing_config(
             seed_shop, pid,
-            _blank_config(min_price_override=100, max_price_override=50),
+            _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6, min_price_override=100, max_price_override=50),
         )
 
     with get_db() as s:
