@@ -100,6 +100,17 @@ def test_delete_preview_endpoint(seeded_product):
     assert r.json()["ok"] is True
 
 
+def test_delete_preview_endpoint_rejects_cross_shop_product(seeded_product, seed_other_shop):
+    shop, _ = seeded_product
+    other_shop = seed_other_shop
+    r = _client.get(
+        "/internal/dynamic-pricing/delete-preview",
+        params={"shop_domain": shop, "product_id": "other-shop-product"},
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+
+
 def test_delete_endpoint_requires_confirmation(seeded_product):
     shop, pid = seeded_product
     r = _client.post("/internal/dynamic-pricing/delete", json={"shop_domain": shop, "product_id": pid, "confirmed": False})

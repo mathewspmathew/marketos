@@ -385,7 +385,11 @@ async def dynamic_pricing_resume(req: DynamicPricingProductRequest):
 @app.get("/internal/dynamic-pricing/delete-preview")
 async def dynamic_pricing_delete_preview(shop_domain: str, product_id: str):
     try:
-        return {"ok": True, **compute_disable_counts(shop_domain, product_id)}
+        with get_db() as s:
+            _resolve_owned_product(s, shop_domain, product_id)
+            return {"ok": True, **compute_disable_counts(shop_domain, product_id)}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
     except Exception:
         logger.exception(
             "dynamic_pricing_http_delete_preview_failed",
