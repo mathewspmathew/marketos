@@ -215,3 +215,86 @@ def test_apply_ignores_discovery_and_listing_cap_after_first_configure(seeded_pr
         product = s.get(models.ShopifyProduct, product_id)
         assert product.discoveryNumResults == 20  # unchanged
         assert product.listingExpansionCap == 10   # unchanged
+
+
+def test_apply_queues_discovery_on_first_enable_with_query(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.searchQuery = "wireless earbuds"
+        s.flush()
+        apply_pane_config(s, product, PaneConfig(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        jobs = s.query(models.DiscoveryJob).filter(models.DiscoveryJob.shopifyProductId == product_id).all()
+        assert len(jobs) == 1
+        assert jobs[0].query == "wireless earbuds"
+        assert jobs[0].status == "QUEUED"
+        s.query(models.DiscoveryJob).filter(models.DiscoveryJob.shopifyProductId == product_id).delete()
+
+
+def test_apply_does_not_queue_discovery_without_a_query(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        jobs = s.query(models.DiscoveryJob).filter(models.DiscoveryJob.shopifyProductId == product_id).all()
+        assert jobs == []
+
+
+def test_apply_does_not_requeue_discovery_on_second_configure(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.searchQuery = "wireless earbuds"
+        s.flush()
+        apply_pane_config(s, product, PaneConfig(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(min_price_override=500))
+
+    with get_db() as s:
+        jobs = s.query(models.DiscoveryJob).filter(models.DiscoveryJob.shopifyProductId == product_id).all()
+        assert len(jobs) == 1  # not duplicated
+        s.query(models.DiscoveryJob).filter(models.DiscoveryJob.shopifyProductId == product_id).delete()
+
+
+def test_apply_snapshots_base_price_on_first_enable(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    variant_id = str(uuid.uuid4())
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        s.add(models.ShopifyVariant(
+            id=variant_id, productId=product_id, title="Default",
+            currentPrice=49.99, basePrice=None,
+        ))
+        s.flush()
+        apply_pane_config(s, product, PaneConfig(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        variant = s.get(models.ShopifyVariant, variant_id)
+        product = s.get(models.ShopifyProduct, product_id)
+        assert float(variant.basePrice) == 49.99
+        assert float(product.avgBasePrice) == 49.99
+        s.query(models.ShopifyVariant).filter(models.ShopifyVariant.id == variant_id).delete()
+
+
+def test_apply_does_not_overwrite_existing_base_price(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    variant_id = str(uuid.uuid4())
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        s.add(models.ShopifyVariant(
+            id=variant_id, productId=product_id, title="Default",
+            currentPrice=49.99, basePrice=39.99,
+        ))
+        s.flush()
+        apply_pane_config(s, product, PaneConfig(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        variant = s.get(models.ShopifyVariant, variant_id)
+        assert float(variant.basePrice) == 39.99  # unchanged, first-seen anchor preserved
+        s.query(models.ShopifyVariant).filter(models.ShopifyVariant.id == variant_id).delete()

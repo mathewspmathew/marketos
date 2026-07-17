@@ -161,6 +161,26 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
     if effective_config.listing_expansion_cap is not None and is_first_configure:
         product.listingExpansionCap = min(effective_config.listing_expansion_cap, 50)
 
+    if is_first_configure:
+        for variant in product.variants:
+            if variant.basePrice is None and variant.currentPrice is not None and float(variant.currentPrice) > 0:
+                variant.basePrice = variant.currentPrice
+        bases = [
+            float(v.basePrice) for v in product.variants
+            if v.basePrice is not None and float(v.basePrice) > 0
+        ]
+        if bases:
+            product.avgBasePrice = sum(bases) / len(bases)
+
+        discovery_query = product.searchQueryOverride or product.searchQuery
+        if product.lastDiscoveryAt is None and discovery_query:
+            session.add(models.DiscoveryJob(
+                shopDomain=product.shopDomain,
+                shopifyProductId=product.id,
+                status="QUEUED",
+                query=discovery_query,
+            ))
+
     product.dynamicPricingEnabled = True
     if product.dynamicPricingConfiguredAt is None:
         product.dynamicPricingConfiguredAt = datetime.now(timezone.utc)
