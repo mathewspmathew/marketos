@@ -217,7 +217,7 @@ def apply_dynamic_pricing_config(
     Raises an error if product_id is not in this shop, or if the config is
     invalid (e.g. min price >= max price)."""
     return t_apply_config.apply_dynamic_pricing_config(
-        ctx.deps.shop_domain, product_id, config
+        ctx.deps.shop_domain, product_id, ctx.deps.session_id, config
     )
 
 
@@ -234,7 +234,7 @@ def pause_dynamic_pricing(
     (with every field omitted) instead. For delete, use get_delete_preview
     then delete_dynamic_pricing. Call resolve_product first to get
     product_id. Raises an error if product_id is not in this shop."""
-    return t_apply_config.pause_dynamic_pricing(ctx.deps.shop_domain, product_id)
+    return t_apply_config.pause_dynamic_pricing(ctx.deps.shop_domain, product_id, ctx.deps.session_id)
 
 
 @agent.tool
@@ -263,7 +263,9 @@ def delete_dynamic_pricing(
     call this with confirmed=True without a real prior confirmation. Call
     resolve_product first to get product_id. Raises an error if product_id is
     not in this shop, or if confirmed is False."""
-    return t_apply_config.delete_dynamic_pricing(ctx.deps.shop_domain, product_id, confirmed)
+    return t_apply_config.delete_dynamic_pricing(
+        ctx.deps.shop_domain, product_id, ctx.deps.session_id, confirmed
+    )
 
 
 @agent.tool

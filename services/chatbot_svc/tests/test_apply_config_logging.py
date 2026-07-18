@@ -65,14 +65,14 @@ def _last_log_lines(capsys, n=1):
     return [json.loads(line) for line in out[-n:]]
 
 
-def test_apply_missing_fields_logs_warning(seed_shop, capsys):
+def test_apply_missing_fields_logs_warning(seed_shop, chat_session_id, capsys):
     # seed_shop's product starts with dynamicPricingEnabled=False and no
     # frequencyUnit/pricingTier set — an all-null config hits the
     # first-enable missing-fields gate.
     _reset_json_logging()
     pid = _product_id(seed_shop)
     with pytest.raises(RuntimeError):
-        t_apply_config.apply_dynamic_pricing_config(seed_shop, pid, _blank_config())
+        t_apply_config.apply_dynamic_pricing_config(seed_shop, pid, chat_session_id, _blank_config())
 
     lines = _last_log_lines(capsys, 5)
     matches = [l for l in lines if l["event"] == "dynamic_pricing_apply_missing_fields"]
@@ -83,11 +83,11 @@ def test_apply_missing_fields_logs_warning(seed_shop, capsys):
     assert "missing" in matches[0]
 
 
-def test_apply_success_logs_info(seed_shop, capsys):
+def test_apply_success_logs_info(seed_shop, chat_session_id, capsys):
     _reset_json_logging()
     pid = _product_id(seed_shop)
     t_apply_config.apply_dynamic_pricing_config(
-        seed_shop, pid,
+        seed_shop, pid, chat_session_id,
         _blank_config(
             pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6,
         ),
@@ -102,15 +102,15 @@ def test_apply_success_logs_info(seed_shop, capsys):
     assert matches[0]["enabled_after"] is True
 
 
-def test_pause_success_logs_info(seed_shop, capsys):
+def test_pause_success_logs_info(seed_shop, chat_session_id, capsys):
     _reset_json_logging()
     pid = _product_id(seed_shop)
     t_apply_config.apply_dynamic_pricing_config(
-        seed_shop, pid,
+        seed_shop, pid, chat_session_id,
         _blank_config(pricing_tier="BUDGET", frequency_unit="day", frequency_interval=1),
     )
     capsys.readouterr()  # discard the apply's own log line
-    t_apply_config.pause_dynamic_pricing(seed_shop, pid)
+    t_apply_config.pause_dynamic_pricing(seed_shop, pid, chat_session_id)
     lines = _last_log_lines(capsys, 5)
     matches = [l for l in lines if l["event"] == "dynamic_pricing_paused"]
     assert len(matches) == 1
@@ -119,21 +119,21 @@ def test_pause_success_logs_info(seed_shop, capsys):
     assert matches[0]["enabled_after"] is False
 
 
-def test_delete_not_confirmed_logs_warning(seed_shop, capsys):
+def test_delete_not_confirmed_logs_warning(seed_shop, chat_session_id, capsys):
     _reset_json_logging()
     pid = _product_id(seed_shop)
     with pytest.raises(RuntimeError):
-        t_apply_config.delete_dynamic_pricing(seed_shop, pid, confirmed=False)
+        t_apply_config.delete_dynamic_pricing(seed_shop, pid, chat_session_id, confirmed=False)
     lines = _last_log_lines(capsys, 5)
     matches = [l for l in lines if l["event"] == "dynamic_pricing_delete_not_confirmed"]
     assert len(matches) == 1
     assert matches[0]["level"] == "warning"
 
 
-def test_delete_success_logs_info(seed_shop, capsys):
+def test_delete_success_logs_info(seed_shop, chat_session_id, capsys):
     _reset_json_logging()
     pid = _product_id(seed_shop)
-    t_apply_config.delete_dynamic_pricing(seed_shop, pid, confirmed=True)
+    t_apply_config.delete_dynamic_pricing(seed_shop, pid, chat_session_id, confirmed=True)
     lines = _last_log_lines(capsys, 5)
     matches = [l for l in lines if l["event"] == "dynamic_pricing_deleted"]
     assert len(matches) == 1
@@ -144,14 +144,15 @@ def test_delete_success_logs_info(seed_shop, capsys):
 def test_product_not_found_logs_warning(capsys):
     _reset_json_logging()
     with pytest.raises(RuntimeError):
-        t_apply_config.pause_dynamic_pricing("no-such-shop.myshopify.com", "no-such-product")
+        # session_id is never read — the product-not-found guard fires first.
+        t_apply_config.pause_dynamic_pricing("no-such-shop.myshopify.com", "no-such-product", "unused-session-id")
     lines = _last_log_lines(capsys, 5)
     matches = [l for l in lines if l["event"] == "dynamic_pricing_product_not_found"]
     assert len(matches) == 1
     assert matches[0]["level"] == "warning"
 
 
-def test_apply_unexpected_exception_logs_error_and_hides_internal_message(seed_shop, capsys, monkeypatch):
+def test_apply_unexpected_exception_logs_error_and_hides_internal_message(seed_shop, chat_session_id, capsys, monkeypatch):
     _reset_json_logging()
     pid = _product_id(seed_shop)
 
@@ -162,7 +163,7 @@ def test_apply_unexpected_exception_logs_error_and_hides_internal_message(seed_s
 
     with pytest.raises(RuntimeError) as excinfo:
         t_apply_config.apply_dynamic_pricing_config(
-            seed_shop, pid,
+            seed_shop, pid, chat_session_id,
             _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6),
         )
 

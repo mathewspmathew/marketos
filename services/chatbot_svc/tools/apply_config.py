@@ -15,6 +15,7 @@ from services.common.pane_config import (
     resume_dynamic_pricing as _resume_dynamic_pricing,
     delete_dynamic_pricing as _delete_dynamic_pricing,
 )
+from services.chatbot_svc.tools.resolution_guard import ensure_product_resolved
 from services.chatbot_svc.tools.toggle_settings import compute_disable_counts
 from services.chatbot_svc.schemas import (
     PaneConfigInput, ApplyPaneConfigResult, PauseDynamicPricingResult, DeleteDynamicPricingResult,
@@ -24,7 +25,7 @@ logger = structlog.get_logger(__name__)
 
 
 def apply_dynamic_pricing_config(
-    shop_domain: str, product_id: str, config: PaneConfigInput
+    shop_domain: str, product_id: str, session_id: str, config: PaneConfigInput
 ) -> ApplyPaneConfigResult:
     try:
         with get_db() as s:
@@ -38,6 +39,8 @@ def apply_dynamic_pricing_config(
                     f"Product {product_id} not found in this shop. "
                     f"Resolve it with resolve_product first."
                 )
+
+            ensure_product_resolved(session_id, product_id)
 
             pane_config = PaneConfig(
                 search_query_override=config.search_query_override,
@@ -105,7 +108,7 @@ def apply_dynamic_pricing_config(
         ) from exc
 
 
-def pause_dynamic_pricing(shop_domain: str, product_id: str) -> PauseDynamicPricingResult:
+def pause_dynamic_pricing(shop_domain: str, product_id: str, session_id: str) -> PauseDynamicPricingResult:
     try:
         with get_db() as s:
             product = s.get(models.ShopifyProduct, product_id)
@@ -118,6 +121,8 @@ def pause_dynamic_pricing(shop_domain: str, product_id: str) -> PauseDynamicPric
                     f"Product {product_id} not found in this shop. "
                     f"Resolve it with resolve_product first."
                 )
+
+            ensure_product_resolved(session_id, product_id)
 
             result = _pause_dynamic_pricing(s, product)
             before = result["dynamicPricingEnabled"]["old"]
@@ -209,7 +214,9 @@ def get_delete_preview(shop_domain: str, product_id: str) -> dict:
         ) from exc
 
 
-def delete_dynamic_pricing(shop_domain: str, product_id: str, confirmed: bool) -> DeleteDynamicPricingResult:
+def delete_dynamic_pricing(
+    shop_domain: str, product_id: str, session_id: str, confirmed: bool
+) -> DeleteDynamicPricingResult:
     try:
         with get_db() as s:
             product = s.get(models.ShopifyProduct, product_id)
@@ -222,6 +229,8 @@ def delete_dynamic_pricing(shop_domain: str, product_id: str, confirmed: bool) -
                     f"Product {product_id} not found in this shop. "
                     f"Resolve it with resolve_product first."
                 )
+
+            ensure_product_resolved(session_id, product_id)
 
             if not confirmed:
                 logger.warning(

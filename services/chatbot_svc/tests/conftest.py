@@ -56,6 +56,30 @@ def seed_shop():
 
 
 @pytest.fixture
+def chat_session_id(seed_shop):
+    """A ChatSession for seed_shop with its product already recorded as
+    resolved — lets existing happy-path tests call the 3 mutation functions
+    without separately exercising the new resolution guard."""
+    from datetime import datetime, timezone
+
+    from services.common.models import ChatSession, ShopifyProduct
+
+    session_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+    with get_db() as s:
+        product_id = s.query(ShopifyProduct.id).filter(ShopifyProduct.shopDomain == seed_shop).scalar()
+        s.add(ChatSession(
+            id=session_id, shopDomain=seed_shop, resolvedProductIds=[product_id],
+            createdAt=now, updatedAt=now,
+        ))
+
+    yield session_id
+
+    with get_db() as s:
+        s.query(ChatSession).filter(ChatSession.id == session_id).delete(synchronize_session=False)
+
+
+@pytest.fixture
 def seed_other_shop():
     """A completely separate shop so we can assert cross-shop isolation."""
     shop = f"other-{uuid.uuid4().hex[:8]}.myshopify.com"
