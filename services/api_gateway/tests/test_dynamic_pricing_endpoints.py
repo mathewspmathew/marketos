@@ -3,7 +3,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from services.chatbot_svc.app import app
+from services.api_gateway.main import app
 from services.common.db import get_db
 from services.common import models
 
