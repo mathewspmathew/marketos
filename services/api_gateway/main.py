@@ -22,6 +22,7 @@ from services.common.celery_app import app as celery_app
 from services.common.db import get_db
 from services.common.frequency import next_run_at
 from services.common.models import ProductUrl, ShopifyProduct
+from services.pricing_svc.revert import RevertError, revert_price_decision
 from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
 load_dotenv()
@@ -115,6 +116,12 @@ class DynamicPricingDeleteRequest(BaseModel):
     shop_domain: str
     product_id: str
     confirmed: bool = False
+
+
+class PriceRevertRequest(BaseModel):
+    shop_domain: str
+    variant_id: str
+    decision_id: str
 
 
 def _resolve_owned_product(session, shop_domain: str, product_id: str) -> ShopifyProduct:
@@ -266,6 +273,30 @@ def rearm_shop_product_urls(shop_domain: str, frequency_interval: int, frequency
         logger.exception("rearm_shop_product_urls_failed", shop_domain=shop_domain)
         raise HTTPException(status_code=500, detail="failed to re-arm rescrape schedules")
     return {"ok": True, "rearmedCount": rearmed}
+
+
+@app.post("/internal/pricing/revert")
+async def price_revert(req: PriceRevertRequest):
+    try:
+        with get_db() as s:
+            result = revert_price_decision(s, req.shop_domain, req.variant_id, req.decision_id)
+            logger.info(
+                "price_revert_succeeded",
+                shop_domain=req.shop_domain, variant_id=req.variant_id, decision_id=req.decision_id,
+            )
+            return {"ok": True, **result}
+    except RevertError as exc:
+        logger.warning(
+            "price_revert_rejected",
+            shop_domain=req.shop_domain, variant_id=req.variant_id, decision_id=req.decision_id, error=str(exc),
+        )
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception(
+            "price_revert_failed",
+            shop_domain=req.shop_domain, variant_id=req.variant_id, decision_id=req.decision_id,
+        )
+        return {"ok": False, "error": "Something went wrong reverting this price change."}
 
 
 @app.get("/health")
