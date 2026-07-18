@@ -131,7 +131,7 @@ export const action = async ({ request }) => {
     const toNullableNumber = (raw) => (raw === "" || raw == null ? null : Number(raw));
 
     const config = {
-      search_query_override: toNullableString(formData.get("searchQueryOverride")),
+      search_query_override: (formData.get("searchQueryOverride") || "").toString().trim(),
       pricing_tier: toNullableString(formData.get("pricingTier")),
       min_price_override: toNullableNumber(formData.get("minPriceOverride")),
       max_price_override: toNullableNumber(formData.get("maxPriceOverride")),
