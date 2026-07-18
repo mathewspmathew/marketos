@@ -3,7 +3,9 @@
 card needs into a ChatPreview row. The backend picks the card variant from
 DB state — the LLM never chooses enable/disable or builds a scope.
 
-Card states and allowed actions (mirrored by internal.apply-chat-flag.jsx):
+Card states and allowed actions (this tool is unregistered/dead — see the
+commented-out open_dynamic_pricing_panel in agent.py; the JS route that used
+to consume this preview kind, internal.apply-chat-flag.jsx, was retired):
   FRESH  -> ["enable"]            editable first-time setup form
   ACTIVE -> ["pause", "delete"]   read-only, product is running
   PAUSED -> ["resume", "delete"]  read-only, data kept from a previous run
