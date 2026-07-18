@@ -7,18 +7,21 @@ Not exposed publicly — only reachable within the Docker network.
 Run: uvicorn services.api_gateway.main:app --host 0.0.0.0 --port 8000
 """
 
+from datetime import datetime, timezone
+
 import structlog
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import or_, text
 
 from services.chatbot_svc.schemas import PaneConfigInput
 from services.chatbot_svc.tools.toggle_settings import compute_disable_counts
 from services.common import pane_config
 from services.common.celery_app import app as celery_app
 from services.common.db import get_db
-from services.common.models import ShopifyProduct
+from services.common.frequency import next_run_at
+from services.common.models import ProductUrl, ShopifyProduct
 from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
 load_dotenv()
@@ -230,6 +233,39 @@ async def dynamic_pricing_delete(req: DynamicPricingDeleteRequest):
     except Exception:
         logger.exception("dynamic_pricing_http_delete_failed", shop_domain=req.shop_domain, product_id=req.product_id)
         return {"ok": False, "error": "Something went wrong deleting dynamic-pricing data for this product."}
+
+
+@app.post("/internal/dynamic-pricing/rearm-shop")
+def rearm_shop_product_urls(shop_domain: str, frequency_interval: int, frequency_unit: str):
+    """Triggered when a shop's global auto-rescrape switch flips OFF -> ON
+    (app.settings.jsx). Re-arms every stale ACTIVE ProductUrl belonging to a
+    product that's still opted into dynamic pricing with a real cadence, so
+    the rescrape loop resumes on the next beat tick — mirrors the per-product
+    re-arm logic in services.common.pane_config, generalized to a whole shop."""
+    if not shop_domain:
+        raise HTTPException(status_code=422, detail="shop_domain is required")
+    try:
+        next_run = next_run_at(frequency_interval, frequency_unit) or datetime.now(timezone.utc)
+        with get_db() as s:
+            eligible_product_ids = s.query(ShopifyProduct.id).filter(
+                ShopifyProduct.shopDomain == shop_domain,
+                ShopifyProduct.dynamicPricingEnabled.is_(True),
+                ShopifyProduct.frequencyUnit != "never",
+            )
+            rearmed = (
+                s.query(ProductUrl)
+                .filter(
+                    ProductUrl.shopDomain == shop_domain,
+                    ProductUrl.status == "ACTIVE",
+                    ProductUrl.shopifyProductId.in_(eligible_product_ids),
+                    or_(ProductUrl.nextRunAt.is_(None), ProductUrl.nextRunAt <= datetime.now(timezone.utc)),
+                )
+                .update({"nextRunAt": next_run}, synchronize_session=False)
+            )
+    except Exception:
+        logger.exception("rearm_shop_product_urls_failed", shop_domain=shop_domain)
+        raise HTTPException(status_code=500, detail="failed to re-arm rescrape schedules")
+    return {"ok": True, "rearmedCount": rearmed}
 
 
 @app.get("/health")

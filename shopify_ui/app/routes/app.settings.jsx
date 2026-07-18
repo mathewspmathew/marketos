@@ -4,7 +4,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
-import { computeNextRunAt } from "../lib/frequency.server";
+
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
 // Keep in sync with services/common/frequency.py::CANONICAL_UNITS.
 const FREQ_UNITS = [
@@ -162,20 +163,18 @@ export const action = async ({ request }) => {
 
   if (autoRescrapeTurnedOn) {
     // Resume the rescrape loop for every product that's still opted in with
-    // a real frequency. Beat will pick them up on the next tick.
-    const nextRunAt = computeNextRunAt(data.frequencyInterval, data.frequencyUnit);
-    await db.productUrl.updateMany({
-      where: {
-        shopDomain,
-        status: "ACTIVE",
-        OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
-        shopifyProduct: {
-          dynamicPricingEnabled: true,
-          frequencyUnit: { not: "never" },
-        },
-      },
-      data: { nextRunAt: nextRunAt ?? new Date() },
+    // a real frequency. Beat will pick them up on the next tick. The
+    // re-arm calculation lives in Python (services/common/frequency.py),
+    // not reimplemented here — same shop-wide re-arm rule pane_config.py
+    // already applies per-product.
+    const params = new URLSearchParams({
+      shop_domain: shopDomain,
+      frequency_interval: String(data.frequencyInterval),
+      frequency_unit: data.frequencyUnit,
     });
+    await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/rearm-shop?${params}`, {
+      method: "POST",
+    }).catch(() => {});
   }
 
   return { ok: true };

@@ -142,3 +142,70 @@ def test_delete_endpoint_requires_confirmation(seeded_product):
     with get_db() as s:
         product = s.get(models.ShopifyProduct, pid)
         assert product.dynamicPricingEnabled is False
+
+
+def test_rearm_shop_rearms_stale_urls_for_eligible_products_only():
+    from datetime import datetime, timedelta, timezone
+
+    shop = f"rearm-shop-test-{uuid.uuid4().hex[:8]}.myshopify.com"
+    eligible_pid = f"gid://shopify/Product/{uuid.uuid4().hex[:8]}"
+    ineligible_pid = f"gid://shopify/Product/{uuid.uuid4().hex[:8]}"
+    scraped_id = str(uuid.uuid4())
+    stale_url_id = str(uuid.uuid4())
+    healthy_url_id = str(uuid.uuid4())
+    ineligible_url_id = str(uuid.uuid4())
+
+    stale = datetime.now(timezone.utc) - timedelta(days=1)
+    healthy = datetime.now(timezone.utc) + timedelta(days=1)
+
+    with get_db() as s:
+        s.add(models.ShopifyUser(shopDomain=shop))
+        s.flush()
+        s.add(models.ShopifyProduct(
+            id=eligible_pid, shopDomain=shop, title="Eligible",
+            dynamicPricingEnabled=True, frequencyUnit="hour", frequencyInterval=6,
+        ))
+        s.add(models.ShopifyProduct(
+            id=ineligible_pid, shopDomain=shop, title="Ineligible (DP off)",
+            dynamicPricingEnabled=False,
+        ))
+        s.add(models.ScrapedProduct(id=scraped_id, shopDomain=shop, domain="example.com", title="Competitor"))
+        s.flush()
+        s.add(models.ProductUrl(
+            id=stale_url_id, shopDomain=shop, shopifyProductId=eligible_pid, prodId=scraped_id,
+            url=f"https://example.com/{stale_url_id}", status="ACTIVE", nextRunAt=stale,
+        ))
+        s.add(models.ProductUrl(
+            id=healthy_url_id, shopDomain=shop, shopifyProductId=eligible_pid, prodId=scraped_id,
+            url=f"https://example.com/{healthy_url_id}", status="ACTIVE", nextRunAt=healthy,
+        ))
+        s.add(models.ProductUrl(
+            id=ineligible_url_id, shopDomain=shop, shopifyProductId=ineligible_pid, prodId=scraped_id,
+            url=f"https://example.com/{ineligible_url_id}", status="ACTIVE", nextRunAt=stale,
+        ))
+
+    try:
+        r = _client.post(
+            "/internal/dynamic-pricing/rearm-shop",
+            params={"shop_domain": shop, "frequency_interval": 6, "frequency_unit": "hour"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is True
+        assert body["rearmedCount"] == 1  # only the stale URL on the eligible product
+
+        with get_db() as s:
+            stale_url = s.get(models.ProductUrl, stale_url_id)
+            healthy_url = s.get(models.ProductUrl, healthy_url_id)
+            ineligible_url = s.get(models.ProductUrl, ineligible_url_id)
+            assert stale_url.nextRunAt > datetime.now(timezone.utc).replace(tzinfo=None)
+            # "untouched" checked within a tolerance — Postgres round-trips
+            # timestamps at slightly different sub-millisecond precision.
+            assert abs((healthy_url.nextRunAt.replace(tzinfo=None) - healthy.replace(tzinfo=None)).total_seconds()) < 1
+            assert abs((ineligible_url.nextRunAt.replace(tzinfo=None) - stale.replace(tzinfo=None)).total_seconds()) < 1
+    finally:
+        with get_db() as s:
+            s.query(models.ProductUrl).filter(models.ProductUrl.shopDomain == shop).delete(synchronize_session=False)
+            s.query(models.ScrapedProduct).filter(models.ScrapedProduct.id == scraped_id).delete(synchronize_session=False)
+            s.query(models.ShopifyProduct).filter(models.ShopifyProduct.shopDomain == shop).delete(synchronize_session=False)
+            s.query(models.ShopifyUser).filter(models.ShopifyUser.shopDomain == shop).delete(synchronize_session=False)
