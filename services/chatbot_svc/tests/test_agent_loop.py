@@ -50,6 +50,10 @@ def test_pause_dynamic_pricing_tool_registered():
     assert "pause_dynamic_pricing" in _tool_names()
 
 
+def test_resume_dynamic_pricing_tool_registered():
+    assert "resume_dynamic_pricing" in _tool_names()
+
+
 def test_ask_user_registered():
     assert "ask_user" in _tool_names()
 
@@ -105,3 +109,55 @@ def test_apply_dynamic_pricing_config_docstring_requires_tier_options():
     docstring = tool.function.__doc__ or ""
     assert "ask_user's options MUST be" in docstring
     assert '["BUDGET", "COMPETITIVE", "PREMIUM"]' in docstring
+
+
+def test_resolve_product_tool_records_results_to_session(monkeypatch):
+    import uuid
+    from datetime import datetime, timezone
+    from services.common.db import get_db
+    from services.common.models import ChatSession, ShopifyUser
+    from services.chatbot_svc import agent as agent_module
+    from services.chatbot_svc.schemas import ResolvedProduct
+    from services.chatbot_svc.deps import AgentDeps
+
+    shop = f"resolve-record-test-{uuid.uuid4().hex[:8]}.myshopify.com"
+    session_id = uuid.uuid4().hex
+
+    with get_db() as s:
+        s.add(ShopifyUser(shopDomain=shop))
+        s.flush()
+        now = datetime.now(timezone.utc)
+        s.add(ChatSession(id=session_id, shopDomain=shop, createdAt=now, updatedAt=now))
+
+    try:
+        fake_result = [ResolvedProduct(
+            product_id="gid://shopify/Product/abc", title="Test Product",
+            variant_ids=["gid://shopify/ProductVariant/1"], dynamic_pricing_enabled=False,
+        )]
+        monkeypatch.setattr(agent_module.t_search, "resolve_product", lambda *a, **k: fake_result)
+
+        deps = AgentDeps(
+            shop_domain=shop, user_id=None, session_id=session_id,
+            rr_base_url="http://test", internal_token="test", http=None,
+        )
+
+        # Call the underlying function directly (agent.tool wraps it, but the
+        # plain function object is reachable via .function on the Tool).
+        tool = agent_module.agent._function_toolset.tools["resolve_product"]
+        result = tool.function(_FakeCtx(deps), "Test Product")
+        assert result == fake_result
+
+        with get_db() as s:
+            session = s.get(ChatSession, session_id)
+            assert "gid://shopify/Product/abc" in session.resolvedProductIds
+    finally:
+        with get_db() as s:
+            s.query(ChatSession).filter(ChatSession.id == session_id).delete(synchronize_session=False)
+            s.query(ShopifyUser).filter(ShopifyUser.shopDomain == shop).delete(synchronize_session=False)
+
+
+class _FakeCtx:
+    """Minimal stand-in for pydantic_ai's RunContext — the tool function
+    only reads ctx.deps."""
+    def __init__(self, deps):
+        self.deps = deps

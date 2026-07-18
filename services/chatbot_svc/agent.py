@@ -65,6 +65,7 @@ from services.chatbot_svc.tools import status as t_status
 from services.chatbot_svc.tools import debug as t_debug
 from services.chatbot_svc.tools import price_explanation as t_price_explanation
 from services.chatbot_svc.tools import match_explanation as t_match_explanation
+from services.chatbot_svc.tools import resolution_guard as t_resolution_guard
 from services.chatbot_svc.tools.ask import ask_user as _ask_user_raw
 
 
@@ -99,7 +100,11 @@ def resolve_product(
     in this shop. Call this BEFORE any preview/apply when the user refers to a product,
     and use ONLY the product_id / variant_ids it returns — never invent ids.
     Returns: [] = not found (tell the user); 1 item = use it; >1 = call ask_user to pick."""
-    return t_search.resolve_product(ctx.deps.shop_domain, reference)
+    results = t_search.resolve_product(ctx.deps.shop_domain, reference)
+    t_resolution_guard.record_resolved_products(
+        ctx.deps.session_id, [r.product_id for r in results]
+    )
+    return results
 
 
 @agent.tool
