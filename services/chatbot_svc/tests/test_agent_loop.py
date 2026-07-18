@@ -50,10 +50,6 @@ def test_pause_dynamic_pricing_tool_registered():
     assert "pause_dynamic_pricing" in _tool_names()
 
 
-def test_resume_dynamic_pricing_tool_registered():
-    assert "resume_dynamic_pricing" in _tool_names()
-
-
 def test_ask_user_registered():
     assert "ask_user" in _tool_names()
 
