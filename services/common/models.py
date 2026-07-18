@@ -190,6 +190,7 @@ class PriceDecision(Base):
     changePct        = Column("changePct",        Float, nullable=True)
     tierAtDecision   = Column("tierAtDecision",   _pricing_tier, nullable=True)
     autoApplied      = Column("autoApplied",      Boolean, nullable=False, default=False)
+    revertedAt       = Column("revertedAt",       DateTime(timezone=True), nullable=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

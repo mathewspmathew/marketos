@@ -140,6 +140,7 @@ model PriceDecision {
   applyError       String?
   oosObservations  Int            @default(0)
   currencyDrops    Int            @default(0)
+  revertedAt       DateTime?
   ShopifyUser      ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
   ShopifyVariant   ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
 
