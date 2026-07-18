@@ -11,6 +11,8 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+
 // Lookback window for chart + logs. 30 days is plenty for the demo and keeps
 // the merged time series small in the browser.
 const LOOKBACK_DAYS = 30;
@@ -33,11 +35,11 @@ export const loader = async ({ request, params }) => {
   const variant = await db.shopifyVariant.findFirst({
     where: { id: variantId, ShopifyProduct: { shopDomain: shop } },
     select: {
-      id: true, title: true, currentPrice: true, autoPriceEnabled: true,
+      id: true, title: true, currentPrice: true,
       inventoryQuantity: true, cost: true,
       ShopifyProduct: {
         select: {
-          id: true, title: true, vendor: true,
+          id: true, title: true, vendor: true, dynamicPricingEnabled: true,
           ProductLevelMatch: {
             where: { confidenceTier: "CONFIRMED" },
             select: { id: true, scrapedProductId: true },
@@ -64,11 +66,10 @@ export const loader = async ({ request, params }) => {
     take: 100,
     select: {
       id: true, decidedAt: true, appliedAt: true, revertedAt: true,
-      oldPrice: true, newPrice: true,
-      ruleSuggestedPrice: true, mlSuggestedPrice: true, mlConfidence: true,
-      modelVersion: true,
-      reason: true, blockedBy: true, confidence: true,
-      ruleId: true,
+      oldPrice: true, newPrice: true, reason: true, changePct: true,
+      tierAtDecision: true, autoApplied: true,
+      refPrice: true, formulaTarget: true, competitorsUsed: true,
+      skipReason: true, oosObservations: true, currencyDrops: true, applyError: true,
     },
   });
 
@@ -161,11 +162,12 @@ export const loader = async ({ request, params }) => {
     variant: {
       id:                variant.id,
       title:             variant.title,
+      productId:         variant.ShopifyProduct.id,
       productTitle:      variant.ShopifyProduct.title,
       productVendor:     variant.ShopifyProduct.vendor,
       currentPrice:      Number(variant.currentPrice),
       cost:              variant.cost != null ? Number(variant.cost) : null,
-      autoPriceEnabled:  variant.autoPriceEnabled,
+      dynamicPricingEnabled: variant.ShopifyProduct.dynamicPricingEnabled,
       inventoryQuantity: variant.inventoryQuantity,
       hasConfirmedMatch: variant.ShopifyProduct.ProductLevelMatch.length > 0,
       stats: variant.VariantCompetitorStats ? {
@@ -179,11 +181,11 @@ export const loader = async ({ request, params }) => {
     },
     decisions: decisions.map((d) => ({
       ...d,
-      oldPrice:           Number(d.oldPrice),
-      newPrice:           Number(d.newPrice),
-      ruleSuggestedPrice: d.ruleSuggestedPrice != null
-        ? Number(d.ruleSuggestedPrice) : null,
-      confidence:         Number(d.confidence),
+      oldPrice:       Number(d.oldPrice),
+      newPrice:       Number(d.newPrice),
+      changePct:      d.changePct != null ? Number(d.changePct) : null,
+      refPrice:       d.refPrice != null ? Number(d.refPrice) : null,
+      formulaTarget:  d.formulaTarget != null ? Number(d.formulaTarget) : null,
     })),
     changes: changes.map((c) => ({
       ...c,
@@ -205,7 +207,7 @@ export const loader = async ({ request, params }) => {
 };
 
 export const action = async ({ request, params }) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const variantId = decodeURIComponent(params.variantId);
   const fd = await request.formData();
@@ -220,73 +222,31 @@ export const action = async ({ request, params }) => {
 
   if (intent === "togglePause") {
     const enabled = fd.get("enabled") === "true";
-    await db.shopifyVariant.update({
-      where: { id: variantId },
-      data:  { autoPriceEnabled: enabled },
+    const product = await db.shopifyProduct.findFirst({
+      where: { ShopifyVariant: { some: { id: variantId } } },
+      select: { id: true },
     });
+    if (!product) return { ok: false, error: "product_not_found" };
+    const path = enabled ? "resume" : "pause";
+    const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shop, product_id: product.id }),
+    });
+    const data = await res.json();
+    if (!data.ok) return { ok: false, error: data.error };
     return { ok: true, intent };
   }
 
   if (intent === "revert") {
-    // changeId is now a PriceDecision id (PriceChange was folded in).
-    const changeId = String(fd.get("changeId"));
-    const change = await db.priceDecision.findFirst({
-      where: { id: changeId, shopifyVariantId: variantId, appliedAt: { not: null } },
-      select: { id: true, oldPrice: true, newPrice: true },
+    const decisionId = String(fd.get("changeId"));
+    const res = await fetch(`${PYTHON_API_URL}/internal/pricing/revert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shop, variant_id: variantId, decision_id: decisionId }),
     });
-    if (!change) return { ok: false, error: "change_not_found" };
-
-    const targetPrice = Number(change.oldPrice);
-
-    // Push to Shopify via Admin API. We're authenticated as the merchant
-    // session, so no offline-token plumbing needed for this path.
-    const resp = await admin.graphql(
-      `#graphql
-      mutation RevertPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-        productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-          productVariants { id price }
-          userErrors { field message }
-        }
-      }`,
-      {
-        variables: {
-          productId: variant.productId,
-          variants: [{ id: variantId, price: String(targetPrice.toFixed(2)) }],
-        },
-      },
-    );
-    const data = await resp.json();
-    const userErrors = data?.data?.productVariantsBulkUpdate?.userErrors ?? [];
-    if (userErrors.length) {
-      return { ok: false, error: userErrors.map((e) => e.message).join("; ") };
-    }
-
-    // DB updates: stamp revertedAt on the source decision, drop the variant
-    // to the target price locally, pause auto-pricing so the rule engine
-    // doesn't immediately re-suggest the same change.
-    await db.priceDecision.update({
-      where: { id: changeId },
-      data:  { revertedAt: new Date() },
-    });
-    await db.shopifyVariant.update({
-      where: { id: variantId },
-      data:  { currentPrice: targetPrice, autoPriceEnabled: false },
-    });
-    // Audit row: pseudo-decision so the log shows the revert event.
-    await db.priceDecision.create({
-      data: {
-        shopDomain:       shop,
-        shopifyVariantId: variantId,
-        ruleId:           null,
-        oldPrice:         Number(variant.currentPrice),
-        newPrice:         targetPrice,
-        reason:           `manual_revert of change ${changeId}`,
-        confidence:       0,
-        statsSnapshot:    {},
-        signalsSnapshot:  { manualRevert: true, sourceChangeId: changeId },
-        appliedAt:        new Date(),
-      },
-    });
+    const data = await res.json();
+    if (!data.ok) return { ok: false, error: data.error };
     return { ok: true, intent };
   }
 
@@ -431,15 +391,15 @@ function QuickActions({ variant, busy }) {
     <s-stack direction="inline" gap="base">
       <fetcher.Form method="post">
         <input type="hidden" name="intent" value="togglePause" />
-        <input type="hidden" name="enabled" value={String(!variant.autoPriceEnabled)} />
+        <input type="hidden" name="enabled" value={String(!variant.dynamicPricingEnabled)} />
         <s-button
           type="submit"
-          variant={variant.autoPriceEnabled ? "secondary" : "primary"}
-          disabled={busy || (!variant.autoPriceEnabled && !variant.hasConfirmedMatch)}
+          variant={variant.dynamicPricingEnabled ? "secondary" : "primary"}
+          disabled={busy || (!variant.dynamicPricingEnabled && !variant.hasConfirmedMatch)}
         >
-          {variant.autoPriceEnabled
-            ? "⏸ Pause auto-pricing"
-            : "▶ Resume auto-pricing"}
+          {variant.dynamicPricingEnabled
+            ? "⏸ Pause auto-pricing for this product"
+            : "▶ Resume auto-pricing for this product"}
         </s-button>
       </fetcher.Form>
     </s-stack>
@@ -522,7 +482,7 @@ function DecisionLog({ decisions }) {
   return (
     <s-stack gap="tight">
       {decisions.map((d) => {
-        const blocked = d.blockedBy != null;
+        const blocked = d.skipReason != null;
         return (
           <s-stack key={d.id} gap="tight"
             style={{
@@ -533,16 +493,28 @@ function DecisionLog({ decisions }) {
             <s-stack direction="inline" gap="base" alignment="space-between">
               <s-text>
                 ₹{d.oldPrice.toFixed(2)} → ₹{d.newPrice.toFixed(2)}
-                {" · "}conf {(d.confidence * 100).toFixed(0)}%
-                {blocked ? <span style={{ color: "#bf0711" }}> · blocked: {d.blockedBy}</span> : null}
+                {d.tierAtDecision ? ` · ${d.tierAtDecision}` : ""}
+                {d.competitorsUsed != null ? ` · ${d.competitorsUsed} competitors used` : ""}
+                {blocked ? <span style={{ color: "#bf0711" }}> · skipped: {d.skipReason}</span> : null}
               </s-text>
               <s-text tone="subdued">{new Date(d.decidedAt).toLocaleString()}</s-text>
             </s-stack>
             <s-text tone="subdued">{d.reason}</s-text>
-            {d.ruleSuggestedPrice != null && d.ruleSuggestedPrice !== d.newPrice ? (
+            {d.refPrice != null ? (
               <s-text tone="subdued">
-                rule suggested ₹{d.ruleSuggestedPrice.toFixed(2)} · final ₹{d.newPrice.toFixed(2)}
+                reference price ₹{d.refPrice.toFixed(2)}
+                {d.formulaTarget != null ? ` · formula target ₹${d.formulaTarget.toFixed(2)}` : ""}
               </s-text>
+            ) : null}
+            {(d.oosObservations > 0 || d.currencyDrops > 0) ? (
+              <s-text tone="subdued">
+                {d.oosObservations > 0 ? `${d.oosObservations} out-of-stock observation(s) skipped` : ""}
+                {d.oosObservations > 0 && d.currencyDrops > 0 ? " · " : ""}
+                {d.currencyDrops > 0 ? `${d.currencyDrops} currency mismatch(es) skipped` : ""}
+              </s-text>
+            ) : null}
+            {d.applyError ? (
+              <s-text tone="critical">apply error: {d.applyError}</s-text>
             ) : null}
           </s-stack>
         );
