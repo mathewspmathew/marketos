@@ -5,7 +5,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { refineQuery } from "../lib/queryRefiner.server";
-import { computeNextRunAt } from "../lib/frequency.server";
+
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
 export const loader = async ({ request, params }) => {
   const { session } = await authenticate.admin(request);
@@ -98,25 +99,19 @@ export const action = async ({ request, params }) => {
   }
 
   if (intent === "toggleDynamic") {
-    // Pause/resume: do NOT clear lastDiscoveryAt on toggle-off. The beat
-    // filter is the actual gate. On toggle-on, re-arm stale URLs so the
-    // rescrape loop resumes immediately.
+    // Pause/resume via the Python API — pane_config.py's pause_dynamic_pricing
+    // / resume_dynamic_pricing are the single source of truth for this
+    // (flag flip + stale-ProductUrl re-arm on resume); this route no longer
+    // reimplements that logic directly against Prisma.
     const enabled = form.get("enabled") === "true";
-    await db.shopifyProduct.update({
-      where: { id: productId },
-      data: { dynamicPricingEnabled: enabled },
+    const path = enabled ? "resume" : "pause";
+    const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shopDomain, product_id: productId }),
     });
-    if (enabled) {
-      const nextRunAt = computeNextRunAt(product.frequencyInterval, product.frequencyUnit);
-      await db.productUrl.updateMany({
-        where: {
-          shopifyProductId: productId,
-          status: "ACTIVE",
-          OR: [{ nextRunAt: null }, { nextRunAt: { lte: new Date() } }],
-        },
-        data: { nextRunAt: nextRunAt ?? new Date() },
-      });
-    }
+    const data = await res.json();
+    if (!data.ok) return { error: data.error };
     return { toggled: enabled };
   }
 
