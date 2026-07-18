@@ -47,8 +47,8 @@ export const loader = async ({ request, params }) => {
         },
       },
       VariantCompetitorStats: {
-        select: { competitorCount: true, weightedMin: true,
-                  weightedMedian: true, minPrice: true, maxPrice: true,
+        select: { competitorCount: true, minPrice: true,
+                  median: true, maxPrice: true,
                   lastUpdatedAt: true },
       },
     },
@@ -172,10 +172,12 @@ export const loader = async ({ request, params }) => {
       hasConfirmedMatch: variant.ShopifyProduct.ProductLevelMatch.length > 0,
       stats: variant.VariantCompetitorStats ? {
         competitorCount: variant.VariantCompetitorStats.competitorCount,
-        weightedMin:     variant.VariantCompetitorStats.weightedMin != null
-          ? Number(variant.VariantCompetitorStats.weightedMin) : null,
-        weightedMedian:  variant.VariantCompetitorStats.weightedMedian != null
-          ? Number(variant.VariantCompetitorStats.weightedMedian) : null,
+        minPrice:        variant.VariantCompetitorStats.minPrice != null
+          ? Number(variant.VariantCompetitorStats.minPrice) : null,
+        median:          variant.VariantCompetitorStats.median != null
+          ? Number(variant.VariantCompetitorStats.median) : null,
+        maxPrice:        variant.VariantCompetitorStats.maxPrice != null
+          ? Number(variant.VariantCompetitorStats.maxPrice) : null,
         lastUpdatedAt:   variant.VariantCompetitorStats.lastUpdatedAt,
       } : null,
     },
