@@ -490,6 +490,7 @@ class ChatSession(Base):
     userId     = Column("userId",     String, nullable=True)
     title      = Column("title",      String, nullable=True)
     runningSummary = Column("runningSummary", Text, nullable=True)
+    resolvedProductIds = Column("resolvedProductIds", JSONB, nullable=False, server_default="'[]'")
     createdAt  = Column("createdAt",  DateTime(timezone=True), server_default=func.now(), nullable=False)
     updatedAt  = Column("updatedAt",  DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

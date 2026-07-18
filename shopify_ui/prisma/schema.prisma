@@ -49,6 +49,7 @@ model ChatSession {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime
   runningSummary String?
+  resolvedProductIds Json          @default("[]")
   ChatMessage    ChatMessage[]
   ChatPreview    ChatPreview[]
   ShopifyUser    ShopifyUser   @relation(fields: [shopDomain], references: [shopDomain])
