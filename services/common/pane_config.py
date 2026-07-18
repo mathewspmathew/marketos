@@ -41,6 +41,8 @@ class PaneConfig:
     frequency_interval: Optional[int] = None
     discovery_num_results: Optional[int] = None
     listing_expansion_cap: Optional[int] = None
+    clear_min_price_override: bool = False
+    clear_max_price_override: bool = False
 
 
 def validate_pane_config(config: PaneConfig) -> None:
@@ -129,11 +131,14 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
                 missing_fields=missing,
             )
 
+    effective_min_price = None if config.clear_min_price_override else config.min_price_override
+    effective_max_price = None if config.clear_max_price_override else config.max_price_override
+
     effective_config = PaneConfig(
         search_query_override=config.search_query_override,
         pricing_tier=effective_pricing_tier,
-        min_price_override=config.min_price_override,
-        max_price_override=config.max_price_override,
+        min_price_override=effective_min_price,
+        max_price_override=effective_max_price,
         frequency_unit=effective_frequency_unit,
         frequency_interval=effective_frequency_interval,
         discovery_num_results=config.discovery_num_results,
@@ -147,9 +152,13 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
         product.searchQueryOverride = effective_config.search_query_override or None
     if effective_config.pricing_tier is not None:
         product.pricingTier = effective_config.pricing_tier
-    if effective_config.min_price_override is not None:
+    if config.clear_min_price_override:
+        product.minPriceOverride = None
+    elif effective_config.min_price_override is not None:
         product.minPriceOverride = effective_config.min_price_override
-    if effective_config.max_price_override is not None:
+    if config.clear_max_price_override:
+        product.maxPriceOverride = None
+    elif effective_config.max_price_override is not None:
         product.maxPriceOverride = effective_config.max_price_override
     if effective_config.frequency_unit is not None:
         product.frequencyUnit = effective_config.frequency_unit

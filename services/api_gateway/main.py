@@ -138,6 +138,8 @@ async def dynamic_pricing_apply(req: DynamicPricingApplyRequest):
                 frequency_interval=req.config.frequency_interval,
                 discovery_num_results=req.config.discovery_num_results,
                 listing_expansion_cap=req.config.listing_expansion_cap,
+                clear_min_price_override=req.config.clear_min_price_override,
+                clear_max_price_override=req.config.clear_max_price_override,
             )
             try:
                 result = pane_config.apply_pane_config(s, product, config)

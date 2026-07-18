@@ -49,6 +49,13 @@ class PaneConfigInput(BaseModel):
     discovery_num_results: Optional[int] = Field(..., description="null unless the user gave a competitor-products-per-run count.")
     listing_expansion_cap: Optional[int] = Field(..., description="null unless the user gave a products-per-listing-page count.")
 
+    # Browser-specific escape hatch to clear an explicit min/max price override
+    # back to the pricing engine's live fallback. Deliberately optional (unlike
+    # every field above) because the chatbot has no "clear this" conversational
+    # pattern defined — do not make these required just for consistency.
+    clear_min_price_override: bool = Field(False, description="Browser-only escape hatch — the chatbot should never set this true; leave at the default.")
+    clear_max_price_override: bool = Field(False, description="Browser-only escape hatch — the chatbot should never set this true; leave at the default.")
+
 
 class ApplyPaneConfigResult(BaseModel):
     product_id: str

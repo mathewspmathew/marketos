@@ -48,6 +48,8 @@ def apply_dynamic_pricing_config(
                 frequency_interval=config.frequency_interval,
                 discovery_num_results=config.discovery_num_results,
                 listing_expansion_cap=config.listing_expansion_cap,
+                clear_min_price_override=config.clear_min_price_override,
+                clear_max_price_override=config.clear_max_price_override,
             )
             try:
                 result = apply_pane_config(s, product, pane_config)

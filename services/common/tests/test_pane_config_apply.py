@@ -330,3 +330,60 @@ def test_apply_does_not_overwrite_existing_base_price(seeded_product_with_url):
         variant = s.get(models.ShopifyVariant, variant_id)
         assert float(variant.basePrice) == 39.99  # unchanged, first-seen anchor preserved
         s.query(models.ShopifyVariant).filter(models.ShopifyVariant.id == variant_id).delete()
+
+
+def test_apply_clear_min_price_override_writes_null(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6,
+            min_price_override=500,
+        ))
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert float(product.minPriceOverride) == 500.0
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(clear_min_price_override=True))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.minPriceOverride is None
+
+
+def test_apply_clear_max_price_override_writes_null(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6,
+            max_price_override=1200,
+        ))
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert float(product.maxPriceOverride) == 1200.0
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(clear_max_price_override=True))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.maxPriceOverride is None
+
+
+def test_apply_clear_flag_ignores_simultaneous_value(seeded_product_with_url):
+    """If both a value and its clear flag are sent, clear wins — this should
+    never happen from real callers, but the contract must be unambiguous."""
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6,
+            min_price_override=500, clear_min_price_override=True,
+        ))
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.minPriceOverride is None

@@ -35,6 +35,7 @@ def _blank_config(**overrides):
         search_query_override=None, pricing_tier=None, min_price_override=None,
         max_price_override=None, frequency_unit=None, frequency_interval=None,
         discovery_num_results=None, listing_expansion_cap=None,
+        clear_min_price_override=False, clear_max_price_override=False,
     )
     defaults.update(overrides)
     return defaults
@@ -73,6 +74,26 @@ def test_apply_endpoint_unknown_product_returns_ok_false(seeded_product):
     })
     assert r.status_code == 200
     assert r.json()["ok"] is False
+
+
+def test_apply_endpoint_clear_min_price_override(seeded_product):
+    shop, pid = seeded_product
+    r = _client.post("/internal/dynamic-pricing/apply", json={
+        "shop_domain": shop, "product_id": pid,
+        "config": _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6, min_price_override=500),
+    })
+    assert r.json()["ok"] is True
+    with get_db() as s:
+        assert float(s.get(models.ShopifyProduct, pid).minPriceOverride) == 500.0
+
+    r = _client.post("/internal/dynamic-pricing/apply", json={
+        "shop_domain": shop, "product_id": pid,
+        "config": _blank_config(clear_min_price_override=True),
+    })
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    with get_db() as s:
+        assert s.get(models.ShopifyProduct, pid).minPriceOverride is None
 
 
 def test_pause_then_resume_endpoints(seeded_product):

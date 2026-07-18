@@ -130,11 +130,18 @@ export const action = async ({ request }) => {
     };
     const toNullableNumber = (raw) => (raw === "" || raw == null ? null : Number(raw));
 
+    const minRaw = formData.get("minPriceOverride");
+    const maxRaw = formData.get("maxPriceOverride");
+    const minEmpty = minRaw === "" || minRaw == null;
+    const maxEmpty = maxRaw === "" || maxRaw == null;
+
     const config = {
       search_query_override: (formData.get("searchQueryOverride") || "").toString().trim(),
       pricing_tier: toNullableString(formData.get("pricingTier")),
-      min_price_override: toNullableNumber(formData.get("minPriceOverride")),
-      max_price_override: toNullableNumber(formData.get("maxPriceOverride")),
+      min_price_override: minEmpty ? null : Number(minRaw),
+      max_price_override: maxEmpty ? null : Number(maxRaw),
+      clear_min_price_override: minEmpty,
+      clear_max_price_override: maxEmpty,
       frequency_unit: toNullableString(formData.get("frequencyUnit")),
       frequency_interval: toNullableNumber(formData.get("frequencyInterval")),
       discovery_num_results: toNullableNumber(formData.get("discoveryNumResults")),

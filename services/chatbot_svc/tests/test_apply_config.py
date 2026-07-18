@@ -34,6 +34,8 @@ def _blank_config(**overrides):
         frequency_interval=None,
         discovery_num_results=None,
         listing_expansion_cap=None,
+        clear_min_price_override=False,
+        clear_max_price_override=False,
     )
     defaults.update(overrides)
     return PaneConfigInput(**defaults)
@@ -264,6 +266,25 @@ def test_update_on_already_active_product_is_not_gated(seed_shop):
         assert product.pricingTier == "PREMIUM"
         assert product.frequencyUnit == "hour"
         assert product.frequencyInterval == 6
+
+
+def test_apply_threads_clear_min_price_override_flag(seed_shop):
+    pid = _product_id(seed_shop)
+    apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(pricing_tier="PREMIUM", frequency_unit="hour", frequency_interval=6, min_price_override=500),
+    )
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert float(product.minPriceOverride) == 500.0
+
+    apply_dynamic_pricing_config(
+        seed_shop, pid,
+        _blank_config(clear_min_price_override=True),
+    )
+    with get_db() as s:
+        product = s.get(ShopifyProduct, pid)
+        assert product.minPriceOverride is None
 
 
 def test_paused_product_partial_reconfigure_not_gated_on_frequency(seed_shop):
