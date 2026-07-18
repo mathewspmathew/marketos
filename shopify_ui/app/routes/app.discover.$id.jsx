@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
-import { refineQuery } from "../lib/queryRefiner.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
@@ -82,22 +81,6 @@ export const action = async ({ request, params }) => {
   });
   if (!product) return { error: "product_not_found" };
 
-  if (intent === "refine") {
-    const hint = (form.get("hint") || "").toString();
-    try {
-      const refined = await refineQuery({
-        title:       product.title,
-        vendor:      product.vendor,
-        category:    product.categoryTop,
-        description: product.description,
-        hint,
-      });
-      return { refined };
-    } catch (e) {
-      return { error: String(e.message || e) };
-    }
-  }
-
   if (intent === "toggleDynamic") {
     // Pause/resume via the Python API — pane_config.py's pause_dynamic_pricing
     // / resume_dynamic_pricing are the single source of truth for this
@@ -135,7 +118,6 @@ export const action = async ({ request, params }) => {
 
 export default function DiscoverPage() {
   const { product, latestJob, candidateCount, candidates } = useLoaderData();
-  const refineFetcher = useFetcher();
   const searchFetcher = useFetcher();
   const toggleFetcher = useFetcher();
 
@@ -147,22 +129,11 @@ export default function DiscoverPage() {
 
   const initialQuery = product.searchQueryOverride || product.searchQuery || "";
   const [query, setQuery] = useState(initialQuery);
-  const [hint, setHint]   = useState("");
   const [num, setNum]     = useState(product.discoveryNumResults ?? 10);
   const [listingCap, setListingCap] = useState(product.listingExpansionCap ?? 5);
 
-  useEffect(() => {
-    if (refineFetcher.state === "idle" && refineFetcher.data?.refined) {
-      setQuery(refineFetcher.data.refined);
-    }
-  }, [refineFetcher.state, refineFetcher.data]);
-
-  const refining = refineFetcher.state !== "idle";
   const searching = searchFetcher.state !== "idle";
 
-  const doRefine = () => {
-    refineFetcher.submit({ intent: "refine", hint }, { method: "POST" });
-  };
   const doSearch = () => {
     if (!query.trim()) return;
     const n = Math.max(1, Math.min(parseInt(num, 10) || 10, 50));
@@ -210,22 +181,8 @@ export default function DiscoverPage() {
       <s-section heading="Search query">
         <s-stack direction="block" gap="base">
           <s-text tone="subdued">
-            The more specific the query, the better the seller links. Use "Refine with AI" to
-            turn a rough phrase into a high-precision search.
+            The more specific the query, the better the seller links.
           </s-text>
-
-          <s-text-field
-            label="Optional hint for AI refinement"
-            placeholder="e.g. green wayfarer style, unisex"
-            value={hint}
-            onChange={(e) => setHint(e.target.value)}
-          />
-          <s-button onClick={doRefine} disabled={refining || undefined}>
-            {refining ? "Refining…" : "Refine with AI"}
-          </s-button>
-          {refineFetcher.data?.error && (
-            <s-text tone="critical">Refine failed: {refineFetcher.data.error}</s-text>
-          )}
 
           <s-text-field
             label="Search query (editable)"
