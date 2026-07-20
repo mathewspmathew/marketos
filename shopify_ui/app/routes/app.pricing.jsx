@@ -4,6 +4,8 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+
 const FILTERS = [
   { key: "live",     label: "Auto-priced now" },     // default — the "what's actively changing" view
   { key: "eligible", label: "Eligible (has CONFIRMED match)" },
@@ -27,12 +29,11 @@ export const loader = async ({ request }) => {
       id: true,
       title: true,
       currentPrice: true,
-      autoPriceEnabled: true,
       inventoryQuantity: true,
       imageUrl: true,
       ShopifyProduct: {
         select: {
-          id: true, title: true, vendor: true, imageUrl: true,
+          id: true, title: true, vendor: true, imageUrl: true, dynamicPricingEnabled: true,
           ProductLevelMatch: {
             where: { confidenceTier: "CONFIRMED" },
             select: { id: true },
@@ -46,13 +47,14 @@ export const loader = async ({ request }) => {
         take: 2,
         select: {
           decidedAt: true, appliedAt: true, revertedAt: true,
-          oldPrice: true, newPrice: true,
-          reason: true, blockedBy: true, confidence: true,
-          ruleSuggestedPrice: true,
+          oldPrice: true, newPrice: true, reason: true, changePct: true,
+          tierAtDecision: true, autoApplied: true,
+          refPrice: true, formulaTarget: true, competitorsUsed: true,
+          skipReason: true, oosObservations: true, currencyDrops: true, applyError: true,
         },
       },
       VariantCompetitorStats: {
-        select: { competitorCount: true, weightedMin: true, weightedMedian: true,
+        select: { competitorCount: true, minPrice: true, median: true, maxPrice: true,
                   lastUpdatedAt: true },
       },
       // Mapped competitors for the "what are we pricing against?" panel.
@@ -86,25 +88,21 @@ export const loader = async ({ request }) => {
     return {
       id:                v.id,
       title:             v.title,
+      productId:         v.ShopifyProduct.id,
       productTitle:      v.ShopifyProduct.title,
       productVendor:     v.ShopifyProduct.vendor,
       imageUrl:          v.imageUrl || v.ShopifyProduct.imageUrl,
       currentPrice:      Number(v.currentPrice),
-      autoPriceEnabled:  v.autoPriceEnabled,      useMlSuggestion:   v.useMlSuggestion,
+      dynamicPricingEnabled: v.ShopifyProduct.dynamicPricingEnabled,
       inventoryQuantity: v.inventoryQuantity,
       hasConfirmed,
       lastDecision: lastDec ? {
         ...lastDec,
-        oldPrice:           Number(lastDec.oldPrice),
-        newPrice:           Number(lastDec.newPrice),
-        ruleSuggestedPrice: lastDec.ruleSuggestedPrice != null
-          ? Number(lastDec.ruleSuggestedPrice) : null,
-        mlSuggestedPrice:   lastDec.mlSuggestedPrice != null
-          ? Number(lastDec.mlSuggestedPrice) : null,
-        mlConfidence:       lastDec.mlConfidence != null
-          ? Number(lastDec.mlConfidence) : null,
-        modelVersion:       lastDec.modelVersion ?? null,
-        confidence:         Number(lastDec.confidence),
+        oldPrice:      Number(lastDec.oldPrice),
+        newPrice:      Number(lastDec.newPrice),
+        changePct:     lastDec.changePct != null ? Number(lastDec.changePct) : null,
+        refPrice:      lastDec.refPrice != null ? Number(lastDec.refPrice) : null,
+        formulaTarget: lastDec.formulaTarget != null ? Number(lastDec.formulaTarget) : null,
       } : null,
       lastChange: lastApplied ? {
         appliedAt:  lastApplied.appliedAt,
@@ -114,10 +112,12 @@ export const loader = async ({ request }) => {
       } : null,
       stats: v.VariantCompetitorStats ? {
         competitorCount: v.VariantCompetitorStats.competitorCount,
-        weightedMin:     v.VariantCompetitorStats.weightedMin != null
-          ? Number(v.VariantCompetitorStats.weightedMin) : null,
-        weightedMedian:  v.VariantCompetitorStats.weightedMedian != null
-          ? Number(v.VariantCompetitorStats.weightedMedian) : null,
+        minPrice:        v.VariantCompetitorStats.minPrice != null
+          ? Number(v.VariantCompetitorStats.minPrice) : null,
+        median:          v.VariantCompetitorStats.median != null
+          ? Number(v.VariantCompetitorStats.median) : null,
+        maxPrice:        v.VariantCompetitorStats.maxPrice != null
+          ? Number(v.VariantCompetitorStats.maxPrice) : null,
         lastUpdatedAt:   v.VariantCompetitorStats.lastUpdatedAt,
       } : null,
       mappedCompetitors: v.ProductMatch
@@ -136,23 +136,28 @@ export const loader = async ({ request }) => {
     };
   });
 
-  const isLive = (r) => r.autoPriceEnabled && r.hasConfirmed;
+  // Only these two skipReason values mean nothing actually shipped —
+  // clamped_per_round/clamped_lifetime_cap decisions still applied a
+  // (capped) price, so they don't count as "blocked".
+  const NOTHING_SHIPPED = new Set(["below_min_competitors", "no_change"]);
+  const isBlocked = (r) => NOTHING_SHIPPED.has(r.lastDecision?.skipReason);
+  const isLive = (r) => r.dynamicPricingEnabled && r.hasConfirmed;
   const filtered = rows.filter((r) => {
     if (filter === "live")     return isLive(r);
-    if (filter === "active")   return r.autoPriceEnabled;
+    if (filter === "active")   return r.dynamicPricingEnabled;
     if (filter === "eligible") return r.hasConfirmed;
-    if (filter === "blocked")  return r.lastDecision?.blockedBy != null;
-    if (filter === "paused")   return !r.autoPriceEnabled;
+    if (filter === "blocked")  return isBlocked(r);
+    if (filter === "paused")   return !r.dynamicPricingEnabled;
     return true;
   });
 
   const counts = {
     all:      rows.length,
     live:     rows.filter(isLive).length,
-    active:   rows.filter((r) => r.autoPriceEnabled).length,
+    active:   rows.filter((r) => r.dynamicPricingEnabled).length,
     eligible: rows.filter((r) => r.hasConfirmed).length,
-    blocked:  rows.filter((r) => r.lastDecision?.blockedBy != null).length,
-    paused:   rows.filter((r) => !r.autoPriceEnabled).length,
+    blocked:  rows.filter(isBlocked).length,
+    paused:   rows.filter((r) => !r.dynamicPricingEnabled).length,
   };
 
   return { shop, filter, rows: filtered, counts };
@@ -167,19 +172,19 @@ export const action = async ({ request }) => {
   if (intent === "toggleAutoPrice") {
     const id = String(fd.get("id"));
     const enabled = fd.get("enabled") === "true";
-    await db.shopifyVariant.updateMany({
+    const variant = await db.shopifyVariant.findFirst({
       where: { id, ShopifyProduct: { shopDomain: shop } },
-      data:  { autoPriceEnabled: enabled },
+      select: { productId: true },
     });
-    return { ok: true };
-  }
-  if (intent === "toggleMlOptIn") {
-    const id = String(fd.get("id"));
-    const enabled = fd.get("enabled") === "true";
-    await db.shopifyVariant.updateMany({
-      where: { id, ShopifyProduct: { shopDomain: shop } },
-      data:  { useMlSuggestion: enabled },
+    if (!variant) return { ok: false, error: "not_found" };
+    const path = enabled ? "resume" : "pause";
+    const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shop, product_id: variant.productId }),
     });
+    const data = await res.json();
+    if (!data.ok) return { ok: false, error: data.error };
     return { ok: true };
   }
   return { ok: false, error: "unknown_intent" };
@@ -199,16 +204,12 @@ export default function PricingCatalog() {
           </s-text>
           <s-stack direction="inline" gap="base">
             <s-text tone="subdued" style={{ fontSize: 12 }}>
-              <strong>Rule says</strong> — what your competitor-based rule
-              suggests (e.g. match the lowest competitor minus 2%).
+              <strong>Reference price</strong> — the competitor-weighted
+              average your tier formula starts from.
             </s-text>
             <s-text tone="subdued" style={{ fontSize: 12 }}>
-              <strong>ML says</strong> — what the demand model predicts is
-              the best price. Shown for comparison even when off.
-            </s-text>
-            <s-text tone="subdued" style={{ fontSize: 12 }}>
-              <strong>Would ship</strong> — the final price (rule-only by
-              default, or a rule+ML blend when you opt in per variant).
+              <strong>Would ship</strong> — the final price after your
+              pricing tier&apos;s adjustment (undercut, match, or markup).
             </s-text>
           </s-stack>
         </s-stack>
@@ -245,17 +246,14 @@ export default function PricingCatalog() {
   );
 }
 
-// Friendly explanations for the engine's internal block codes. These are
-// what the merchant sees in the row — the raw blockedBy string is kept
+// Friendly explanations for the engine's internal skip codes. These are
+// what the merchant sees in the row — the raw skipReason string is kept
 // in the decision row for debugging.
 const BLOCK_REASONS = {
-  no_rule:             { label: "No pricing rule set",       hint: "Add a rule for this shop / product / variant to start pricing." },
-  kill_switch:         { label: "Kill switch is on",          hint: "Auto-pricing is paused for the whole shop. Turn it off in settings." },
-  no_confirmed_match:  { label: "No confirmed competitor",    hint: "Confirm at least one matched competitor product before auto-pricing can run." },
-  stale_data:          { label: "Competitor data is stale",   hint: "We haven't seen fresh competitor prices recently. A re-scrape will unblock this." },
-  active_promotion:    { label: "Promotion window active",    hint: "Auto-pricing is paused while your promotion is live." },
-  no_candidate:        { label: "Rule couldn't suggest a price", hint: "Usually means no competitor data matched the rule's filters." },
-  noop:                { label: "No change needed",           hint: "The rule's recommended price equals the current price." },
+  below_min_competitors: { label: "Not enough tracked competitors",  hint: "Needs more confirmed matches, or check Auto rescrape in Settings." },
+  no_change:              { label: "No change needed",                hint: "Computed price already matches current." },
+  clamped_per_round:      { label: "Change capped this cycle",        hint: "Price moved, but limited by your max-change-per-update setting." },
+  clamped_lifetime_cap:   { label: "Capped at price bounds",          hint: "Price moved, but limited by your min/max price band." },
 };
 
 function describeBlock(code) {
@@ -265,7 +263,7 @@ function describeBlock(code) {
 // Compact price comparison: Rule | ML | Final. The "Final" is what would
 // (or did) ship to Shopify; the others are shown side-by-side so the
 // merchant can see where each input landed.
-function PriceCompare({ rule, ml, mlConf, mlVersion, final, current }) {
+function PriceCompare({ refPrice, final, current }) {
   const Col = ({ label, value, sub, tone }) => (
     <div style={{
       flex: 1, padding: "8px 10px", borderRadius: 6,
@@ -282,12 +280,8 @@ function PriceCompare({ rule, ml, mlConf, mlVersion, final, current }) {
   );
   return (
     <s-stack direction="inline" gap="tight">
-      <Col label="Rule says" value={rule != null ? `₹${rule.toFixed(2)}` : "—"}
-           sub="competitor-based"
-           tone={final != null && rule != null && Math.abs(final - rule) < 0.005 ? "primary" : null} />
-      <Col label="ML says"
-           value={ml != null ? `₹${ml.toFixed(2)}` : "—"}
-           sub={ml != null ? `conf ${(mlConf * 100).toFixed(0)}%${mlVersion ? ` · ${mlVersion}` : ""}` : "no model yet"} />
+      <Col label="Reference price" value={refPrice != null ? `₹${refPrice.toFixed(2)}` : "—"}
+           sub="competitor-weighted average" />
       <Col label="Would ship" value={final != null ? `₹${final.toFixed(2)}` : "—"}
            sub={current != null && final != null && Math.abs(final - current) < 0.005 ? "= current" : "Δ vs current"}
            tone="primary" />
@@ -300,7 +294,7 @@ function VariantRow({ row }) {
   const busy = fetcher.state !== "idle";
   const decision = row.lastDecision;
   const change   = row.lastChange;
-  const block    = decision?.blockedBy ? describeBlock(decision.blockedBy) : null;
+  const block    = decision?.skipReason ? describeBlock(decision.skipReason) : null;
 
   return (
     <s-section>
@@ -334,46 +328,22 @@ function VariantRow({ row }) {
             <fetcher.Form method="post">
               <input type="hidden" name="intent" value="toggleAutoPrice" />
               <input type="hidden" name="id" value={row.id} />
-              <input type="hidden" name="enabled" value={String(!row.autoPriceEnabled)} />
+              <input type="hidden" name="enabled" value={String(!row.dynamicPricingEnabled)} />
               <s-button
                 type="submit"
-                variant={row.autoPriceEnabled ? "primary" : "secondary"}
+                variant={row.dynamicPricingEnabled ? "primary" : "secondary"}
                 disabled={busy || !row.hasConfirmed}
               >
-                {row.autoPriceEnabled ? "Auto-pricing: ON" : "Enable auto-pricing"}
+                {row.dynamicPricingEnabled ? "Auto-pricing: ON" : "Enable auto-pricing"}
               </s-button>
             </fetcher.Form>
-
-            <fetcher.Form method="post">
-              <input type="hidden" name="intent" value="toggleMlOptIn" />
-              <input type="hidden" name="id" value={row.id} />
-              <input type="hidden" name="enabled" value={String(!row.useMlSuggestion)} />
-              <s-button
-                type="submit"
-                variant={row.useMlSuggestion ? "primary" : "secondary"}
-                disabled={busy}
-              >
-                {row.useMlSuggestion
-                  ? "ML blending: ON"
-                  : "Let ML influence price"}
-              </s-button>
-            </fetcher.Form>
-
-            <s-text tone="subdued" style={{ fontSize: 11 }}>
-              {row.useMlSuggestion
-                ? "Final price is a mix of rule + ML prediction."
-                : "Final price is rule-only. ML shown for comparison."}
-            </s-text>
           </s-stack>
         </s-stack>
 
         {/* ── Price comparison strip ──────────────────────────────────── */}
         {decision ? (
           <PriceCompare
-            rule={decision.ruleSuggestedPrice}
-            ml={decision.mlSuggestedPrice}
-            mlConf={decision.mlConfidence}
-            mlVersion={decision.modelVersion}
+            refPrice={decision.refPrice}
             final={decision.newPrice}
             current={row.currentPrice}
           />
@@ -400,7 +370,8 @@ function VariantRow({ row }) {
                 ) : (
                   <>
                     Decision <strong>{fmtTimeAgo(decision.decidedAt)}</strong>
-                    {" · "}competitor-signal confidence <strong>{(decision.confidence * 100).toFixed(0)}%</strong>
+                    {decision.tierAtDecision ? <>{" · "}tier <strong>{decision.tierAtDecision}</strong></> : null}
+                    {decision.competitorsUsed != null ? <>{" · "}{decision.competitorsUsed} competitors used</> : null}
                   </>
                 )}
               </s-text>
@@ -422,10 +393,10 @@ function VariantRow({ row }) {
             {row.stats ? (
               <s-text tone="subdued" style={{ fontSize: 12 }}>
                 Competitors: <strong>{row.stats.competitorCount ?? 0}</strong>
-                {row.stats.weightedMin != null ?
-                  ` · min ₹${row.stats.weightedMin.toFixed(2)}` : ""}
-                {row.stats.weightedMedian != null ?
-                  ` · median ₹${row.stats.weightedMedian.toFixed(2)}` : ""}
+                {row.stats.minPrice != null ?
+                  ` · min ₹${row.stats.minPrice.toFixed(2)}` : ""}
+                {row.stats.median != null ?
+                  ` · median ₹${row.stats.median.toFixed(2)}` : ""}
                 {row.stats.lastUpdatedAt
                   ? ` · seen ${fmtTimeAgo(row.stats.lastUpdatedAt)}` : ""}
               </s-text>
