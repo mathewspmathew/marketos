@@ -41,13 +41,13 @@ export const loader = async ({ request, params }) => {
   const strongMatchCount = await db.productLevelMatch.count({
     where: {
       shopifyProductId: productId, shopDomain,
-      rejectedByMerchant: false,
+      reviewStatus: { not: "REJECTED" },
       confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
     },
   });
 
   const matches = await db.productLevelMatch.findMany({
-    where: { shopifyProductId: productId, shopDomain, rejectedByMerchant: false },
+    where: { shopifyProductId: productId, shopDomain, reviewStatus: { not: "REJECTED" } },
     orderBy: { confidence: "desc" },
     take: 8,
     include: {

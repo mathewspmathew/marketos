@@ -5,6 +5,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
 
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
@@ -12,7 +14,7 @@ export const loader = async ({ request }) => {
   const allMatches = await db.productLevelMatch.findMany({
     where: {
       shopDomain,
-      rejectedByMerchant: false,
+      reviewStatus: { not: "REJECTED" },
       confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
     },
     include: {
@@ -68,7 +70,7 @@ export const loader = async ({ request }) => {
         confidence: Number(m.confidence),
         confidenceTier: m.confidenceTier,
         source: m.source,
-        confirmedByMerchant: m.confirmedByMerchant,
+        reviewStatus: m.reviewStatus,
         scrapedTitle: scraped?.title ?? "(missing)",
         scrapedDomain: scraped?.domain ?? "",
         scrapedImageUrl: scraped?.imageUrl ?? null,
@@ -105,23 +107,22 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
   const formData = await request.formData();
   const matchId = formData.get("matchId");
   const intent = formData.get("intent");
 
-  if (intent === "confirm") {
-    await db.productLevelMatch.update({
-      where: { id: matchId },
-      data: { confirmedByMerchant: true, rejectedByMerchant: false, reviewedAt: new Date() },
-    });
-  } else if (intent === "reject") {
-    await db.productLevelMatch.update({
-      where: { id: matchId },
-      data: { confirmedByMerchant: false, rejectedByMerchant: true, reviewedAt: new Date() },
-    });
-  }
-  return null;
+  if (intent !== "confirm" && intent !== "reject") return { ok: false, error: "unknown_intent" };
+
+  const res = await fetch(`${PYTHON_API_URL}/internal/matches/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ shop_domain: shop, match_id: matchId, action: intent }),
+  });
+  const data = await res.json();
+  if (!data.ok) return { ok: false, error: data.error };
+  return { ok: true };
 };
 
 export default function MatchesPage() {
@@ -222,7 +223,7 @@ export default function MatchesPage() {
                       <s-badge tone={product.topMatch.confidenceTier === "CONFIRMED" ? "success" : "info"}>
                         {product.topMatch.confidenceTier} ({(product.topMatch.confidence * 100).toFixed(0)}%)
                       </s-badge>
-                      {product.topMatch.confirmedByMerchant && <s-badge tone="success">Confirmed</s-badge>}
+                      {product.topMatch.reviewStatus === "CONFIRMED" && <s-badge tone="success">Confirmed</s-badge>}
                     </s-stack>
                     <s-stack direction="inline" gap="loose" align="center">
                       {product.topMatch.competitorPrice && <s-text>Their price: ₹{product.topMatch.competitorPrice}</s-text>}
@@ -252,7 +253,7 @@ export default function MatchesPage() {
                       <s-stack direction="inline" gap="loose" align="center">
                         {m.competitorPrice && <s-text>₹{m.competitorPrice}</s-text>}
                         {m.competitorUrl && <s-link href={m.competitorUrl} target="_blank">Open</s-link>}
-                        {m.confidenceTier === "LIKELY" && !m.confirmedByMerchant && (
+                        {m.confidenceTier === "LIKELY" && m.reviewStatus === "PENDING" && (
                           <>
                             <s-button size="slim" onClick={() => act(m.id, "confirm")}>Confirm</s-button>
                             <s-button size="slim" variant="plain" onClick={() => act(m.id, "reject")}>Reject</s-button>
@@ -291,7 +292,7 @@ export default function MatchesPage() {
                       <s-stack direction="inline" gap="loose" align="center">
                         {m.competitorPrice && <s-text>₹{m.competitorPrice}</s-text>}
                         {m.competitorUrl && <s-link href={m.competitorUrl} target="_blank">Open</s-link>}
-                        {m.confidenceTier === "LIKELY" && !m.confirmedByMerchant && (
+                        {m.confidenceTier === "LIKELY" && m.reviewStatus === "PENDING" && (
                           <>
                             <s-button size="slim" onClick={() => act(m.id, "confirm")}>Confirm</s-button>
                             <s-button size="slim" variant="plain" onClick={() => act(m.id, "reject")}>Reject</s-button>

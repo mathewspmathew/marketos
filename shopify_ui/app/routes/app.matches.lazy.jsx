@@ -17,7 +17,7 @@ export const loader = async ({ request }) => {
     where: {
       shopDomain,
       shopifyProductId: productId,
-      rejectedByMerchant: false,
+      reviewStatus: { not: "REJECTED" },
       confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
     },
   });
@@ -27,7 +27,7 @@ export const loader = async ({ request }) => {
     where: {
       shopDomain,
       shopifyProductId: productId,
-      rejectedByMerchant: false,
+      reviewStatus: { not: "REJECTED" },
       confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
     },
     include: {
@@ -60,7 +60,7 @@ export const loader = async ({ request }) => {
       confidence: Number(m.confidence),
       confidenceTier: m.confidenceTier,
       source: m.source,
-      confirmedByMerchant: m.confirmedByMerchant,
+      reviewStatus: m.reviewStatus,
       scrapedTitle: scraped?.title ?? "(missing)",
       scrapedDomain: scraped?.domain ?? "",
       scrapedImageUrl: scraped?.imageUrl ?? null,

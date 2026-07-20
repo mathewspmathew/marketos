@@ -39,7 +39,7 @@ export const loader = async ({ request, params }) => {
 
   // Competitor-side timeline: latest observations across matched competitor variants.
   const matches = await db.productLevelMatch.findMany({
-    where: { shopDomain, shopifyProductId: productId, rejectedByMerchant: false },
+    where: { shopDomain, shopifyProductId: productId, reviewStatus: { not: "REJECTED" } },
     include: {
       ScrapedProduct: {
         include: { ScrapedVariant: { select: { id: true } } },
@@ -83,7 +83,7 @@ export const loader = async ({ request, params }) => {
     where: {
       shopDomain,
       shopifyProductId: productId,
-      rejectedByMerchant: false,
+      reviewStatus: { not: "REJECTED" },
     },
     include: {
       ScrapedProduct: { select: { title: true, domain: true } },
@@ -102,7 +102,7 @@ export const loader = async ({ request, params }) => {
         description: `New competitor discovered: ${m.ScrapedProduct?.title} (${m.ScrapedProduct?.domain})`,
       });
     }
-    if (m.confirmedByMerchant && m.reviewedAt) {
+    if (m.reviewStatus === "CONFIRMED" && m.reviewedAt) {
       events.push({
         matchId: m.id,
         type: "confirmed",
@@ -110,7 +110,7 @@ export const loader = async ({ request, params }) => {
         description: `Confirmed match: ${m.ScrapedProduct?.title}`,
       });
     }
-    if (m.rejectedByMerchant && m.reviewedAt) {
+    if (m.reviewStatus === "REJECTED" && m.reviewedAt) {
       events.push({
         matchId: m.id,
         type: "rejected",

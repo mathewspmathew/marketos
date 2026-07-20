@@ -40,7 +40,7 @@ export const loader = async ({ request }) => {
       shopDomain: shop,
       confidenceTier: "LIKELY",
       reviewedAt: null,
-      rejectedByMerchant: false,
+      reviewStatus: { not: "REJECTED" },
     },
   });
 
@@ -160,7 +160,7 @@ export default function DashboardPage() {
                value={`${kpis.eligibleProducts} / ${kpis.totalProducts} (${coverage}%)`} />
           <Kpi label="Pending review"
                value={kpis.pendingReviews}
-               link="/app/approve"
+               link="/app/matches"
                tone={kpis.pendingReviews > 0 ? "warn" : "subdued"} />
         </s-stack>
       </s-section>

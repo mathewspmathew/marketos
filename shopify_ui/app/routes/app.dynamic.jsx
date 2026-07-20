@@ -26,7 +26,7 @@ export const loader = async ({ request }) => {
       shopDomain: shop,
       OR: [
         { confidenceTier: "CONFIRMED" },
-        { confirmedByMerchant: true },
+        { reviewStatus: "CONFIRMED" },
       ],
     },
     orderBy: [{ confidence: "desc" }],
@@ -148,7 +148,7 @@ export const loader = async ({ request }) => {
       shopDomain: shop,
       confidenceTier: "LIKELY",
       reviewedAt: null,
-      rejectedByMerchant: false,
+      reviewStatus: { not: "REJECTED" },
     },
   });
 
@@ -271,7 +271,7 @@ function EmptyState({ tab, pendingApprovals, pausedCount, activeCount }) {
           <s-text>
             You have <strong>{pendingApprovals}</strong> pending match
             {pendingApprovals === 1 ? "" : "es"} waiting for your approval.{" "}
-            <Link to="/app/approve">Go to Approve matches →</Link>
+            <Link to="/app/matches">Go to Matched competitors →</Link>
           </s-text>
         ) : pausedCount === 0 ? (
           <s-text tone="subdued">
