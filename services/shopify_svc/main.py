@@ -274,3 +274,251 @@ def pull_products(shop_domain: str) -> dict:
         with get_db() as session:
             _set_sync_state(session, shop_domain, "ERROR", error=str(exc)[:500])
         raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Single-product webhook update (products/update): manual-edit detection
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Ported from shopify_ui/app/routes/webhooks.products.update.jsx. Uses
+# dedicated SQL (not _UPSERT_PRODUCT_SQL/_UPSERT_VARIANT_SQL above) because
+# this path needs inventoryQuantity, a semanticStatus/semanticVersion reset,
+# and a semanticText reset that the bulk-pull SQL deliberately does not do.
+
+def _map_webhook_product(payload: dict, shop_domain: str) -> dict:
+    images = payload.get("images") or []
+    image_url = (payload.get("image") or {}).get("src") or (images[0].get("src") if images else None)
+    tags_str = payload.get("tags") or ""
+    tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+    return {
+        "id":          f"gid://shopify/Product/{payload['id']}",
+        "shopDomain":  shop_domain,
+        "title":       payload.get("title") or "",
+        "description": payload.get("body_html") or "",
+        "vendor":      payload.get("vendor"),
+        "productType": payload.get("product_type") or "",
+        "tags":        tags,
+        "imageUrl":    image_url,
+        "handle":      payload.get("handle"),
+        "status":      (payload.get("status") or "active").upper(),
+    }
+
+
+def _map_webhook_variant(vpayload: dict, product_id: str) -> dict:
+    options = {}
+    if vpayload.get("option1"):
+        options["Option1"] = vpayload["option1"]
+    if vpayload.get("option2"):
+        options["Option2"] = vpayload["option2"]
+    if vpayload.get("option3"):
+        options["Option3"] = vpayload["option3"]
+    price = vpayload.get("price")
+    return {
+        "id":                f"gid://shopify/ProductVariant/{vpayload['id']}",
+        "productId":         product_id,
+        "title":             vpayload.get("title") or "Default Title",
+        "currentPrice":      price if price is not None else "0",
+        "compareAtPrice":    vpayload.get("compare_at_price"),
+        "sku":               vpayload.get("sku"),
+        "barcode":           vpayload.get("barcode"),
+        "options":           options,
+        "inventoryQuantity": vpayload.get("inventory_quantity"),
+        # First-seen store price on a genuinely new variant = the anchor.
+        # NULL when Shopify sends no price — never anchor at 0.
+        "basePrice":         price if price is not None else None,
+    }
+
+
+_ENSURE_SHOPIFY_USER_SQL = text("""
+INSERT INTO "ShopifyUser" ("shopDomain") VALUES (:sd)
+ON CONFLICT ("shopDomain") DO NOTHING
+""")
+
+_UPSERT_PRODUCT_FROM_WEBHOOK_SQL = text("""
+INSERT INTO "ShopifyProduct"
+  (id, "shopDomain", title, description, vendor, "productType", tags, "imageUrl", handle, status,
+   "semanticStatus", "semanticVersion", "updatedAt")
+VALUES
+  (:id, :shopDomain, :title, :description, :vendor, :productType, CAST(:tags AS jsonb), :imageUrl, :handle, :status,
+   'PENDING', 1, NOW())
+ON CONFLICT (id) DO UPDATE SET
+  title             = EXCLUDED.title,
+  description       = EXCLUDED.description,
+  vendor            = EXCLUDED.vendor,
+  "productType"     = EXCLUDED."productType",
+  tags              = EXCLUDED.tags,
+  "imageUrl"        = EXCLUDED."imageUrl",
+  handle            = EXCLUDED.handle,
+  status            = EXCLUDED.status,
+  "semanticStatus"  = 'PENDING',
+  "semanticVersion" = "ShopifyProduct"."semanticVersion" + 1,
+  "updatedAt"       = NOW()
+""")
+
+# basePrice is deliberately NOT in the ON CONFLICT DO UPDATE SET list — an
+# existing variant's basePrice is only ever changed by the explicit
+# _SET_VARIANT_BASE_PRICE_SQL call below, and only when a manual edit was
+# detected. Including it here unconditionally would re-anchor basePrice on
+# every price change, including the pricing engine's own writes.
+_UPSERT_VARIANT_FROM_WEBHOOK_SQL = text("""
+INSERT INTO "ShopifyVariant"
+  (id, "productId", title, "currentPrice", "compareAtPrice", sku, barcode, options,
+   "inventoryQuantity", "semanticText", "basePrice", "updatedAt")
+VALUES
+  (:id, :productId, :title, :currentPrice, :compareAtPrice, :sku, :barcode, CAST(:options AS jsonb),
+   :inventoryQuantity, NULL, :basePrice, NOW())
+ON CONFLICT (id) DO UPDATE SET
+  title               = EXCLUDED.title,
+  "currentPrice"      = EXCLUDED."currentPrice",
+  "compareAtPrice"    = EXCLUDED."compareAtPrice",
+  sku                 = EXCLUDED.sku,
+  barcode             = EXCLUDED.barcode,
+  options             = EXCLUDED.options,
+  "inventoryQuantity" = EXCLUDED."inventoryQuantity",
+  "semanticText"      = NULL,
+  "updatedAt"         = NOW()
+""")
+
+_SET_VARIANT_BASE_PRICE_SQL = text(
+    'UPDATE "ShopifyVariant" SET "basePrice" = :base_price WHERE id = :vid'
+)
+
+
+@app.task(name="shopify_sync.handle_product_update")
+def handle_product_update(shop_domain: str, payload: dict) -> dict:
+    """Single-product webhook update: upsert + manual-edit detection.
+
+    A price change is the pricing engine's own write-back iff it equals the
+    latest applied PriceDecision.newPrice — anything else is a merchant
+    manual edit, which re-anchors basePrice so the lifetime cap follows the
+    merchant's new intent, and may recompute auto-derived min/max bounds.
+    """
+    shopify_id = f"gid://shopify/Product/{payload['id']}"
+    try:
+        with get_db() as session:
+            session.execute(_ENSURE_SHOPIFY_USER_SQL, {"sd": shop_domain})
+
+            p = _map_webhook_product(payload, shop_domain)
+            p["tags"] = json.dumps(p["tags"])
+            session.execute(_UPSERT_PRODUCT_FROM_WEBHOOK_SQL, p)
+
+            prior_row = session.execute(
+                text('SELECT "avgBasePrice", "minPriceOverride", "maxPriceOverride" '
+                     'FROM "ShopifyProduct" WHERE id = :pid'),
+                {"pid": shopify_id},
+            ).first()
+
+            any_manual_edit = False
+            manual_edits: list[tuple[str, float, float]] = []
+
+            for vpayload in (payload.get("variants") or []):
+                variant_id = f"gid://shopify/ProductVariant/{vpayload['id']}"
+
+                prior_price_row = session.execute(
+                    text('SELECT "currentPrice" FROM "ShopifyVariant" WHERE id = :vid'),
+                    {"vid": variant_id},
+                ).first()
+                prior_price = float(prior_price_row[0]) if prior_price_row else None
+                raw_price = vpayload.get("price")
+                new_price = float(raw_price) if raw_price is not None else None
+                price_changed = (
+                    prior_price is not None and new_price is not None
+                    and abs(new_price - prior_price) > 0.005
+                )
+
+                is_manual_edit = False
+                if price_changed:
+                    latest = session.execute(
+                        text('SELECT "newPrice" FROM "PriceDecision" '
+                             'WHERE "shopifyVariantId" = :vid AND "appliedAt" IS NOT NULL '
+                             'ORDER BY "decidedAt" DESC LIMIT 1'),
+                        {"vid": variant_id},
+                    ).first()
+                    engine_wrote = latest is not None and abs(float(latest[0]) - new_price) <= 0.005
+                    is_manual_edit = not engine_wrote
+
+                v = _map_webhook_variant(vpayload, shopify_id)
+                v["options"] = json.dumps(v["options"])
+                session.execute(_UPSERT_VARIANT_FROM_WEBHOOK_SQL, v)
+
+                if is_manual_edit and new_price is not None:
+                    session.execute(_SET_VARIANT_BASE_PRICE_SQL, {"vid": variant_id, "base_price": new_price})
+                    any_manual_edit = True
+                    manual_edits.append((variant_id, prior_price, new_price))
+                    logger.info(
+                        "webhook_manual_price_edit_detected",
+                        variant_id=variant_id, old_price=prior_price, new_price=new_price,
+                    )
+
+            avg_row = session.execute(
+                text('SELECT AVG("basePrice") FROM "ShopifyVariant" WHERE "productId" = :pid'),
+                {"pid": shopify_id},
+            ).first()
+            new_avg = float(avg_row[0]) if avg_row and avg_row[0] is not None else None
+
+            session.execute(
+                text('UPDATE "ShopifyProduct" SET "avgBasePrice" = :avg WHERE id = :pid'),
+                {"avg": new_avg, "pid": shopify_id},
+            )
+            if any_manual_edit:
+                session.execute(
+                    text('UPDATE "ShopifyProduct" SET "lastDecisionAt" = NULL WHERE id = :pid'),
+                    {"pid": shopify_id},
+                )
+
+                settings_row = session.execute(
+                    text('SELECT "lifetimeCapPct" FROM "ShopSettings" WHERE "shopDomain" = :sd'),
+                    {"sd": shop_domain},
+                ).first()
+                cap = float(settings_row[0]) if settings_row and settings_row[0] is not None else 0.25
+
+                old_avg    = float(prior_row[0]) if prior_row and prior_row[0] is not None else None
+                stored_min = float(prior_row[1]) if prior_row and prior_row[1] is not None else None
+                stored_max = float(prior_row[2]) if prior_row and prior_row[2] is not None else None
+
+                def _close(a, b):
+                    return a is not None and b is not None and abs(a - b) <= 0.011
+
+                if (old_avg is not None and new_avg is not None
+                        and stored_min is not None and stored_max is not None
+                        and _close(stored_min, old_avg * (1 - cap))
+                        and _close(stored_max, old_avg * (1 + cap))):
+                    session.execute(
+                        text('UPDATE "ShopifyProduct" SET "minPriceOverride" = :min_p, '
+                             '"maxPriceOverride" = :max_p WHERE id = :pid'),
+                        {"min_p": round(new_avg * (1 - cap), 2), "max_p": round(new_avg * (1 + cap), 2), "pid": shopify_id},
+                    )
+                    logger.info("webhook_bounds_recomputed", shopify_id=shopify_id, new_avg=new_avg)
+
+                for variant_id, old_price, new_price in manual_edits:
+                    tracked_row = session.execute(
+                        text(
+                            'SELECT '
+                            '(SELECT COUNT(*) FROM "ProductMatch" WHERE "shopifyVariantId" = :vid) + '
+                            '(SELECT COUNT(*) FROM "PriceDecision" WHERE "shopifyVariantId" = :vid) AS cnt'
+                        ),
+                        {"vid": variant_id},
+                    ).first()
+                    tracked = bool(tracked_row and tracked_row[0] > 0)
+                    if tracked and old_price is not None and new_price is not None:
+                        session.execute(
+                            text(
+                                'INSERT INTO "PriceDecision" '
+                                '(id, "shopDomain", "shopifyVariantId", "oldPrice", "newPrice", '
+                                ' reason, "appliedAt", "autoApplied", "decidedAt") '
+                                'VALUES (gen_random_uuid(), :sd, :vid, :op, :np, :reason, NOW(), FALSE, NOW())'
+                            ),
+                            {"sd": shop_domain, "vid": variant_id, "op": old_price, "np": new_price,
+                             "reason": "manual price edit by merchant"},
+                        )
+
+            claim_and_enqueue_semantics(session, ids=[shopify_id])
+
+        return {
+            "ok": True,
+            "manual_edit": any_manual_edit,
+            "variants_updated": len(payload.get("variants") or []),
+        }
+    except Exception:
+        logger.exception("handle_product_update_failed", shop_domain=shop_domain, shopify_id=shopify_id)
+        raise

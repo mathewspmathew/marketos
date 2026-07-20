@@ -51,6 +51,7 @@ app.conf.update(
         'shopify_embedder.generate_shopify_embeddings': {'queue': 'embedding_queue'},
         'matcher.match_for_scraped_product':            {'queue': 'match_queue'},
         'shopify_sync.pull_products':                   {'queue': 'shopify_sync_queue'},
+        'shopify_sync.handle_product_update':            {'queue': 'shopify_sync_queue'},
         'stats.recompute_for_variant':                  {'queue': 'stats_queue'},
         'stats.recompute_after_observation':            {'queue': 'stats_queue'},
         'pricing.decide_for_product':                   {'queue': 'pricing_queue'},
