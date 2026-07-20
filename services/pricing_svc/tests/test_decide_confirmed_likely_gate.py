@@ -65,7 +65,8 @@ def _add_competitor(session, shop, product_id, *, tier, confirmed, price=Decimal
         id=str(uuid.uuid4()), shopDomain=shop,
         shopifyProductId=product_id, scrapedProductId=scraped_id,
         confidence=0.9 if tier == "CONFIRMED" else 0.7,
-        confidenceTier=tier, confirmedByMerchant=confirmed, rejectedByMerchant=False,
+        confidenceTier=tier,
+        reviewStatus="CONFIRMED" if confirmed else "PENDING",
     ))
     session.flush()
     session.add(models.CompetitorPriceObservation(
@@ -127,7 +128,7 @@ def test_rejected_match_stays_excluded_even_if_confirmed(seeded_shop):
         _add_competitor(s, shop, product_id, tier="LIKELY", confirmed=True)
         s.query(models.ProductLevelMatch).filter(
             models.ProductLevelMatch.shopifyProductId == product_id
-        ).update({"rejectedByMerchant": True})
+        ).update({"reviewStatus": "REJECTED"})
 
     result = decide_price_for_product(shop, product_id)
 

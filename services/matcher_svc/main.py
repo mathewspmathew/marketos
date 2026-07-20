@@ -79,7 +79,7 @@ def _match_one_pair(
             'SELECT 1 FROM "ProductLevelMatch" '
             'WHERE "shopifyProductId" = :mpid '
             '  AND "scrapedProductId" = :cpid '
-            '  AND "rejectedByMerchant" = TRUE'
+            '  AND "reviewStatus" = \'REJECTED\''
         ),
         {"mpid": merchant_product_id, "cpid": scraped_product_id},
     ).first()
@@ -254,10 +254,10 @@ def _match_one_pair(
         text(
             'INSERT INTO "ProductLevelMatch" '
             '(id, "shopDomain", "shopifyProductId", "scrapedProductId", '
-            ' "confidence", "confidenceTier", source, "confirmedByMerchant", '
+            ' "confidence", "confidenceTier", source, "reviewStatus", '
             ' "createdAt", "updatedAt") '
             'VALUES (:id, :sd, :mpid, :cpid, :conf, CAST(:tier AS "MatchConfidenceTier"), '
-            '        :src, false, NOW(), NOW()) '
+            '        :src, \'PENDING\', NOW(), NOW()) '
             'ON CONFLICT ("shopifyProductId", "scrapedProductId") DO UPDATE SET '
             '  confidence       = GREATEST("ProductLevelMatch".confidence, EXCLUDED.confidence), '
             '  "confidenceTier" = CASE '

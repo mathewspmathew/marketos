@@ -21,11 +21,12 @@ def _add_match(s, shop, pid, scraped_product_id, confidence_tier, rejected):
     s.execute(text("""
         INSERT INTO "ProductLevelMatch"
             (id, "shopDomain", "shopifyProductId", "scrapedProductId",
-             confidence, "confidenceTier", "rejectedByMerchant", "updatedAt")
-        VALUES (:id, :shop, :pid, :spid, :confidence, :tier, :rejected, now())
+             confidence, "confidenceTier", "reviewStatus", "updatedAt")
+        VALUES (:id, :shop, :pid, :spid, :confidence, :tier, :review_status, now())
     """), {
         "id": str(uuid.uuid4()), "shop": shop, "pid": pid, "spid": scraped_product_id,
-        "confidence": 0.9, "tier": confidence_tier, "rejected": rejected,
+        "confidence": 0.9, "tier": confidence_tier,
+        "review_status": "REJECTED" if rejected else "PENDING",
     })
 
 

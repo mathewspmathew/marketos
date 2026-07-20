@@ -165,7 +165,7 @@ def recompute_after_observation(self, shop_domain: str, competitor_variant_id: s
                     JOIN   "ProductLevelMatch" plm
                            ON plm."scrapedProductId" = sv."productId"
                           AND plm."shopDomain"       = :sd
-                          AND plm."rejectedByMerchant" = FALSE
+                          AND plm."reviewStatus" != 'REJECTED'
                     WHERE  sv.id = :cv
                 """),
                 {"cv": competitor_variant_id, "sd": shop_domain},

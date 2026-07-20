@@ -225,7 +225,7 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
         # WEAK matches and merchant-rejected matches are excluded by the WHERE.
         # CONFIRMED matches count unconditionally (the algorithm is already
         # certain); LIKELY matches only count once a merchant has explicitly
-        # confirmed them via confirmedByMerchant — otherwise a not-yet-reviewed
+        # confirmed them via reviewStatus — otherwise a not-yet-reviewed
         # LIKELY match would silently influence pricing before anyone looked at it.
         comp_rows = session.execute(
             text("""
@@ -244,9 +244,9 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                            ON cpo."competitorVariantId" = sv.id
                     WHERE plm."shopifyProductId" = :pid
                       AND plm."shopDomain"       = :sd
-                      AND plm."rejectedByMerchant" = FALSE
+                      AND plm."reviewStatus" != 'REJECTED'
                       AND (plm."confidenceTier" = 'CONFIRMED'
-                           OR (plm."confidenceTier" = 'LIKELY' AND plm."confirmedByMerchant" = TRUE))
+                           OR (plm."confidenceTier" = 'LIKELY' AND plm."reviewStatus" = 'CONFIRMED'))
                     ORDER BY sv.id, cpo."observedAt" DESC NULLS LAST
                 )
                 SELECT l.scraped_product_id,

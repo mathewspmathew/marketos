@@ -31,7 +31,7 @@ def resolve_enable_context(shop_domain: str, product_id: str) -> EnableContext |
             s.query(ProductLevelMatch)
             .filter(ProductLevelMatch.shopDomain == shop_domain,
                     ProductLevelMatch.shopifyProductId == product_id,
-                    ProductLevelMatch.rejectedByMerchant.is_(False),
+                    ProductLevelMatch.reviewStatus != "REJECTED",
                     ProductLevelMatch.confidenceTier.in_(("CONFIRMED", "LIKELY")))
             .count()
         )
