@@ -89,3 +89,43 @@ def test_confirm_rejects_wrong_shop(seeded_match):
     with get_db() as s:
         with pytest.raises(MatchReviewError, match="not found"):
             confirm_match(s, "other-shop.myshopify.com", match_id)
+
+
+def test_confirm_match_twice_is_idempotent(seeded_match):
+    shop, match_id, variant_id = seeded_match
+    with get_db() as s:
+        confirm_match(s, shop, match_id)
+
+    with get_db() as s:
+        match = s.get(models.ProductLevelMatch, match_id)
+        first_reviewed_at = match.reviewedAt
+
+    with get_db() as s:
+        result = confirm_match(s, shop, match_id)
+        assert result == {"matchId": match_id, "reviewStatus": "CONFIRMED"}
+
+    with get_db() as s:
+        match = s.get(models.ProductLevelMatch, match_id)
+        assert match.reviewStatus == "CONFIRMED"
+        assert match.reviewedAt == first_reviewed_at
+
+
+def test_reject_match_twice_is_idempotent(seeded_match):
+    shop, match_id, variant_id = seeded_match
+    with get_db() as s:
+        reject_match(s, shop, match_id)
+
+    with get_db() as s:
+        match = s.get(models.ProductLevelMatch, match_id)
+        first_reviewed_at = match.reviewedAt
+
+    with get_db() as s:
+        result = reject_match(s, shop, match_id)
+        assert result == {"matchId": match_id, "reviewStatus": "REJECTED"}
+
+    with get_db() as s:
+        match = s.get(models.ProductLevelMatch, match_id)
+        assert match.reviewStatus == "REJECTED"
+        assert match.reviewedAt == first_reviewed_at
+        remaining = s.query(models.ProductMatch).filter(models.ProductMatch.shopifyVariantId == variant_id).count()
+        assert remaining == 0

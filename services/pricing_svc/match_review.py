@@ -31,16 +31,18 @@ def _get_owned_match(session: Session, shop_domain: str, match_id: str) -> model
 
 def confirm_match(session: Session, shop_domain: str, match_id: str) -> dict:
     match = _get_owned_match(session, shop_domain, match_id)
-    match.reviewStatus = "CONFIRMED"
-    match.reviewedAt = datetime.now(timezone.utc)
+    if match.reviewStatus != "CONFIRMED":
+        match.reviewStatus = "CONFIRMED"
+        match.reviewedAt = datetime.now(timezone.utc)
     return {"matchId": match_id, "reviewStatus": "CONFIRMED"}
 
 
 def reject_match(session: Session, shop_domain: str, match_id: str) -> dict:
     match = _get_owned_match(session, shop_domain, match_id)
-    match.reviewStatus = "REJECTED"
-    match.reviewedAt = datetime.now(timezone.utc)
-    session.query(models.ProductMatch).filter(
-        models.ProductMatch.productMatchId == match_id,
-    ).delete(synchronize_session=False)
+    if match.reviewStatus != "REJECTED":
+        match.reviewStatus = "REJECTED"
+        match.reviewedAt = datetime.now(timezone.utc)
+        session.query(models.ProductMatch).filter(
+            models.ProductMatch.productMatchId == match_id,
+        ).delete(synchronize_session=False)
     return {"matchId": match_id, "reviewStatus": "REJECTED"}
