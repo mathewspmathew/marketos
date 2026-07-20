@@ -171,10 +171,8 @@ model ProductLevelMatch {
   confidence          Decimal             @db.Decimal(4, 3)
   confidenceTier      MatchConfidenceTier
   source              String              @default("DISCOVERY")
-  confirmedByMerchant Boolean             @default(false)
   createdAt           DateTime            @default(now())
   updatedAt           DateTime
-  rejectedByMerchant  Boolean             @default(false)
   reviewedAt          DateTime?
   reviewStatus        MatchReviewStatus   @default(PENDING)
   ScrapedProduct      ScrapedProduct      @relation(fields: [scrapedProductId], references: [id], onDelete: Cascade)

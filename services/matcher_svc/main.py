@@ -14,7 +14,7 @@ Design:
   - Scope is the scraped product, not the shop. No HNSW, no per-domain
     threshold — the candidate set is tiny (N merchant variants × M scraped
     variants for one product pair).
-  - Hard filters: gender, rejectedByMerchant guard. Vector similarity +
+  - Hard filters: gender, reviewStatus guard. Vector similarity +
     threshold do the primary discriminating.
   - Category and brand are intentionally NOT hard-gated. Both are free-form
     strings (LLM-assigned category; scraped vendor), so the same product is

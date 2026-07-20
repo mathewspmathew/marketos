@@ -15,7 +15,7 @@ Pipeline
      - debounce: now - lastDecisionAt >= rescrape interval
      - ≥ minCompetitorsToPrice matched competitor PRODUCTS with:
          * MatchConfidenceTier in (CONFIRMED, LIKELY)  (WEAK excluded)
-         * NOT rejectedByMerchant
+         * reviewStatus != REJECTED
          * Latest CompetitorPriceObservation within max(2× rescrape, 24h)
          * Observation currency == shop currency (INR for v1)
 
