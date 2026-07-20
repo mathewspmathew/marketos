@@ -148,6 +148,13 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
 
     changes: dict = {"dynamicPricingEnabled": (product.dynamicPricingEnabled, True)}
 
+    # Captured before any mutation below, so the re-arm gate at the end of
+    # this function can tell "frequency actually changed" from "the frontend
+    # resent the same frequency it always resends on every save" (the pane
+    # includes frequency in every submit, not just ones that touch it).
+    prior_frequency_unit = product.frequencyUnit
+    prior_frequency_interval = product.frequencyInterval
+
     if effective_config.search_query_override is not None:
         product.searchQueryOverride = effective_config.search_query_override or None
     if effective_config.pricing_tier is not None:
@@ -199,14 +206,28 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
     effective_interval = effective_config.frequency_interval or product.frequencyInterval
     next_run = next_run_at(effective_interval, effective_unit) or datetime.now(timezone.utc)
 
-    rearmed = (
-        session.query(models.ProductUrl)
-        .filter(
-            models.ProductUrl.shopifyProductId == product.id,
-            models.ProductUrl.status == "ACTIVE",
-        )
-        .update({"nextRunAt": next_run}, synchronize_session=False)
+    # Re-arming resets every ACTIVE ProductUrl's rescrape countdown to the
+    # full interval — only do that when the frequency genuinely changed (or
+    # this is the product's first-ever configure, which has no prior
+    # schedule to preserve). Otherwise an unrelated save (bounds, search
+    # query, ...) would silently push back the next real competitor check,
+    # since the pane resends frequency on every submit regardless of
+    # whether the merchant touched it.
+    frequency_changed = (
+        effective_unit != prior_frequency_unit
+        or effective_interval != prior_frequency_interval
     )
+    if is_first_configure or frequency_changed:
+        rearmed = (
+            session.query(models.ProductUrl)
+            .filter(
+                models.ProductUrl.shopifyProductId == product.id,
+                models.ProductUrl.status == "ACTIVE",
+            )
+            .update({"nextRunAt": next_run}, synchronize_session=False)
+        )
+    else:
+        rearmed = 0
 
     changes["nextRunAt"] = next_run
     changes["rearmedCount"] = rearmed

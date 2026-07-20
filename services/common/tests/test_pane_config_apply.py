@@ -94,6 +94,53 @@ def test_apply_rearms_active_product_urls(seeded_product_with_url):
         assert url.nextRunAt > datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def test_apply_does_not_rearm_when_frequency_unchanged(seeded_product_with_url):
+    """Regression test: the pane resends frequency on every save, even ones
+    that only change bounds/search-query/etc. A second save with the exact
+    same frequency must not reset the rescrape countdown."""
+    product_id, url_id = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(pricing_tier="COMPETITIVE", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        url = s.get(models.ProductUrl, url_id)
+        first_next_run = url.nextRunAt
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        result = apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="hour", frequency_interval=6,
+            min_price_override=500, max_price_override=900,
+        ))
+        assert result["rearmedCount"] == 0
+
+    with get_db() as s:
+        url = s.get(models.ProductUrl, url_id)
+        assert url.nextRunAt == first_next_run
+
+
+def test_apply_rearms_when_frequency_changed(seeded_product_with_url):
+    """A genuine frequency change (not just a resend of the same value)
+    must still re-arm the schedule."""
+    product_id, url_id = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(pricing_tier="COMPETITIVE", frequency_unit="hour", frequency_interval=6))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        result = apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+        ))
+        assert result["rearmedCount"] == 1
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.frequencyUnit == "day"
+        assert product.frequencyInterval == 1
+
+
 def test_apply_invalid_bounds_writes_nothing(seeded_product_with_url):
     product_id, url_id = seeded_product_with_url
     with get_db() as s:
