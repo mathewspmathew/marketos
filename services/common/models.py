@@ -382,7 +382,9 @@ class ProductLevelMatch(Base):
     scrapedProductId = Column("scrapedProductId", String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
     confidence       = Column("confidence",       Numeric(4, 3), nullable=False, default=0)
     confidenceTier   = Column("confidenceTier",   _match_confidence_tier, nullable=False)
+    confirmedByMerchant = Column("confirmedByMerchant", Boolean, nullable=False, default=False)
     rejectedByMerchant = Column("rejectedByMerchant", Boolean, nullable=False, default=False)
+    reviewedAt       = Column("reviewedAt",       DateTime(timezone=True), nullable=True)
     updatedAt        = Column("updatedAt",        DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
 
 
