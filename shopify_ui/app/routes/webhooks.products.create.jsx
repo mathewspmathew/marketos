@@ -45,6 +45,7 @@ export const action = async ({ request }) => {
       imageUrl,
       status:         product.status?.toUpperCase() ?? "ACTIVE",
       semanticStatus: "PENDING",
+      updatedAt:      new Date(),
     },
   });
 
