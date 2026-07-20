@@ -199,8 +199,8 @@ export default function PricingCatalog() {
       <s-section>
         <s-stack gap="tight">
           <s-text>
-            Each variant shows three prices side-by-side so you can compare
-            before letting auto-pricing ship a change.
+            Each variant shows the reference and final prices side-by-side
+            so you can compare before letting auto-pricing ship a change.
           </s-text>
           <s-stack direction="inline" gap="base">
             <s-text tone="subdued" style={{ fontSize: 12 }}>
