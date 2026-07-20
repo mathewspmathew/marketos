@@ -4,6 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { DEFAULTS } from "../lib/shopSettingsDefaults.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
@@ -23,31 +24,6 @@ const PRICING_TIERS = [
   { value: "PREMIUM",     label: "Premium"     },
 ];
 const ALLOWED_TIERS = new Set(PRICING_TIERS.map((t) => t.value));
-
-const DEFAULTS = {
-  markupPct: 0.02,
-  frequencyInterval: 1,
-  frequencyUnit: "day",
-  defaultPricingTier: "COMPETITIVE",
-  listingExpansionCap: 5,
-  discoveryNumResults: 10,
-  marketplaceBlocklist: [],
-  autoRescrapeEnabled: true,
-  includeOosInPricing: false,
-  // Auto-pricing knobs (per-product overrides live on ShopifyProduct).
-  minCompetitorsToPrice: 4,
-  topKCompetitors: 4,
-  maxAutoApplyChangePct: 0.05,
-  lifetimeCapPct: 0.25,
-  budgetUndercut: 0.05,
-  premiumUplift: 0.05,
-  minChangePctThreshold: 0.005,
-  minFreshnessHours: 24,
-  serperGl: "in",
-  serperHl: "en",
-  serperLocation: "Kochi, Kerala",
-  currency: "INR",
-};
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -196,6 +196,28 @@ export default function HomePage() {
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
   const syncFetcher = useFetcher();
+  // Every fetcher.submit below is optimistic (flips local UI state before the
+  // backend confirms). This tracks the pre-submit snapshot so a {ok:false}
+  // response can roll the UI back to reality instead of silently showing a
+  // fake "success" state when the save was actually rejected.
+  const lastActionRef = useRef(null);
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data || !lastActionRef.current) return;
+    const { productId, priorState } = lastActionRef.current;
+    lastActionRef.current = null;
+    if (!fetcher.data.ok) {
+      setLocalState((prev) => ({
+        ...prev,
+        [productId]: { ...priorState, saveError: fetcher.data.error || "Something went wrong. Please try again." },
+      }));
+    } else {
+      setLocalState((prev) => ({
+        ...prev,
+        [productId]: { ...prev[productId], saveError: null },
+      }));
+    }
+  }, [fetcher.data, fetcher.state]);
 
   const isBusy = productSyncState === "SYNCING" || processingCount > 0;
   useEffect(() => {
@@ -220,7 +242,14 @@ export default function HomePage() {
         dynamicPricingEnabled: p.dynamicPricingEnabled,
         syncPrice: p.syncPrice,
         searchQueryOverride: p.searchQueryOverride,
-        pricingTier: p.pricingTier ?? "COMPETITIVE",
+        // ShopifyProduct.pricingTier has a DB-level default (COMPETITIVE), so
+        // it's never actually null — it can't distinguish "merchant chose
+        // this" from "never configured yet". Before the first-ever configure,
+        // show the shop's own default tier instead of always defaulting to
+        // COMPETITIVE; after that, the product's real saved tier is authoritative.
+        pricingTier: p.dynamicPricingConfigured
+          ? (p.pricingTier ?? "COMPETITIVE")
+          : (shopDefaults?.defaultPricingTier ?? p.pricingTier ?? "COMPETITIVE"),
         avgBasePrice: p.avgBasePrice,
         minPriceOverride: p.minPriceOverride,
         maxPriceOverride: p.maxPriceOverride,
@@ -360,6 +389,7 @@ export default function HomePage() {
     setOverrideField(productId, "boundsError", boundsError);
     if (boundsError) return;
     const intent = opts.enable ? "saveAndEnable" : "updateOverrides";
+    lastActionRef.current = { productId, priorState: local };
     if (opts.enable) {
       // Reflect the enabled state locally so the UI flips immediately.
       setLocalState((prev) => ({
@@ -387,6 +417,7 @@ export default function HomePage() {
   };
 
   const handlePause = (productId) => {
+    lastActionRef.current = { productId, priorState: getLocal(productId) };
     setLocalState((prev) => ({
       ...prev,
       [productId]: {
@@ -401,6 +432,7 @@ export default function HomePage() {
   };
 
   const handleResume = (productId) => {
+    lastActionRef.current = { productId, priorState: getLocal(productId) };
     setLocalState((prev) => ({
       ...prev,
       [productId]: {
@@ -419,6 +451,7 @@ export default function HomePage() {
   };
 
   const confirmDelete = (productId) => {
+    lastActionRef.current = { productId, priorState: getLocal(productId) };
     setLocalState((prev) => ({
       ...prev,
       [productId]: {
@@ -914,6 +947,12 @@ export default function HomePage() {
                               Stats &amp; price history
                             </s-link>
                           </s-stack>
+
+                          {local.saveError && (
+                            <s-text tone="critical" style={{ fontSize: "0.85em" }}>
+                              {local.saveError}
+                            </s-text>
+                          )}
 
                           {!isOn && (
                             <s-text tone="subdued">

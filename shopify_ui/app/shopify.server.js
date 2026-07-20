@@ -6,6 +6,7 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+import { DEFAULTS as SHOP_SETTINGS_DEFAULTS } from "./lib/shopSettingsDefaults.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -16,6 +17,27 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
+  hooks: {
+    // Seed a ShopSettings row (with defaults) the moment a shop finishes
+    // install/re-auth, so pages like app.products.jsx never see a null
+    // shopDefaults — previously ShopSettings only existed after someone
+    // opened the Settings page, which could leave a fresh install's first
+    // product save rejected with no visible error (see app.products.jsx
+    // audit, 2026-07-20).
+    afterAuth: async ({ session }) => {
+      const shopDomain = session.shop;
+      await prisma.shopifyUser.upsert({
+        where: { shopDomain },
+        update: {},
+        create: { shopDomain },
+      });
+      await prisma.shopSettings.upsert({
+        where: { shopDomain },
+        update: {},
+        create: { shopDomain, ...SHOP_SETTINGS_DEFAULTS, updatedAt: new Date() },
+      });
+    },
+  },
   future: {
     // Expiring tokens are required for App Store distribution. Background
     // workers no longer talk to Shopify directly — they POST to the
