@@ -119,6 +119,11 @@ class ShopifyProduct(Base):
     pricingTier         = Column("pricingTier",         _pricing_tier, nullable=False, server_default="'COMPETITIVE'")
     minPriceOverride    = Column("minPriceOverride",    Numeric(10, 2), nullable=True)
     maxPriceOverride    = Column("maxPriceOverride",    Numeric(10, 2), nullable=True)
+    maxAutoApplyChangePctOverride = Column("maxAutoApplyChangePctOverride", Float, nullable=True)
+    lifetimeCapPctOverride        = Column("lifetimeCapPctOverride", Float, nullable=True)
+    syncPrice           = Column("syncPrice",           Boolean, nullable=False, default=True)
+    syncedAt            = Column("syncedAt",            DateTime(timezone=True), nullable=True)
+    lastDecisionAt      = Column("lastDecisionAt",      DateTime(timezone=True), nullable=True)
     createdAt   = Column("createdAt",   DateTime(timezone=True), server_default=func.now())
     updatedAt   = Column("updatedAt",   DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
@@ -459,6 +464,17 @@ class ShopSettings(Base):
     serperHl                 = Column("serperHl",       String, nullable=False, default="en")
     serperLocation           = Column("serperLocation", String, nullable=False, default="Kochi, Kerala")
     updatedAt                = Column("updatedAt", DateTime(timezone=True), default=func.now(), onupdate=func.now())
+    currency                 = Column("currency", String, nullable=True)
+    minCompetitorsToPrice    = Column("minCompetitorsToPrice", Integer, nullable=False, default=4)
+    topKCompetitors          = Column("topKCompetitors", Integer, nullable=False, default=4)
+    maxAutoApplyChangePct    = Column("maxAutoApplyChangePct", Float, nullable=False, default=0.05)
+    lifetimeCapPct           = Column("lifetimeCapPct", Float, nullable=False, default=0.25)
+    budgetUndercut           = Column("budgetUndercut", Float, nullable=False, default=0.05)
+    premiumUplift            = Column("premiumUplift", Float, nullable=False, default=0.05)
+    includeOosInPricing      = Column("includeOosInPricing", Boolean, nullable=False, default=False)
+    discoveryNumResults      = Column("discoveryNumResults", Integer, nullable=False, default=10)
+    minChangePctThreshold    = Column("minChangePctThreshold", Float, nullable=False, default=0.005)
+    minFreshnessHours        = Column("minFreshnessHours", Integer, nullable=False, default=24)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
