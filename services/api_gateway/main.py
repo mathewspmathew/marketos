@@ -102,6 +102,25 @@ def shopify_sync_products(shop_domain: str):
     return {"queued": True, "shop_domain": shop_domain}
 
 
+class ProductUpdateWebhookRequest(BaseModel):
+    shop_domain: str
+    payload: dict
+
+
+@app.post("/internal/shopify/product-update-webhook")
+async def product_update_webhook(req: ProductUpdateWebhookRequest):
+    try:
+        celery_app.send_task(
+            "shopify_sync.handle_product_update",
+            args=[req.shop_domain, req.payload],
+            queue="shopify_sync_queue",
+        )
+    except Exception:
+        logger.exception("product_update_webhook_dispatch_failed", shop_domain=req.shop_domain)
+        return {"ok": False, "error": "failed to queue product update"}
+    return {"ok": True}
+
+
 class DynamicPricingApplyRequest(BaseModel):
     shop_domain: str
     product_id: str

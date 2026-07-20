@@ -192,3 +192,28 @@ def test_pull_products_error_sets_state_and_raises(monkeypatch):
     with pytest.raises(RuntimeError):
         sync_mod.pull_products("demo.myshopify.com")
     assert any("ERROR" in str(p) for _, p in session.executed)
+
+
+def test_product_update_webhook_enqueues_task():
+    with patch("services.api_gateway.main.celery_app.send_task") as send:
+        resp = client.post("/internal/shopify/product-update-webhook", json={
+            "shop_domain": "demo.myshopify.com",
+            "payload": {"id": 123, "title": "Test Product"},
+        })
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    send.assert_called_once_with(
+        "shopify_sync.handle_product_update",
+        args=["demo.myshopify.com", {"id": 123, "title": "Test Product"}],
+        queue="shopify_sync_queue",
+    )
+
+
+def test_product_update_webhook_dispatch_failure_returns_ok_false():
+    with patch("services.api_gateway.main.celery_app.send_task", side_effect=RuntimeError("broker down")):
+        resp = client.post("/internal/shopify/product-update-webhook", json={
+            "shop_domain": "demo.myshopify.com",
+            "payload": {"id": 123},
+        })
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": False, "error": "failed to queue product update"}
