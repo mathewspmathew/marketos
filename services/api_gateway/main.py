@@ -23,6 +23,7 @@ from services.common.db import get_db
 from services.common.frequency import next_run_at
 from services.common.models import ProductUrl, ShopifyProduct
 from services.pricing_svc.revert import RevertError, revert_price_decision
+from services.pricing_svc.match_review import MatchReviewError, confirm_match, reject_match
 from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
 load_dotenv()
@@ -122,6 +123,12 @@ class PriceRevertRequest(BaseModel):
     shop_domain: str
     variant_id: str
     decision_id: str
+
+
+class MatchReviewRequest(BaseModel):
+    shop_domain: str
+    match_id: str
+    action: str
 
 
 def _resolve_owned_product(session, shop_domain: str, product_id: str) -> ShopifyProduct:
@@ -297,6 +304,33 @@ async def price_revert(req: PriceRevertRequest):
             shop_domain=req.shop_domain, variant_id=req.variant_id, decision_id=req.decision_id,
         )
         return {"ok": False, "error": "Something went wrong reverting this price change."}
+
+
+@app.post("/internal/matches/review")
+async def matches_review(req: MatchReviewRequest):
+    if req.action not in ("confirm", "reject"):
+        return {"ok": False, "error": f"Unknown action: {req.action!r}. Must be 'confirm' or 'reject'."}
+    try:
+        with get_db() as s:
+            fn = confirm_match if req.action == "confirm" else reject_match
+            result = fn(s, req.shop_domain, req.match_id)
+            logger.info(
+                "match_review_succeeded",
+                shop_domain=req.shop_domain, match_id=req.match_id, action=req.action,
+            )
+            return {"ok": True, **result}
+    except MatchReviewError as exc:
+        logger.warning(
+            "match_review_rejected",
+            shop_domain=req.shop_domain, match_id=req.match_id, action=req.action, error=str(exc),
+        )
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception(
+            "match_review_failed",
+            shop_domain=req.shop_domain, match_id=req.match_id, action=req.action,
+        )
+        return {"ok": False, "error": "Something went wrong reviewing this match."}
 
 
 @app.get("/health")

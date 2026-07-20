@@ -363,6 +363,7 @@ class ProductMatch(Base):
     shopifyVariantId    = Column("shopifyVariantId",    String, ForeignKey("ShopifyVariant.id", ondelete="CASCADE"), nullable=False)
     competitorVariantId = Column("competitorVariantId", String, ForeignKey("ScrapedVariant.id",  ondelete="SET NULL"), nullable=True)
     competitorProdId    = Column("competitorProdId",    String, ForeignKey("ScrapedProduct.id",  ondelete="CASCADE"), nullable=False)
+    productMatchId      = Column("productMatchId",      String, ForeignKey("ProductLevelMatch.id"), nullable=True)
 
     matchScore     = Column("matchScore",     Numeric(5, 2),  nullable=False)
     matchType      = Column("matchType",      String,         nullable=False, default="semantic")
