@@ -51,6 +51,12 @@ _match_confidence_tier = PgEnum(
     create_type=False,
 )
 
+_match_review_status = PgEnum(
+    "PENDING", "CONFIRMED", "REJECTED",
+    name="MatchReviewStatus",
+    create_type=False,
+)
+
 _pricing_tier = PgEnum(
     "BUDGET", "COMPETITIVE", "PREMIUM",
     name="PricingTier",
@@ -390,6 +396,7 @@ class ProductLevelMatch(Base):
     confirmedByMerchant = Column("confirmedByMerchant", Boolean, nullable=False, default=False)
     rejectedByMerchant = Column("rejectedByMerchant", Boolean, nullable=False, default=False)
     reviewedAt       = Column("reviewedAt",       DateTime(timezone=True), nullable=True)
+    reviewStatus     = Column("reviewStatus",     _match_review_status, nullable=False, default="PENDING")
     updatedAt        = Column("updatedAt",        DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
 
 

@@ -176,6 +176,7 @@ model ProductLevelMatch {
   updatedAt           DateTime
   rejectedByMerchant  Boolean             @default(false)
   reviewedAt          DateTime?
+  reviewStatus        MatchReviewStatus   @default(PENDING)
   ScrapedProduct      ScrapedProduct      @relation(fields: [scrapedProductId], references: [id], onDelete: Cascade)
   ShopifyUser         ShopifyUser         @relation(fields: [shopDomain], references: [shopDomain])
   ShopifyProduct      ShopifyProduct      @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
@@ -497,6 +498,12 @@ enum MatchConfidenceTier {
   CONFIRMED
   LIKELY
   WEAK
+}
+
+enum MatchReviewStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
 }
 
 enum PreviewKind {
