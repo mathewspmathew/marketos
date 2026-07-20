@@ -841,8 +841,14 @@ export default function HomePage() {
                               </s-text>
                               {local.calculatedMinPrice !== null && local.calculatedMaxPrice !== null && (
                                 <s-text tone="subdued" style={{ fontSize: "0.85em", marginBottom: "12px" }}>
-                                  {local.avgBasePrice ? `Base price: ${getCurrencySymbol(shopDefaults?.currency)}${Number(local.avgBasePrice).toFixed(2)}.` : `Current price: ${getCurrencySymbol(shopDefaults?.currency)}${Number(local.price).toFixed(2)}.`}
-                                  Auto-calculated bounds (±{Math.round((shopDefaults?.lifetimeCapPct ?? 0.25) * 100)}%): ${getCurrencySymbol(shopDefaults?.currency)}${local.calculatedMinPrice.toFixed(2)} to ${getCurrencySymbol(shopDefaults?.currency)}${local.calculatedMaxPrice.toFixed(2)}
+                                  {(() => {
+                                    const sym = getCurrencySymbol(shopDefaults?.currency);
+                                    const basisLabel = local.avgBasePrice
+                                      ? `Base price: ${sym}${Number(local.avgBasePrice).toFixed(2)}.`
+                                      : `Current price: ${sym}${Number(local.price).toFixed(2)}.`;
+                                    const capPct = Math.round((shopDefaults?.lifetimeCapPct ?? 0.25) * 100);
+                                    return `${basisLabel} Auto-calculated bounds (±${capPct}%): ${sym}${local.calculatedMinPrice.toFixed(2)} to ${sym}${local.calculatedMaxPrice.toFixed(2)}`;
+                                  })()}
                                 </s-text>
                               )}
                               <s-stack direction="inline" gap="base">
