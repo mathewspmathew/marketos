@@ -175,6 +175,13 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
     # includes frequency in every submit, not just ones that touch it).
     prior_frequency_unit = product.frequencyUnit
     prior_frequency_interval = product.frequencyInterval
+    # Also captured before mutation: whether this call is re-enabling a
+    # previously-paused, already-configured product (the "Save & Resume"
+    # button) — that's the second of two distinct paths a merchant can take
+    # to resume, and it must trigger a fresh discovery search under the same
+    # conditions resume_dynamic_pricing does, since it may carry an edited
+    # search query / discoveryNumResults that a plain resume never would.
+    was_enabled_before_this_call = product.dynamicPricingEnabled
 
     if effective_config.search_query_override is not None:
         product.searchQueryOverride = effective_config.search_query_override or None
@@ -221,6 +228,13 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
                 query=discovery_query,
             ))
             product.lastDiscoveryNumResults = product.discoveryNumResults
+    elif not was_enabled_before_this_call:
+        # Not a first-ever configure, and the product was paused going into
+        # this call — this is the "Save & Resume" path (edit search
+        # settings while paused, then save-and-re-enable in one click).
+        # Must honor the same pending-search-change trigger a plain resume
+        # (resume_dynamic_pricing, the row-level "Resume" button) does.
+        _maybe_trigger_resume_discovery(session, product)
 
     product.dynamicPricingEnabled = True
     if product.dynamicPricingConfiguredAt is None:
@@ -270,6 +284,44 @@ def pause_dynamic_pricing(session: Session, product: "models.ShopifyProduct") ->
     return {"dynamicPricingEnabled": {"old": old, "new": False}}
 
 
+def _maybe_trigger_resume_discovery(session: Session, product: "models.ShopifyProduct") -> None:
+    """If the search query or discoveryNumResults changed since the last
+    real discovery search, queue exactly one fresh DiscoveryJob using the
+    current search query and the current TOTAL count (never a subtracted
+    difference — the search API has no pagination, so re-searching for
+    just the delta would re-fetch the same top results already found, not
+    novel ones). Called from both apply_pane_config (when a paused,
+    previously-configured product is saved back to enabled — the "Save &
+    Resume" button) and resume_dynamic_pricing (a plain resume with no
+    field edits, via the row-level "Resume" button) — these are the two
+    distinct UI paths a merchant can take to re-enable a paused product,
+    and both must honor a pending search-settings change identically.
+    """
+    current_query = product.searchQueryOverride or product.searchQuery
+    if not current_query:
+        return
+    latest_job = (
+        session.query(models.DiscoveryJob)
+        .filter(models.DiscoveryJob.shopifyProductId == product.id)
+        .order_by(models.DiscoveryJob.requestedAt.desc())
+        .first()
+    )
+    query_changed = latest_job is None or latest_job.query != current_query
+    count_increased = (
+        product.lastDiscoveryNumResults is not None
+        and product.discoveryNumResults is not None
+        and product.discoveryNumResults > product.lastDiscoveryNumResults
+    )
+    if query_changed or count_increased:
+        session.add(models.DiscoveryJob(
+            shopDomain=product.shopDomain,
+            shopifyProductId=product.id,
+            status="QUEUED",
+            query=current_query,
+        ))
+        product.lastDiscoveryNumResults = product.discoveryNumResults
+
+
 def resume_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -> dict:
     """Resume a paused product: re-enable the flag, re-arm any ACTIVE
     ProductUrl rows whose schedule has gone stale (null or past nextRunAt),
@@ -282,28 +334,7 @@ def resume_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -
     old = product.dynamicPricingEnabled
     product.dynamicPricingEnabled = True
 
-    current_query = product.searchQueryOverride or product.searchQuery
-    if current_query:
-        latest_job = (
-            session.query(models.DiscoveryJob)
-            .filter(models.DiscoveryJob.shopifyProductId == product.id)
-            .order_by(models.DiscoveryJob.requestedAt.desc())
-            .first()
-        )
-        query_changed = latest_job is None or latest_job.query != current_query
-        count_increased = (
-            product.lastDiscoveryNumResults is not None
-            and product.discoveryNumResults is not None
-            and product.discoveryNumResults > product.lastDiscoveryNumResults
-        )
-        if query_changed or count_increased:
-            session.add(models.DiscoveryJob(
-                shopDomain=product.shopDomain,
-                shopifyProductId=product.id,
-                status="QUEUED",
-                query=current_query,
-            ))
-            product.lastDiscoveryNumResults = product.discoveryNumResults
+    _maybe_trigger_resume_discovery(session, product)
 
     next_run = next_run_at(product.frequencyInterval, product.frequencyUnit) or datetime.now(timezone.utc)
     rearmed = (

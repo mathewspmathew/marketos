@@ -623,3 +623,89 @@ def test_resume_queues_discovery_when_query_changed(seeded_product_with_url):
             models.DiscoveryJob.shopifyProductId == product_id
         ).order_by(models.DiscoveryJob.requestedAt.desc()).all()
         assert jobs[0].query == "ergonomic wireless mouse for gaming"
+
+
+def test_apply_save_and_resume_queues_discovery_when_count_increased(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.searchQuery = "wireless mouse"
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10,
+        ))
+        product.lastDiscoveryNumResults = 10
+        product.dynamicPricingEnabled = False
+
+    with get_db() as s:
+        jobs_before = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).count()
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=20,
+        ))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.dynamicPricingEnabled is True
+        assert product.lastDiscoveryNumResults == 20
+        jobs = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).order_by(models.DiscoveryJob.requestedAt.desc()).all()
+        assert len(jobs) == jobs_before + 1
+        assert jobs[0].query == "wireless mouse"
+        assert jobs[0].status == "QUEUED"
+
+
+def test_apply_save_and_resume_does_not_queue_when_nothing_changed(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.searchQuery = "wireless mouse"
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10,
+        ))
+        product.lastDiscoveryNumResults = 10
+        product.dynamicPricingEnabled = False
+
+    with get_db() as s:
+        jobs_before = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).count()
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10,
+        ))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.dynamicPricingEnabled is True
+        jobs_after = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).count()
+        assert jobs_after == jobs_before
+
+
+def test_apply_first_configure_does_not_double_queue(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.searchQuery = "wireless mouse"
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10,
+        ))
+
+    with get_db() as s:
+        jobs = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).all()
+        assert len(jobs) == 1
