@@ -153,12 +153,12 @@ def get_access_token(shop_domain: str, session) -> tuple[str, datetime]:
 
     # Persist the new access token (and rotated refresh token) on the offline
     # row so subsequent calls reuse it and the React Router side sees fresh
-    # state. Columns are timestamp-without-tz, hence the naive UTC values.
+    # state.
     try:
         set_clauses = ['"accessToken" = :t', "expires = :e"]
         params = {
             "t": access_token,
-            "e": expires_at.replace(tzinfo=None),
+            "e": expires_at,
             "shop": shop_domain,
         }
         if new_refresh_token and new_refresh_token != refresh_token:
@@ -169,7 +169,7 @@ def get_access_token(shop_domain: str, session) -> tuple[str, datetime]:
             )
             set_clauses += ['"refreshToken" = :rt', '"refreshTokenExpires" = :rte']
             params["rt"] = new_refresh_token
-            params["rte"] = new_refresh_expires.replace(tzinfo=None)
+            params["rte"] = new_refresh_expires
         # Persisted in its own transaction, not the caller's `session` — the
         # caller may be holding a transaction-scoped resource (e.g.
         # pg_try_advisory_xact_lock in pricing_svc/apply.py) that must stay

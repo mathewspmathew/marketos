@@ -111,9 +111,9 @@ def test_expired_token_exchanges_and_persists(monkeypatch, token_session):
     (stmt, params), = token_session.updates()
     assert '"accessToken"' in stmt and '"isOnline" = false' in stmt
     assert params["t"] == "new-tok"
-    assert params["e"].tzinfo is None            # naive UTC for the column
+    assert params["e"].tzinfo is not None        # aware UTC for the tz-aware column
     assert params["rt"] == "refresh-2"           # rotation persisted
-    assert params["rte"].tzinfo is None
+    assert params["rte"].tzinfo is not None
     assert token_session.commits == 1
     # The caller's own session/transaction must be untouched by the persist —
     # that's the whole point of isolating it (advisory-lock safety in

@@ -198,11 +198,11 @@ def test_rearm_shop_rearms_stale_urls_for_eligible_products_only():
             stale_url = s.get(models.ProductUrl, stale_url_id)
             healthy_url = s.get(models.ProductUrl, healthy_url_id)
             ineligible_url = s.get(models.ProductUrl, ineligible_url_id)
-            assert stale_url.nextRunAt > datetime.now(timezone.utc).replace(tzinfo=None)
+            assert stale_url.nextRunAt > datetime.now(timezone.utc)
             # "untouched" checked within a tolerance — Postgres round-trips
             # timestamps at slightly different sub-millisecond precision.
-            assert abs((healthy_url.nextRunAt.replace(tzinfo=None) - healthy.replace(tzinfo=None)).total_seconds()) < 1
-            assert abs((ineligible_url.nextRunAt.replace(tzinfo=None) - stale.replace(tzinfo=None)).total_seconds()) < 1
+            assert abs((healthy_url.nextRunAt - healthy).total_seconds()) < 1
+            assert abs((ineligible_url.nextRunAt - stale).total_seconds()) < 1
     finally:
         with get_db() as s:
             s.query(models.ProductUrl).filter(models.ProductUrl.shopDomain == shop).delete(synchronize_session=False)

@@ -14,7 +14,7 @@ model ChatMessage {
   sessionId   String
   role        ChatRole
   content     Json
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
   tokenCount  Int?
   pinned      Boolean     @default(false)
   ChatSession ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -31,28 +31,28 @@ model ChatPreview {
   change      Json
   variantIds  String[]
   summary     Json
-  expiresAt   DateTime
-  appliedAt   DateTime?
+  expiresAt   DateTime    @db.Timestamptz(3)
+  appliedAt   DateTime?   @db.Timestamptz(3)
   appliedBy   String?
   result      Json?
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
   ChatSession ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([shopDomain, expiresAt])
 }
 
 model ChatSession {
-  id             String        @id @default(cuid())
-  shopDomain     String
-  userId         String?
-  title          String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime
-  runningSummary String?
+  id                 String        @id @default(cuid())
+  shopDomain         String
+  userId             String?
+  title              String?
+  createdAt          DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime      @db.Timestamptz(3)
+  runningSummary     String?
   resolvedProductIds Json          @default("[]")
-  ChatMessage    ChatMessage[]
-  ChatPreview    ChatPreview[]
-  ShopifyUser    ShopifyUser   @relation(fields: [shopDomain], references: [shopDomain])
+  ChatMessage        ChatMessage[]
+  ChatPreview        ChatPreview[]
+  ShopifyUser        ShopifyUser   @relation(fields: [shopDomain], references: [shopDomain])
 
   @@index([shopDomain, updatedAt])
 }
@@ -73,9 +73,9 @@ model CompetitorCandidate {
   status           CandidateStatus @default(PENDING)
   rejectReason     String?
   scrapedProductId String?
-  discoveredAt     DateTime        @default(now())
-  scrapedAt        DateTime?
-  verifiedAt       DateTime?
+  discoveredAt     DateTime        @default(now()) @db.Timestamptz(3)
+  scrapedAt        DateTime?       @db.Timestamptz(3)
+  verifiedAt       DateTime?       @db.Timestamptz(3)
   embedScore       Decimal?        @db.Decimal(5, 4)
   DiscoveryJob     DiscoveryJob?   @relation(fields: [discoveryJobId], references: [id])
   ScrapedProduct   ScrapedProduct? @relation(fields: [scrapedProductId], references: [id])
@@ -93,7 +93,7 @@ model CompetitorPriceObservation {
   price               Decimal        @db.Decimal(10, 2)
   currency            String         @default("INR") @db.VarChar(3)
   isInStock           Boolean        @default(true)
-  observedAt          DateTime       @default(now())
+  observedAt          DateTime       @default(now()) @db.Timestamptz(3)
   ScrapedVariant      ScrapedVariant @relation(fields: [competitorVariantId], references: [id], onDelete: Cascade)
   ShopifyUser         ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
 
@@ -108,8 +108,8 @@ model DiscoveryJob {
   shopifyProductId    String
   status              DiscoveryStatus       @default(QUEUED)
   error               String?
-  requestedAt         DateTime              @default(now())
-  completedAt         DateTime?
+  requestedAt         DateTime              @default(now()) @db.Timestamptz(3)
+  completedAt         DateTime?             @db.Timestamptz(3)
   query               String?
   CompetitorCandidate CompetitorCandidate[]
   ShopifyUser         ShopifyUser           @relation(fields: [shopDomain], references: [shopDomain])
@@ -126,8 +126,8 @@ model PriceDecision {
   oldPrice         Decimal        @db.Decimal(10, 2)
   newPrice         Decimal        @db.Decimal(10, 2)
   reason           String
-  decidedAt        DateTime       @default(now())
-  appliedAt        DateTime?
+  decidedAt        DateTime       @default(now()) @db.Timestamptz(3)
+  appliedAt        DateTime?      @db.Timestamptz(3)
   shopifyResponse  Json?
   changePct        Float?
   refPrice         Decimal?       @db.Decimal(10, 2)
@@ -140,7 +140,7 @@ model PriceDecision {
   applyError       String?
   oosObservations  Int            @default(0)
   currencyDrops    Int            @default(0)
-  revertedAt       DateTime?
+  revertedAt       DateTime?      @db.Timestamptz(3)
   ShopifyUser      ShopifyUser    @relation(fields: [shopDomain], references: [shopDomain])
   ShopifyVariant   ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
 
@@ -155,30 +155,30 @@ model ProductEmbedding {
   variantId      String?
   vectorText     Unsupported("vector")?
   vectorImg      Unsupported("vector")?
-  vectorizedAt   DateTime               @default(now())
+  vectorizedAt   DateTime               @default(now()) @db.Timestamptz(3)
   shopDomain     String
-  matchedAt      DateTime?
+  matchedAt      DateTime?              @db.Timestamptz(3)
   ScrapedProduct ScrapedProduct         @relation(fields: [prodId], references: [id], onDelete: Cascade)
   ShopifyUser    ShopifyUser            @relation(fields: [shopDomain], references: [shopDomain])
   ScrapedVariant ScrapedVariant?        @relation(fields: [variantId], references: [id])
 }
 
 model ProductLevelMatch {
-  id                  String              @id @default(cuid())
-  shopDomain          String
-  shopifyProductId    String
-  scrapedProductId    String
-  confidence          Decimal             @db.Decimal(4, 3)
-  confidenceTier      MatchConfidenceTier
-  source              String              @default("DISCOVERY")
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime
-  reviewedAt          DateTime?
-  reviewStatus        MatchReviewStatus   @default(PENDING)
-  ScrapedProduct      ScrapedProduct      @relation(fields: [scrapedProductId], references: [id], onDelete: Cascade)
-  ShopifyUser         ShopifyUser         @relation(fields: [shopDomain], references: [shopDomain])
-  ShopifyProduct      ShopifyProduct      @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
-  ProductMatch        ProductMatch[]
+  id               String              @id @default(cuid())
+  shopDomain       String
+  shopifyProductId String
+  scrapedProductId String
+  confidence       Decimal             @db.Decimal(4, 3)
+  confidenceTier   MatchConfidenceTier
+  source           String              @default("DISCOVERY")
+  createdAt        DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime            @db.Timestamptz(3)
+  reviewedAt       DateTime?           @db.Timestamptz(3)
+  reviewStatus     MatchReviewStatus   @default(PENDING)
+  ScrapedProduct   ScrapedProduct      @relation(fields: [scrapedProductId], references: [id], onDelete: Cascade)
+  ShopifyUser      ShopifyUser         @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyProduct   ShopifyProduct      @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+  ProductMatch     ProductMatch[]
 
   @@unique([shopifyProductId, scrapedProductId])
   @@index([shopDomain, confidenceTier])
@@ -195,13 +195,13 @@ model ProductMatch {
   matchType           String               @default("semantic")
   vectorDistance      Decimal              @db.Decimal(10, 6)
   thresholdUsed       Decimal              @db.Decimal(5, 4)
-  matchedAt           DateTime             @default(now())
-  updatedAt           DateTime
+  matchedAt           DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime             @db.Timestamptz(3)
   textScore           Decimal?             @db.Decimal(5, 2)
   imageScore          Decimal?             @db.Decimal(5, 2)
   confidence          Decimal?             @db.Decimal(4, 3)
   confidenceTier      MatchConfidenceTier?
-  dismissedAt         DateTime?
+  dismissedAt         DateTime?            @db.Timestamptz(3)
   productMatchId      String?
   currencyMismatch    Boolean              @default(false)
   ScrapedProduct      ScrapedProduct       @relation(fields: [competitorProdId], references: [id], onDelete: Cascade)
@@ -218,21 +218,21 @@ model ProductMatch {
 }
 
 model ProductUrl {
-  id                String          @id @default(cuid())
-  configId          String?
-  prodId            String
-  url               String
-  status            UrlStatus       @default(ACTIVE)
-  failCount         Int             @default(0)
-  lastScrapedAt     DateTime?
-  createdAt         DateTime        @default(now())
-  shopDomain        String
-  nextRunAt         DateTime?
-  shopifyProductId  String?
-  ScrapingConfig    ScrapingConfig? @relation(fields: [configId], references: [id])
-  ScrapedProduct    ScrapedProduct  @relation(fields: [prodId], references: [id], onDelete: Cascade)
-  ShopifyUser       ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
-  ShopifyProduct    ShopifyProduct? @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
+  id               String          @id @default(cuid())
+  configId         String?
+  prodId           String
+  url              String
+  status           UrlStatus       @default(ACTIVE)
+  failCount        Int             @default(0)
+  lastScrapedAt    DateTime?       @db.Timestamptz(3)
+  createdAt        DateTime        @default(now()) @db.Timestamptz(3)
+  shopDomain       String
+  nextRunAt        DateTime?       @db.Timestamptz(3)
+  shopifyProductId String?
+  ScrapingConfig   ScrapingConfig? @relation(fields: [configId], references: [id])
+  ScrapedProduct   ScrapedProduct  @relation(fields: [prodId], references: [id], onDelete: Cascade)
+  ShopifyUser      ShopifyUser     @relation(fields: [shopDomain], references: [shopDomain])
+  ShopifyProduct   ShopifyProduct? @relation(fields: [shopifyProductId], references: [id], onDelete: Cascade)
 
   @@unique([shopifyProductId, url])
   @@index([shopDomain, status, nextRunAt])
@@ -249,8 +249,8 @@ model ScrapedProduct {
   tags                Json                  @default("[]")
   imageUrl            String?
   specifications      Json?
-  updatedAt           DateTime
-  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @db.Timestamptz(3)
+  createdAt           DateTime              @default(now()) @db.Timestamptz(3)
   shopDomain          String
   categoryTop         String?
   productGender       String?
@@ -274,8 +274,8 @@ model ScrapedVariant {
   originalPrice              Decimal?                     @db.Decimal(10, 2)
   isInStock                  Boolean                      @default(true)
   stockQuantity              Int?
-  updatedAt                  DateTime
-  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @db.Timestamptz(3)
+  createdAt                  DateTime                     @default(now()) @db.Timestamptz(3)
   semanticText               String?
   currency                   String                       @default("INR") @db.VarChar(3)
   CompetitorPriceObservation CompetitorPriceObservation[]
@@ -290,10 +290,10 @@ model ScrapingConfig {
   includeImages     Boolean      @default(true)
   productLimit      Int?
   frequencyInterval Int?
-  nextRunAt         DateTime?
+  nextRunAt         DateTime?    @db.Timestamptz(3)
   isActive          Boolean      @default(true)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime
+  createdAt         DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime     @db.Timestamptz(3)
   status            ScrapeStatus @default(IDLE)
   shopDomain        String
   frequencyUnit     String?      @default("nofreq")
@@ -307,7 +307,7 @@ model Session {
   state               String
   isOnline            Boolean   @default(false)
   scope               String?
-  expires             DateTime?
+  expires             DateTime? @db.Timestamptz(3)
   accessToken         String
   userId              BigInt?
   firstName           String?
@@ -318,14 +318,14 @@ model Session {
   collaborator        Boolean?  @default(false)
   emailVerified       Boolean?  @default(false)
   refreshToken        String?
-  refreshTokenExpires DateTime?
+  refreshTokenExpires DateTime? @db.Timestamptz(3)
 }
 
 model ShopSettings {
   shopDomain               String      @id
   markupPct                Decimal     @default(0.02) @db.Decimal(5, 4)
   marketplaceBlocklist     String[]    @default([])
-  updatedAt                DateTime
+  updatedAt                DateTime    @db.Timestamptz(3)
   frequencyInterval        Int         @default(1)
   frequencyUnit            String      @default("day")
   defaultPricingTier       PricingTier @default(COMPETITIVE)
@@ -354,10 +354,10 @@ model ShopifyEmbedding {
   variantId      String                 @unique
   vectorText     Unsupported("vector")?
   vectorImg      Unsupported("vector")?
-  embeddedAt     DateTime               @default(now())
-  updatedAt      DateTime
+  embeddedAt     DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime               @db.Timestamptz(3)
   shopDomain     String
-  matchedAt      DateTime?
+  matchedAt      DateTime?              @db.Timestamptz(3)
   ShopifyVariant ShopifyVariant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([shopDomain])
@@ -372,17 +372,17 @@ model ShopifyProduct {
   tags                          Json                  @default("[]")
   imageUrl                      String?
   status                        String                @default("ACTIVE")
-  createdAt                     DateTime              @default(now())
-  updatedAt                     DateTime
+  createdAt                     DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime              @db.Timestamptz(3)
   dynamicPricingEnabled         Boolean               @default(false)
-  dynamicPricingConfiguredAt    DateTime?
+  dynamicPricingConfiguredAt    DateTime?             @db.Timestamptz(3)
   handle                        String?
   shopDomain                    String
   syncPrice                     Boolean               @default(true)
-  syncedAt                      DateTime?
+  syncedAt                      DateTime?             @db.Timestamptz(3)
   categoryTop                   String?
   productGender                 String?
-  lastDiscoveryAt               DateTime?
+  lastDiscoveryAt               DateTime?             @db.Timestamptz(3)
   searchQuery                   String?
   frequencyInterval             Int?
   frequencyUnit                 String?
@@ -396,9 +396,9 @@ model ShopifyProduct {
   maxPriceOverride              Decimal?              @db.Decimal(10, 2)
   maxAutoApplyChangePctOverride Float?
   lifetimeCapPctOverride        Float?
-  lastDecisionAt                DateTime?
+  lastDecisionAt                DateTime?             @db.Timestamptz(3)
   semanticStatus                String                @default("PENDING")
-  semanticClaimedAt             DateTime?
+  semanticClaimedAt             DateTime?             @db.Timestamptz(3)
   semanticVersion               Int                   @default(0)
   semanticAttempts              Int                   @default(0)
   semanticFailureReason         String?
@@ -415,10 +415,10 @@ model ShopifyUser {
   shopifyUserId              BigInt?
   email                      String?
   firstName                  String?
-  installedAt                DateTime                     @default(now())
+  installedAt                DateTime                     @default(now()) @db.Timestamptz(3)
   productSyncState           String                       @default("IDLE")
-  productSyncStartedAt       DateTime?
-  productSyncedAt            DateTime?
+  productSyncStartedAt       DateTime?                    @db.Timestamptz(3)
+  productSyncedAt            DateTime?                    @db.Timestamptz(3)
   productSyncError           String?
   ChatSession                ChatSession[]
   CompetitorCandidate        CompetitorCandidate[]
@@ -445,7 +445,7 @@ model ShopifyVariant {
   currentPrice           Decimal                 @db.Decimal(10, 2)
   isInStock              Boolean                 @default(true)
   stockQuantity          Int?
-  updatedAt              DateTime
+  updatedAt              DateTime                @db.Timestamptz(3)
   compareAtPrice         Decimal?                @db.Decimal(10, 2)
   imageUrl               String?
   semanticText           String?
@@ -466,7 +466,7 @@ model VariantCompetitorStats {
   minPrice         Decimal?       @db.Decimal(10, 2)
   median           Decimal?       @db.Decimal(10, 2)
   maxPrice         Decimal?       @db.Decimal(10, 2)
-  lastUpdatedAt    DateTime       @default(now())
+  lastUpdatedAt    DateTime       @default(now()) @db.Timestamptz(3)
   ShopifyVariant   ShopifyVariant @relation(fields: [shopifyVariantId], references: [id], onDelete: Cascade)
 
   @@index([shopDomain])

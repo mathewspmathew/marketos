@@ -88,10 +88,7 @@ def test_apply_rearms_active_product_urls(seeded_product_with_url):
 
     with get_db() as s:
         url = s.get(models.ProductUrl, url_id)
-        # ProductUrl.nextRunAt is a Postgres "timestamp without time zone"
-        # column, so reads come back naive even though the model declares
-        # DateTime(timezone=True) — compare against a naive UTC "now".
-        assert url.nextRunAt > datetime.now(timezone.utc).replace(tzinfo=None)
+        assert url.nextRunAt > datetime.now(timezone.utc)
 
 
 def test_apply_does_not_rearm_when_frequency_unchanged(seeded_product_with_url):
@@ -158,8 +155,7 @@ def test_apply_invalid_bounds_writes_nothing(seeded_product_with_url):
         product = s.get(models.ShopifyProduct, product_id)
         url = s.get(models.ProductUrl, url_id)
         assert product.dynamicPricingEnabled is False
-        # See naive-vs-aware note in test_apply_rearms_active_product_urls.
-        assert url.nextRunAt < datetime.now(timezone.utc).replace(tzinfo=None)
+        assert url.nextRunAt < datetime.now(timezone.utc)
 
 
 def test_apply_omitted_fields_leave_existing_values(seeded_product_with_url):
@@ -353,7 +349,7 @@ def test_resume_flips_flag_and_rearms_stale_urls(seeded_product_with_url):
         product = s.get(models.ShopifyProduct, product_id)
         url = s.get(models.ProductUrl, url_id)
         assert product.dynamicPricingEnabled is True
-        assert url.nextRunAt > datetime.now(timezone.utc).replace(tzinfo=None)
+        assert url.nextRunAt > datetime.now(timezone.utc)
 
 
 def test_resume_requires_no_config_at_all(seeded_product_with_url):
