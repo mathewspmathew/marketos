@@ -1,3 +1,9 @@
+/**
+ * ChatPanel — the Assistant tab's main chat UI: session list, message
+ * thread, sending messages to /api/chat, and applying the previews
+ * (price-change / ask_user turns) the chatbot returns. All chatbot state
+ * lives in Python; this component only renders it and forwards actions.
+ */
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";

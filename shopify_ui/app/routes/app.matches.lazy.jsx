@@ -1,3 +1,9 @@
+/**
+ * app.matches.lazy.jsx — resource route: one product's expanded match list
+ * (top N or "all"), fetched on demand by app.matches.jsx via fetcher.load
+ * so the main matches page doesn't have to load every product's full match
+ * list up front.
+ */
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 

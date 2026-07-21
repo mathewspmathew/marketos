@@ -1,3 +1,10 @@
+/**
+ * app.settings.jsx — shop-wide dynamic-pricing settings form (search/
+ * discovery params, pricing tiers, safety limits, frequency, master
+ * switches). parsePctish's percent-vs-fraction normalization is the sole
+ * writer of these fields — nothing else in the codebase writes them, so
+ * this stays frontend-only input parsing, not duplicated business logic.
+ */
 import { useState, useEffect } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";

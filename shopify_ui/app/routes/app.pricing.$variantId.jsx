@@ -1,3 +1,9 @@
+/**
+ * app.pricing.$variantId.jsx — per-variant pricing deep-dive: price/
+ * competitor chart, pause/resume/revert quick actions, and decision +
+ * change history. Reshapes DB reads into chart series (display-only);
+ * pause/resume/revert are thin proxies to services/pricing_svc.
+ */
 /* eslint-disable react/prop-types */
 import { useState } from "react";
 import {

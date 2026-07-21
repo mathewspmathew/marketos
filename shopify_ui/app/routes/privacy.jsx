@@ -1,3 +1,4 @@
+// privacy.jsx — static, standalone privacy-policy page (no loader/action).
 const EFFECTIVE_DATE = "July 13, 2026";
 const CONTACT_EMAIL = "mathewsmathewsp@gmail.com";
 

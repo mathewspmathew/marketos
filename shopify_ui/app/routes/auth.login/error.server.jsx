@@ -1,3 +1,5 @@
+// error.server.jsx — maps the Shopify SDK's LoginErrorType enum to a
+// user-facing message for the login form.
 import { LoginErrorType } from "@shopify/shopify-app-react-router/server";
 
 export function loginErrorMessage(loginErrors) {

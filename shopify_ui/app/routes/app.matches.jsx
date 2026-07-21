@@ -1,3 +1,10 @@
+/**
+ * app.matches.jsx — "Matched competitors" review page. Groups matched
+ * competitor products by merchant product (one top match + expandable
+ * list per product, fetched lazily via app.matches.lazy.jsx), with
+ * confirm/reject actions proxied to services/pricing_svc/match_review.py
+ * via /internal/matches/review.
+ */
 import React from "react";
 import { useFetcher, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";

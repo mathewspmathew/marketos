@@ -1,3 +1,5 @@
+// webhooks.products.delete.jsx — PRODUCTS_DELETE webhook. Removes the local
+// ShopifyProduct row (no-op if it was never synced).
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 

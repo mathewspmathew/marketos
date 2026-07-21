@@ -1,3 +1,6 @@
+// webhooks.app.uninstalled.jsx — APP_UNINSTALLED webhook. Deletes Session
+// rows only; full shop-data erasure is deferred to webhooks.compliance.jsx's
+// SHOP_REDACT handler per Shopify's compliance timing (not a bug).
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 

@@ -1,3 +1,5 @@
+// root.jsx — the app's root HTML document shell (head/body wrapper), loading
+// Polaris CSS and Shopify's CDN font. Every route renders inside <Outlet/>.
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
 import "@shopify/polaris/build/esm/styles.css";
 

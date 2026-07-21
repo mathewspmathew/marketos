@@ -1,3 +1,5 @@
+// webhooks.app.scopes_update.jsx — APP_SCOPES_UPDATE webhook. Keeps the
+// stored Session.scope in sync when a merchant grants/revokes OAuth scopes.
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 

@@ -1,3 +1,8 @@
+/**
+ * app.jsx — the embedded app's layout shell. Wraps every /app/* route in
+ * Shopify's AppProvider and renders the top nav; the actual page content
+ * comes from each child route via <Outlet/>.
+ */
 import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
@@ -12,7 +17,6 @@ export const loader = async ({ request }) => {
 
 export default function App() {
   const { apiKey } = useLoaderData();
-//  this is the react route
   return (
     <AppProvider embedded apiKey={apiKey}>
       <s-app-nav>
@@ -23,7 +27,6 @@ export default function App() {
         <s-link href="/app/settings">Settings</s-link>
       </s-app-nav>
       <Outlet />
-      
     </AppProvider>
   );
 }

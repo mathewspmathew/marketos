@@ -1,3 +1,7 @@
+// Static ISO-currency-code → display-symbol lookup, for formatting prices
+// in the shop's configured currency. i18n data, not a business rule — no
+// Python equivalent needed. Chatbot preview cards should use this rather
+// than hardcoding a symbol (they show whatever currency the shop uses).
 const CURRENCY_SYMBOLS = {
   USD: "$",
   EUR: "€",

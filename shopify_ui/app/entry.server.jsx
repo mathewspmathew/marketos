@@ -1,3 +1,9 @@
+/**
+ * entry.server.jsx — React Router SSR entry point. Streams the rendered
+ * HTML response, waiting for the full page (onAllReady) for bots/crawlers
+ * so they get complete markup, or streaming as soon as the shell is ready
+ * (onShellReady) for real users. Framework boilerplate, not app logic.
+ */
 import { PassThrough } from "stream";
 import { renderToPipeableStream } from "react-dom/server";
 import { ServerRouter } from "react-router";

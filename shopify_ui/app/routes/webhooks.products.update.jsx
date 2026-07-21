@@ -1,3 +1,7 @@
+// webhooks.products.update.jsx — PRODUCTS_UPDATE webhook. Pure forward of
+// the raw payload to Python's handle_product_update task — no mapping/
+// upsert logic here (that's the correct pattern; webhooks.products.create.jsx
+// mirrors it rather than reimplementing the mapping in JS).
 import { authenticate } from "../shopify.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";

@@ -1,3 +1,8 @@
+/**
+ * AskCard — renders a single ask_user turn from the chatbot: the question
+ * text, optional preset-answer buttons, and a free-text fallback field.
+ * Forwards whichever answer the merchant picks via onAnswer.
+ */
 import { useState } from "react";
 
 export default function AskCard({ ask, onAnswer }) {

@@ -1,3 +1,10 @@
+/**
+ * _index/route.jsx — unauthenticated landing page, shown only when there's
+ * no ?shop= param (otherwise redirects straight to /app). NOTE: still has
+ * unedited Shopify CLI scaffold placeholder copy ("[your app]", generic
+ * "Product feature" bullets) — needs real marketing copy before this is
+ * shown to anyone for real, or reconsider whether it's needed at all.
+ */
 import { redirect, Form, useLoaderData } from "react-router";
 import { login } from "../../shopify.server";
 import styles from "./styles.module.css";

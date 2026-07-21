@@ -1,3 +1,9 @@
+/**
+ * shopify.server.js — configures the Shopify app SDK (API keys, scopes,
+ * session storage, auth) and re-exports its helpers app-wide. afterAuth
+ * seeds ShopifyUser/ShopSettings rows on every install/re-auth so a shop
+ * always has real settings from the moment it installs.
+ */
 import "@shopify/shopify-app-react-router/adapters/node";
 import {
   ApiVersion,
