@@ -45,7 +45,7 @@ class PaneConfig:
     clear_max_price_override: bool = False
 
 
-def validate_pane_config(config: PaneConfig) -> None:
+def validate_pane_config(config: PaneConfig, product: "models.ShopifyProduct" = None) -> None:
     """Raise PaneConfigError if any provided field is invalid."""
     if config.pricing_tier is not None and config.pricing_tier not in PRICING_TIERS:
         raise PaneConfigError(f"pricingTier must be one of {PRICING_TIERS}, got {config.pricing_tier!r}")
@@ -76,6 +76,27 @@ def validate_pane_config(config: PaneConfig) -> None:
         raise PaneConfigError("discoveryNumResults must be a positive int.")
     if config.listing_expansion_cap is not None and config.listing_expansion_cap <= 0:
         raise PaneConfigError("listingExpansionCap must be a positive int.")
+
+    if (
+        config.discovery_num_results is not None
+        and product is not None
+        and product.lastDiscoveryNumResults is not None
+        and config.discovery_num_results < product.lastDiscoveryNumResults
+    ):
+        raise PaneConfigError(
+            f"Number of products can't be decreased below {product.lastDiscoveryNumResults} — "
+            "the competitors already found for this product aren't removed by lowering this number."
+        )
+    if (
+        config.listing_expansion_cap is not None
+        and product is not None
+        and product.listingExpansionCap is not None
+        and config.listing_expansion_cap < product.listingExpansionCap
+    ):
+        raise PaneConfigError(
+            f"Max products per listing page can't be decreased below {product.listingExpansionCap} — "
+            "lowering this doesn't undo anything already found."
+        )
 
 
 def apply_pane_config(session: Session, product: "models.ShopifyProduct", config: PaneConfig) -> dict:
@@ -144,7 +165,7 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
         discovery_num_results=config.discovery_num_results,
         listing_expansion_cap=config.listing_expansion_cap,
     )
-    validate_pane_config(effective_config)
+    validate_pane_config(effective_config, product)
 
     changes: dict = {"dynamicPricingEnabled": (product.dynamicPricingEnabled, True)}
 
@@ -171,11 +192,13 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
         product.frequencyUnit = effective_config.frequency_unit
     if effective_config.frequency_interval is not None:
         product.frequencyInterval = effective_config.frequency_interval
-    # Frozen once a product has ever been configured — changing scrape scope
-    # after discovery has already run against the old scope doesn't make sense.
-    if effective_config.discovery_num_results is not None and is_first_configure:
+    # Locked while the product is actively pricing (dynamicPricingEnabled),
+    # editable before first configure OR while paused — pause, adjust scope,
+    # resume is the supported way to change how broadly this product searches.
+    discovery_fields_editable = is_first_configure or not product.dynamicPricingEnabled
+    if effective_config.discovery_num_results is not None and discovery_fields_editable:
         product.discoveryNumResults = min(effective_config.discovery_num_results, 50)
-    if effective_config.listing_expansion_cap is not None and is_first_configure:
+    if effective_config.listing_expansion_cap is not None and discovery_fields_editable:
         product.listingExpansionCap = min(effective_config.listing_expansion_cap, 50)
 
     if is_first_configure:
@@ -197,6 +220,7 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
                 status="QUEUED",
                 query=discovery_query,
             ))
+            product.lastDiscoveryNumResults = product.discoveryNumResults
 
     product.dynamicPricingEnabled = True
     if product.dynamicPricingConfiguredAt is None:
@@ -247,15 +271,39 @@ def pause_dynamic_pricing(session: Session, product: "models.ShopifyProduct") ->
 
 
 def resume_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -> dict:
-    """Resume a paused product: re-enable the flag and re-arm any ACTIVE
-    ProductUrl rows whose schedule has gone stale (null or past nextRunAt).
-    No gate/validation — mirrors app.products.jsx's resumeDynamic intent
-    exactly. A paused product was already configured once before pausing,
-    so re-validating on resume would only add friction, never catch a real
-    problem.
+    """Resume a paused product: re-enable the flag, re-arm any ACTIVE
+    ProductUrl rows whose schedule has gone stale (null or past nextRunAt),
+    and — if the search query or discoveryNumResults changed while paused —
+    queue exactly one fresh DiscoveryJob using the current search query and
+    the current TOTAL count (never a subtracted difference: the search API
+    has no pagination, so re-searching for just the delta would re-fetch the
+    same top results already found, not novel ones).
     """
     old = product.dynamicPricingEnabled
     product.dynamicPricingEnabled = True
+
+    current_query = product.searchQueryOverride or product.searchQuery
+    if current_query:
+        latest_job = (
+            session.query(models.DiscoveryJob)
+            .filter(models.DiscoveryJob.shopifyProductId == product.id)
+            .order_by(models.DiscoveryJob.requestedAt.desc())
+            .first()
+        )
+        query_changed = latest_job is None or latest_job.query != current_query
+        count_increased = (
+            product.lastDiscoveryNumResults is not None
+            and product.discoveryNumResults is not None
+            and product.discoveryNumResults > product.lastDiscoveryNumResults
+        )
+        if query_changed or count_increased:
+            session.add(models.DiscoveryJob(
+                shopDomain=product.shopDomain,
+                shopifyProductId=product.id,
+                status="QUEUED",
+                query=current_query,
+            ))
+            product.lastDiscoveryNumResults = product.discoveryNumResults
 
     next_run = next_run_at(product.frequencyInterval, product.frequencyUnit) or datetime.now(timezone.utc)
     rearmed = (
@@ -393,6 +441,7 @@ def delete_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -
     product.searchQueryOverride   = None
     product.listingExpansionCap   = None
     product.discoveryNumResults   = None
+    product.lastDiscoveryNumResults = None
     product.avgBasePrice          = None
 
     return {"deletedScrapedProducts": len(deletable_scraped_ids)}

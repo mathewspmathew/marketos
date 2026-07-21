@@ -253,10 +253,16 @@ def test_apply_ignores_discovery_and_listing_cap_after_first_configure(seeded_pr
         assert product.discoveryNumResults == 20
         assert product.listingExpansionCap == 10
 
-    # Second call (product already configured) tries to change both — must be ignored.
+    # Second call (product still enabled, not paused) tries to change both —
+    # must be ignored. Uses an increase, not a decrease: decreasing while
+    # editable is now a validation error (see
+    # test_apply_rejects_discovery_num_results_decrease /
+    # test_apply_rejects_listing_expansion_cap_decrease) — this test's
+    # purpose is only "frozen while enabled", already isolated from that
+    # concern by test_apply_discovery_fields_still_frozen_while_enabled.
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)
-        apply_pane_config(s, product, PaneConfig(discovery_num_results=5, listing_expansion_cap=2))
+        apply_pane_config(s, product, PaneConfig(discovery_num_results=25, listing_expansion_cap=15))
 
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)
@@ -445,3 +451,175 @@ def test_last_discovery_num_results_round_trips(seeded_product_with_url):
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)
         assert product.lastDiscoveryNumResults == 15
+
+
+def test_apply_discovery_fields_editable_while_paused(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10, listing_expansion_cap=5,
+        ))
+
+    # Pause, then edit discovery fields — must be allowed even though the
+    # product has been configured before.
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.dynamicPricingEnabled = False
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", discovery_num_results=20, listing_expansion_cap=8,
+        ))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.discoveryNumResults == 20
+        assert product.listingExpansionCap == 8
+
+
+def test_apply_discovery_fields_still_frozen_while_enabled(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10, listing_expansion_cap=5,
+        ))
+
+    # Still enabled — a second save must not change discovery fields.
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="PREMIUM", discovery_num_results=20, listing_expansion_cap=8,
+        ))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.discoveryNumResults == 10
+        assert product.listingExpansionCap == 5
+
+
+def test_apply_rejects_discovery_num_results_decrease(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10, listing_expansion_cap=5,
+        ))
+        product.lastDiscoveryNumResults = 10
+        product.dynamicPricingEnabled = False
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        with pytest.raises(PaneConfigError, match="can't be decreased"):
+            apply_pane_config(s, product, PaneConfig(
+                pricing_tier="COMPETITIVE", discovery_num_results=5,
+            ))
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.discoveryNumResults == 10  # unchanged — no partial write
+
+
+def test_apply_rejects_listing_expansion_cap_decrease(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10, listing_expansion_cap=5,
+        ))
+        product.dynamicPricingEnabled = False
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        with pytest.raises(PaneConfigError, match="can't be decreased"):
+            apply_pane_config(s, product, PaneConfig(
+                pricing_tier="COMPETITIVE", listing_expansion_cap=3,
+            ))
+
+
+def test_resume_does_not_queue_discovery_when_nothing_changed(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.searchQuery = "wireless mouse"
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10,
+        ))
+        product.lastDiscoveryNumResults = 10
+        product.dynamicPricingEnabled = False
+
+    # Captured in its own committed block — db.py's session is autoflush=False,
+    # so counting inside the same uncommitted block as apply_pane_config's
+    # session.add(DiscoveryJob(...)) above would read stale (pre-flush) state.
+    with get_db() as s:
+        session_job_count_before = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).count()
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        resume_dynamic_pricing(s, product)
+
+    with get_db() as s:
+        job_count_after = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).count()
+        assert job_count_after == session_job_count_before
+
+
+def test_resume_queues_discovery_when_count_increased(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.searchQuery = "wireless mouse"
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10,
+        ))
+        product.lastDiscoveryNumResults = 10
+        product.dynamicPricingEnabled = False
+        product.discoveryNumResults = 20
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        resume_dynamic_pricing(s, product)
+
+    with get_db() as s:
+        jobs = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).order_by(models.DiscoveryJob.requestedAt.desc()).all()
+        assert jobs[0].query == "wireless mouse"
+        assert jobs[0].status == "QUEUED"
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.lastDiscoveryNumResults == 20
+
+
+def test_resume_queues_discovery_when_query_changed(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.searchQuery = "wireless mouse"
+        apply_pane_config(s, product, PaneConfig(
+            pricing_tier="COMPETITIVE", frequency_unit="day", frequency_interval=1,
+            discovery_num_results=10,
+        ))
+        product.lastDiscoveryNumResults = 10
+        product.dynamicPricingEnabled = False
+        product.searchQueryOverride = "ergonomic wireless mouse for gaming"
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        resume_dynamic_pricing(s, product)
+
+    with get_db() as s:
+        jobs = s.query(models.DiscoveryJob).filter(
+            models.DiscoveryJob.shopifyProductId == product_id
+        ).order_by(models.DiscoveryJob.requestedAt.desc()).all()
+        assert jobs[0].query == "ergonomic wireless mouse for gaming"
