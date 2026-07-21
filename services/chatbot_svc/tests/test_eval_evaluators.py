@@ -6,7 +6,10 @@ from services.chatbot_svc.evals.evaluators import (
     OutputCorrectness,
     PriceHallucination,
     StructuredOutput,
+    ToolPrecision,
+    ToolRecall,
     ToolSelection,
+    ToolSuccess,
     check_business_logic,
     check_output_correctness,
     check_price_hallucination,
@@ -14,7 +17,7 @@ from services.chatbot_svc.evals.evaluators import (
     check_tool_selection,
     extract_prices,
 )
-from services.chatbot_svc.evals.report import LAYERS
+from services.chatbot_svc.evals.report import ALL_LAYERS
 from services.chatbot_svc.evals.runner import ChatRunOutput
 
 
@@ -27,17 +30,34 @@ def _out(reply="", tools=(), retries=0, error=None):
     )
 
 
-# Layer 1 — output correctness
-def test_correctness_passes_when_all_facts_present():
-    out = _out(reply="The Pilot V5 pen costs ₹175.00.")
-    ok, why = check_output_correctness(out, {"expected_facts": ["Pilot", "175"]})
-    assert ok and "Pilot" in why
+# Layer 1 — output correctness. check_output_correctness delegates scoring
+# to the judge LLM (judge.py) — it's a thin async wrapper now, not a keyword
+# matcher, so these test the wiring (what gets forwarded, what comes back),
+# not the LLM's own judgment (that's exercised live by run.py).
+async def test_correctness_forwards_prompt_reply_and_criteria_to_judge(monkeypatch):
+    captured = {}
+    async def fake_judge(prompt, reply, criteria):
+        captured.update(prompt=prompt, reply=reply, criteria=criteria)
+        return 0.85, "mock reasoning"
+    monkeypatch.setattr(ev_module, "llm_judge", fake_judge)
 
-def test_correctness_fails_on_missing_fact_and_is_case_insensitive():
-    ok, why = check_output_correctness(_out(reply="It costs 175"), {"expected_facts": ["pilot"]})
-    assert not ok and "missing" in why and "pilot" in why
-    ok, _ = check_output_correctness(_out(reply="the PILOT pen"), {"expected_facts": ["Pilot"]})
-    assert ok
+    out = _out(reply="The Pilot V5 pen costs ₹175.00.")
+    score, why = await check_output_correctness(out, {"expected_facts": ["Pilot", "175"]}, user_prompt="price?")
+
+    assert score == 0.85 and why == "mock reasoning"
+    assert captured == {"prompt": "price?", "reply": "The Pilot V5 pen costs ₹175.00.", "criteria": ["Pilot", "175"]}
+
+async def test_correctness_uses_ask_when_reply_is_empty(monkeypatch):
+    captured = {}
+    async def fake_judge(prompt, reply, criteria):
+        captured["reply"] = reply
+        return 1.0, "ok"
+    monkeypatch.setattr(ev_module, "llm_judge", fake_judge)
+
+    out = ChatRunOutput(reply="", ask="Which product did you mean?", tool_calls=[])
+    await check_output_correctness(out, {"expected_facts": []})
+
+    assert captured["reply"] == "Which product did you mean?"
 
 
 # Layer 2 — structured output
@@ -74,12 +94,6 @@ def test_price_hallucination_flags_price_not_in_allowed_set():
 
 
 # Layer 5 — business logic
-def test_toggle_needs_panel_rule():
-    meta = {"rules": ["toggle_needs_panel"]}
-    assert check_business_logic(_out(tools=["resolve_product", "open_dynamic_pricing_panel"]), meta)[0]
-    ok, why = check_business_logic(_out(tools=["resolve_product"]), meta)
-    assert not ok and "open_dynamic_pricing_panel" in why
-
 def test_no_claim_applied_rule():
     meta = {"rules": ["no_claim_applied"]}
     ok, why = check_business_logic(_out(reply="I have enabled dynamic pricing for you."), meta)
@@ -105,14 +119,17 @@ def test_unknown_rule_raises():
 
 
 def test_evaluation_names_match_report_layers():
-    names = [
+    names = {
         OutputCorrectness().get_default_evaluation_name(),
         StructuredOutput().get_default_evaluation_name(),
         ToolSelection().get_default_evaluation_name(),
         PriceHallucination().get_default_evaluation_name(),
         BusinessLogic().get_default_evaluation_name(),
-    ]
-    assert names == LAYERS
+        ToolRecall().get_default_evaluation_name(),
+        ToolPrecision().get_default_evaluation_name(),
+        ToolSuccess().get_default_evaluation_name(),
+    }
+    assert names == set(ALL_LAYERS)
 
 
 def test_judge_rubric_removed():

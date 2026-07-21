@@ -1,4 +1,4 @@
-from services.chatbot_svc.evals.report import LAYERS, build_report, render_markdown
+from services.chatbot_svc.evals.report import ALL_LAYERS, build_report, render_markdown
 
 
 def _case(name, assertions, duration=1.0, in_tok=100, out_tok=20, error=None):
@@ -18,7 +18,7 @@ def _case(name, assertions, duration=1.0, in_tok=100, out_tok=20, error=None):
 
 
 def _all_pass():
-    return {l: True for l in LAYERS}
+    return {l: True for l in ALL_LAYERS}
 
 
 def test_build_report_aggregates_layers_and_overall():
@@ -26,7 +26,7 @@ def test_build_report_aggregates_layers_and_overall():
     r = build_report(cases, model="groq:test")
     assert r["cases_total"] == 2
     assert r["layers"]["tool_selection"] == {"pass": 1, "fail": 1, "rate_pct": 50.0}
-    assert r["layers"]["output_correctness"]["rate_pct"] == 100.0
+    assert r["score_layers"]["output_correctness"]["avg"] == 1.0
     assert r["overall_pass_rate_pct"] == 50.0  # a case passes overall only if all layers pass
     assert r["model"] == "groq:test"
 
@@ -38,7 +38,7 @@ def test_build_report_cross_cutting_metrics():
     ]
     r = build_report(cases, model="m")
     assert r["tokens"] == {"input": 400, "output": 40}  # cost: see Logfire dashboard
-    assert r["latency_ms"]["p50"] <= r["latency_ms"]["p95"]
+    assert r["metrics"]["latency_ms"]["p50"] <= r["metrics"]["latency_ms"]["p95"]
     assert r["failures"] == {"exceptions": 0, "validation_errors": 0, "timeouts": 1}
     assert "llm_judge" not in r
 
@@ -54,5 +54,5 @@ def test_build_report_handles_zero_cases():
     r = build_report([], model="m")
     assert r["cases_total"] == 0
     assert r["overall_pass_rate_pct"] == 0.0
-    assert r["latency_ms"] == {"p50": 0, "p95": 0}
+    assert r["metrics"]["latency_ms"] == {"p50": 0, "p95": 0}
     render_markdown(r)  # must not raise

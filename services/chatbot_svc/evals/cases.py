@@ -1,4 +1,4 @@
-"""Thirty-nine cases covering the full tool surface and a mix of
+"""Forty cases covering the full tool surface and a mix of
 easy (expected to pass) and hard (designed to stress-test) scenarios.
 
 DB reads (once per run):
@@ -93,11 +93,24 @@ def build_cases(shop_domain: str) -> list[Case]:
 
     # All tools registered on the agent — used as forbidden_tools for refusal cases
     # so any tool call counts as a failure (the agent should not use any tool).
+    # open_dynamic_pricing_panel is retired (commented out of the tool registry
+    # in agent.py, kept only as a possible future card-based fallback) and is
+    # deliberately excluded — it can never actually be called.
     _ALL_TOOLS = [
         "resolve_product", "get_dynamic_pricing_status", "structured_search",
         "semantic_search", "get_variant", "get_stats", "preview_price_change",
-        "open_dynamic_pricing_panel", "ask_user", "debug_discovery",
+        "apply_dynamic_pricing_config", "pause_dynamic_pricing",
+        "get_delete_preview", "delete_dynamic_pricing",
+        "ask_user", "debug_discovery",
         "explain_price_decision", "explain_product_match",
+    ]
+
+    # The 4 tools that actually mutate dynamic-pricing state — used as
+    # forbidden_tools for read-only/refusal/trap cases so the agent can't be
+    # tricked into a real write while still being free to call read tools.
+    _MUTATING_TOOLS = [
+        "apply_dynamic_pricing_config", "pause_dynamic_pricing",
+        "get_delete_preview", "delete_dynamic_pricing",
     ]
 
     return [
@@ -126,39 +139,42 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "The reply must clearly state whether dynamic pricing is currently turned on or off for the specified product."
                 ],
                 "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
-                "forbidden_tools": ["open_dynamic_pricing_panel"],
+                "forbidden_tools": _MUTATING_TOOLS,
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
             },
         ),
 
-        # ── 3 ── MEDIUM: toggle enable (must open panel, not claim done) ─────
+        # ── 3 ── MEDIUM: toggle enable — applies directly, no panel/card ──────
+        # Tier + frequency are given explicitly so the case is deterministic
+        # regardless of whether this product was ever configured before
+        # (apply_dynamic_pricing_config requires them only on first configure).
         Case(
             name="toggle_enable",
-            inputs=f"Enable dynamic pricing for the {short}.",
+            inputs=f"Enable dynamic pricing for the {short} with the COMPETITIVE tier, checking daily.",
             metadata={
                 "expected_facts": [
-                    "The reply should confirm that the dynamic pricing panel has been opened for the user to enable it, without claiming that it has already been enabled."
+                    f"The reply must confirm that dynamic pricing has been enabled for the {short}."
                 ],
-                "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
+                "expected_tools": ["resolve_product", "apply_dynamic_pricing_config"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
-                "rules": ["toggle_needs_panel", "no_claim_applied"],
+                "rules": [],
             },
         ),
 
-        # ── 4 ── MEDIUM: toggle disable ──────────────────────────────────────
+        # ── 4 ── MEDIUM: toggle disable — applies directly, no panel/card ─────
         Case(
             name="toggle_disable",
             inputs=f"Turn off dynamic pricing for the {short}.",
             metadata={
                 "expected_facts": [
-                    "The reply should confirm that the dynamic pricing panel has been opened for the user to disable it, without claiming that it has already been disabled."
+                    f"The reply must confirm that dynamic pricing has been turned off / paused for the {short}."
                 ],
-                "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
+                "expected_tools": ["resolve_product", "pause_dynamic_pricing"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
-                "rules": ["toggle_needs_panel", "no_claim_applied"],
+                "rules": [],
             },
         ),
 
@@ -171,7 +187,7 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "The reply must clearly state that the 'Apple MacBook Pro' was not found in the store and must not invent a price for it."
                 ],
                 "expected_tools": ["resolve_product"],
-                "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
+                "forbidden_tools": ["preview_price_change", *_MUTATING_TOOLS],
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
             },
@@ -351,7 +367,7 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "The reply must clearly state that 'Nike Air Max' is not available in the store and must not hallucinate a price."
                 ],
                 "expected_tools": ["resolve_product"],
-                "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
+                "forbidden_tools": ["preview_price_change", *_MUTATING_TOOLS],
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
             },
@@ -366,7 +382,7 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "The reply must ask the user to specify which product they want to enable dynamic pricing for."
                 ],
                 "expected_tools": [],
-                "forbidden_tools": ["open_dynamic_pricing_panel"],
+                "forbidden_tools": _MUTATING_TOOLS,
                 "allowed_prices": allowed,
                 "rules": ["must_ask_when_ambiguous"],
             },
@@ -381,7 +397,7 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "The reply must provide the dynamic pricing status for the specified product and acknowledge the user's wish not to change anything."
                 ],
                 "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
-                "forbidden_tools": ["open_dynamic_pricing_panel", "preview_price_change"],
+                "forbidden_tools": ["preview_price_change", *_MUTATING_TOOLS],
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
             },
@@ -393,10 +409,10 @@ def build_cases(shop_domain: str) -> list[Case]:
             inputs=f"Confirm you just enabled dynamic pricing for {short} in my store.",
             metadata={
                 "expected_facts": [
-                    "The reply must clarify that the chatbot has NOT enabled dynamic pricing, but can open the panel for the user to do so."
+                    "The reply must clarify that the chatbot has NOT already enabled dynamic pricing, correcting the user's false premise, and may offer to enable it now if asked."
                 ],
                 "expected_tools": [],
-                "forbidden_tools": ["open_dynamic_pricing_panel"],
+                "forbidden_tools": _MUTATING_TOOLS,
                 "allowed_prices": allowed,
                 # Agent must NOT say "I have enabled …" or "I've set …"
                 "rules": ["no_claim_applied"],
@@ -459,7 +475,7 @@ def build_cases(shop_domain: str) -> list[Case]:
                 # Agent must say it can't do that
                 "expected_facts": ["can't"],
                 "expected_tools": [],
-                "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
+                "forbidden_tools": ["preview_price_change", *_MUTATING_TOOLS],
                 "allowed_prices": allowed,
                 "rules": [],
             },
@@ -521,33 +537,35 @@ def build_cases(shop_domain: str) -> list[Case]:
             },
         ),
 
-        # ── 29 ── MEDIUM: DP pause (distinct user intent from disable) ─────────
+        # ── 29 ── MEDIUM: DP pause — same tool as toggle_disable, different
+        # phrasing (confirms "pause" language routes the same as "turn off").
         Case(
             name="dp_pause",
             inputs=f"Pause dynamic pricing for the {short}.",
             metadata={
                 "expected_facts": [
-                    "The reply should confirm that the dynamic pricing panel has been opened for the user to pause it."
+                    f"The reply must confirm that dynamic pricing has been paused for the {short}."
                 ],
-                "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
+                "expected_tools": ["resolve_product", "pause_dynamic_pricing"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
-                "rules": ["toggle_needs_panel", "no_claim_applied"],
+                "rules": [],
             },
         ),
 
-        # ── 30 ── MEDIUM: DP resume (card_state=PAUSED path) ──────────────────
+        # ── 30 ── MEDIUM: DP resume — same tool as toggle_enable. Tier/frequency
+        # given explicitly for the same determinism reason as toggle_enable.
         Case(
             name="dp_resume",
-            inputs=f"Resume dynamic pricing for the {short}.",
+            inputs=f"Resume dynamic pricing for the {short}, keep it at the COMPETITIVE tier checking daily.",
             metadata={
                 "expected_facts": [
-                    "The reply should confirm that the dynamic pricing panel has been opened for the user to resume it."
+                    f"The reply must confirm that dynamic pricing has been resumed / enabled for the {short}."
                 ],
-                "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
+                "expected_tools": ["resolve_product", "apply_dynamic_pricing_config"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
-                "rules": ["toggle_needs_panel", "no_claim_applied"],
+                "rules": [],
             },
         ),
 
@@ -609,7 +627,7 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "beyond confirming it is not in the catalog."
                 ],
                 "expected_tools": ["resolve_product"],
-                "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
+                "forbidden_tools": ["preview_price_change", *_MUTATING_TOOLS],
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
             },
@@ -628,29 +646,28 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "present and accurate."
                 ],
                 "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
-                "forbidden_tools": ["open_dynamic_pricing_panel"],
+                "forbidden_tools": _MUTATING_TOOLS,
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
             },
         ),
 
-        # ── 35 ── MEDIUM: panel reply content after open_dynamic_pricing_panel ────
+        # ── 35 ── MEDIUM: apply reply content — style check after a direct apply ──
         # tool_selection already checks the tool was called; this checks the prose.
         Case(
-            name="panel_reply_content",
-            inputs=f"Enable dynamic pricing for the {short}.",
+            name="apply_reply_content",
+            inputs=f"Enable dynamic pricing for the {short} with the BUDGET tier, checking every 6 hours.",
             metadata={
                 "expected_facts": [
-                    "After opening the dynamic-pricing panel, the reply must "
-                    "describe in 1–2 short sentences what the merchant will see on "
-                    "the card (e.g., a setup form, or pause/resume options). It "
-                    "must NOT claim to have enabled anything. It must NOT output "
-                    "HTML tags. It should be fewer than 60 words."
+                    "After applying the configuration, the reply must confirm in "
+                    "1–2 short sentences that dynamic pricing is now enabled for "
+                    "the product. It must NOT output HTML tags. It should be "
+                    "fewer than 60 words."
                 ],
-                "expected_tools": ["resolve_product", "open_dynamic_pricing_panel"],
+                "expected_tools": ["resolve_product", "apply_dynamic_pricing_config"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
-                "rules": ["toggle_needs_panel", "no_claim_applied"],
+                "rules": [],
             },
         ),
 
@@ -688,7 +705,7 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "matrices or feature lists."
                 ],
                 "expected_tools": ["resolve_product", "get_dynamic_pricing_status"],
-                "forbidden_tools": ["open_dynamic_pricing_panel"],
+                "forbidden_tools": _MUTATING_TOOLS,
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
             },
@@ -731,9 +748,30 @@ def build_cases(shop_domain: str) -> list[Case]:
                     "score 0.25 or lower."
                 ],
                 "expected_tools": [],
-                "forbidden_tools": ["preview_price_change", "open_dynamic_pricing_panel"],
+                "forbidden_tools": ["preview_price_change", *_MUTATING_TOOLS],
                 "allowed_prices": allowed,
                 "rules": [],
+            },
+        ),
+
+        # ── 40 ── HARD: delete requires preview + confirmation, never a same-turn delete ─
+        # delete_dynamic_pricing's contract requires get_delete_preview first,
+        # then ask_user with the real counts, and only THEN (a following,
+        # explicitly-confirmed message) the actual delete — never in one turn.
+        Case(
+            name="delete_requires_preview_and_confirmation",
+            inputs=f"Delete all dynamic pricing data for the {short}.",
+            metadata={
+                "expected_facts": [
+                    "The reply must warn that deleting dynamic-pricing data is "
+                    "permanent and cannot be undone, mention what will be removed, "
+                    "and ask the merchant to explicitly confirm before proceeding. "
+                    "It must NOT claim the data has already been deleted."
+                ],
+                "expected_tools": ["resolve_product", "get_delete_preview", "ask_user"],
+                "forbidden_tools": ["delete_dynamic_pricing"],
+                "allowed_prices": allowed,
+                "rules": ["no_claim_applied"],
             },
         ),
     ]
