@@ -116,11 +116,12 @@ def check_idle_configs():
 
 
 def _tick_queued_discovery_jobs() -> None:
-    """Pick up DiscoveryJob rows the UI inserted as QUEUED and dispatch them.
+    """Pick up DiscoveryJob rows (UI/pane-inserted) as QUEUED and dispatch
+    them with the product's own configured result count.
 
-    Discovery is now merchant-driven (one search per click) rather than
-    auto-triggered on dynamic-pricing toggle. The UI writes a row with the
-    refined query + result count; this tick fans them out to the worker.
+    Discovery is merchant-driven (one search per click, or one on resume
+    when the pane's search settings changed) rather than auto-triggered on
+    dynamic-pricing toggle. This tick fans queued jobs out to the worker.
     """
     with get_db() as session:
         # Atomic claim: flip QUEUED → RUNNING in the same statement so an
@@ -142,14 +143,27 @@ def _tick_queued_discovery_jobs() -> None:
             """),
         ).all()
 
+        # Look up each claimed job's product's own configured discoveryNumResults
+        # — previously this was never threaded through and the worker silently
+        # used its hardcoded default of 10 regardless of what was configured.
+        num_results_by_product = {}
+        product_ids = list({r.shopifyProductId for r in rows})
+        if product_ids:
+            count_rows = session.execute(
+                text('SELECT id, "discoveryNumResults" FROM "ShopifyProduct" WHERE id = ANY(:ids)'),
+                {"ids": product_ids},
+            ).all()
+            num_results_by_product = {cr.id: cr.discoveryNumResults for cr in count_rows}
+
     for r in rows:
+        num_results = num_results_by_product.get(r.shopifyProductId) or 10
         try:
             app.send_task(
                 "discovery.search_products",
-                args=[r.shopifyProductId, r.query],
+                args=[r.shopifyProductId, r.query, num_results],
                 queue="discovery_queue",
             )
-            logger.info("discovery_job_enqueued", discovery_job_id=r.id, query=r.query)
+            logger.info("discovery_job_enqueued", discovery_job_id=r.id, query=r.query, num_results=num_results)
         except Exception:
             logger.exception("discovery_job_dispatch_failed", discovery_job_id=r.id)
 
