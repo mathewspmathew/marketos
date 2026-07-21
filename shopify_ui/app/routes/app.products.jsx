@@ -776,11 +776,11 @@ export default function HomePage() {
                                 type="number"
                                 min="1"
                                 max="50"
-                                disabled={product.dynamicPricingConfigured}
+                                disabled={product.dynamicPricingConfigured && isOn}
                                 value={String(local.discoveryNumResults || getCurrentDefaults().discoveryNumResults || "")}
                                 helpText={
-                                  product.dynamicPricingConfigured
-                                    ? "Locked after first setup — scrape scope can't change once discovery has run."
+                                  product.dynamicPricingConfigured && isOn
+                                    ? "Locked while dynamic pricing is on — pause to change."
                                     : `1–50 products per discovery run. Shop default: ${getCurrentDefaults().discoveryNumResults}`
                                 }
                                 onInput={(e) =>
@@ -795,11 +795,11 @@ export default function HomePage() {
                                 type="number"
                                 min="1"
                                 max="50"
-                                disabled={product.dynamicPricingConfigured}
+                                disabled={product.dynamicPricingConfigured && isOn}
                                 value={String(local.listingExpansionCap || getCurrentDefaults().listingExpansionCap || "")}
                                 helpText={
-                                  product.dynamicPricingConfigured
-                                    ? "Locked after first setup — scrape scope can't change once discovery has run."
+                                  product.dynamicPricingConfigured && isOn
+                                    ? "Locked while dynamic pricing is on — pause to change."
                                     : `When a discovered URL is a listing page, expand this many products (1–50). Shop default: ${getCurrentDefaults().listingExpansionCap}`
                                 }
                                 onInput={(e) =>

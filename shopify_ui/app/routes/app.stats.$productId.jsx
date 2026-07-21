@@ -294,9 +294,8 @@ export default function ProductStatsPage() {
             </s-text>
             <s-text tone="subdued">
               {" "}You have {waiting.have} CONFIRMED/LIKELY matches, need {waiting.need}.{" "}
-              <Link to={`/app/discover/${encodeURIComponent(product.id)}`}>
-                Find more competitors →
-              </Link>
+              Not enough competitors? Pause this product on the Products page, adjust the
+              competitor search settings, then Resume.
             </s-text>
           </s-banner>
         </s-section>
