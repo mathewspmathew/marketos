@@ -2,6 +2,7 @@ import uuid
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import text
 
 from services.common.db import get_db
 from services.common import models
@@ -57,6 +58,18 @@ def test_tick_falls_back_to_10_when_product_has_no_configured_count(monkeypatch)
         s.flush()
         s.add(models.ShopifyProduct(id=product_id, shopDomain=shop, title="No Count Configured"))
         s.add(models.DiscoveryJob(id=job_id, shopDomain=shop, shopifyProductId=product_id, status="QUEUED", query="usb cable"))
+
+    # SQLAlchemy's Column(..., default=10) fires client-side on INSERT whenever
+    # the field is omitted, so the row above was already written with
+    # discoveryNumResults=10 rather than NULL. Force it to NULL at the DB level
+    # (matching the real, nullable-with-no-default Postgres column) so this test
+    # genuinely exercises the fallback branch instead of just re-reading a 10
+    # that was already there.
+    with get_db() as s:
+        s.execute(
+            text('UPDATE "ShopifyProduct" SET "discoveryNumResults" = NULL WHERE id = :pid'),
+            {"pid": product_id},
+        )
 
     send = MagicMock()
     monkeypatch.setattr(celery_beat.app, "send_task", send)
