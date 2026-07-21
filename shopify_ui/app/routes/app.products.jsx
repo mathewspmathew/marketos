@@ -403,8 +403,10 @@ export default function HomePage() {
         productId,
         searchQueryOverride: local.searchQueryOverride ?? "",
         pricingTier:         local.pricingTier ?? "COMPETITIVE",
-        minPriceOverride:    local.minPriceOverride ?? "",
-        maxPriceOverride:    local.maxPriceOverride ?? "",
+        // A blank bounds field only happens if the merchant cleared the
+        // auto-calculated value — fall back to it rather than saving null.
+        minPriceOverride:    local.minPriceOverride || (local.calculatedMinPrice != null ? local.calculatedMinPrice.toFixed(2) : ""),
+        maxPriceOverride:    local.maxPriceOverride || (local.calculatedMaxPrice != null ? local.calculatedMaxPrice.toFixed(2) : ""),
         // Persist what the pane displays: the product's own frequency, else
         // the shop default the fields are showing. "never" passes through.
         frequencyInterval:   String(local.frequencyInterval || getCurrentDefaults().frequencyInterval || ""),
