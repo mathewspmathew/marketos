@@ -20,15 +20,12 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Literal, Optional
 
 import structlog
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from services.chatbot_svc.schemas import QueryCandidate
-from services.chatbot_svc.tools import query_studio as t_query_studio
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps
@@ -60,15 +57,6 @@ class ChatRequest(BaseModel):
     user_id: str | None = None
     session_id: str | None = None
     message: str
-
-
-class QueryStudioRequest(BaseModel):
-    shop_domain: str
-    product_id: str
-    focus: str = ""
-    mode: Literal["propose", "refine"] = "propose"
-    prior: Optional[list[QueryCandidate]] = None
-    instruction: Optional[str] = None
 
 
 class ApplyCallback(BaseModel):
@@ -230,27 +218,6 @@ async def chat(req: ChatRequest):
             _clear_request_context()
 
     return EventSourceResponse(event_stream())
-
-
-@app.post("/query-studio")
-async def query_studio(req: QueryStudioRequest):
-    """Stateless Query Studio turn: propose 3 candidate competitor-search queries,
-    or refine the prior ones per an instruction. Shop-scoped via the engine."""
-    try:
-        if req.mode == "refine":
-            cands = t_query_studio.refine_queries(
-                req.shop_domain, req.product_id, req.focus,
-                req.prior or [], req.instruction or "",
-            )
-        else:
-            cands = t_query_studio.propose_queries(req.shop_domain, req.product_id, req.focus)
-        return {"candidates": [c.model_dump() for c in cands]}
-    except Exception as exc:
-        logger.exception(
-            "query_studio_request_failed",
-            shop_domain=req.shop_domain, product_id=req.product_id,
-        )
-        raise HTTPException(status_code=500, detail="Query Studio request failed.") from exc
 
 
 @app.post("/apply-callback")

@@ -134,13 +134,6 @@ class EnableContext(BaseModel):
     listing_expansion_cap: int = 5
 
 
-class QueryCandidate(BaseModel):
-    """One proposed competitor-search query with a rough self-confidence."""
-    query: str
-    confidence: int = Field(ge=0, le=10, description="0-10 rough belief it surfaces real competitors")
-    reason: str
-
-
 class PreviewSummary(BaseModel):
     preview_id: str
     kind: Literal["price_change", "dynamic_pricing_toggle"]

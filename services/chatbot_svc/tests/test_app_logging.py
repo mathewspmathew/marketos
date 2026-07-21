@@ -85,27 +85,3 @@ def test_chat_endpoint_logs_exception_before_responding(monkeypatch, capsys):
     # including this failure log emitted deep inside the except block.
     assert matches[0]["shop_domain"] == "shop1.myshopify.com"
     assert matches[0]["session_id"] == "sess-test-123"
-
-
-def test_query_studio_unexpected_exception_returns_500_and_logs(monkeypatch, capsys):
-    # Same rebind reason as the test above — setup_logging() must be called
-    # again inside this test body so its StreamHandler binds to THIS test's
-    # capsys-patched stdout, not the real stdout bound at module-import time.
-    logging_config.setup_logging()
-
-    def _boom(*args, **kwargs):
-        raise ValueError("simulated query studio failure")
-
-    monkeypatch.setattr(app_module.t_query_studio, "propose_queries", _boom)
-
-    client = TestClient(app_module.app)
-    resp = client.post(
-        "/query-studio",
-        json={"shop_domain": "shop1.myshopify.com", "product_id": "p1", "focus": "", "mode": "propose"},
-    )
-    assert resp.status_code == 500
-
-    out = capsys.readouterr().out.strip().splitlines()
-    matches = [json.loads(l) for l in out if json.loads(l).get("event") == "query_studio_request_failed"]
-    assert len(matches) == 1
-    assert matches[0]["level"] == "error"

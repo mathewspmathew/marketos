@@ -1,19 +1,11 @@
 import PropTypes from "prop-types";
-import DynamicPricingCard from "./DynamicPricingCard";
 
+// dynamic_pricing_toggle previews can't occur — the only tool that would
+// create one, open_dynamic_pricing_panel, is unregistered/dead (see
+// services/chatbot_svc/tools/panel.py). The live chatbot applies dynamic-
+// pricing changes directly (apply_dynamic_pricing_config et al.), no card.
+// This component only ever renders price-change previews.
 export default function PreviewCard({ preview, onApply, onCancel, busy }) {
-  if (preview.kind === "dynamic_pricing_toggle") {
-    return (
-      <DynamicPricingCard
-        preview={preview}
-        onApply={onApply}
-        onCancel={onCancel}
-        busy={busy}
-      />
-    );
-  }
-  // Dynamic-pricing toggles are handled by DynamicPricingCard above; this path
-  // renders price-change previews only.
   const s = preview.summary || {};
   return (
     <s-section>
