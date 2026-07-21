@@ -1,8 +1,19 @@
+/**
+ * app.history.$id.jsx — per-product price/competitor history timeline.
+ * Charts merchant price decisions and competitor observations over the
+ * trailing 30 days from raw DB reads (display-only aggregation). Match
+ * lifecycle events (discovered/confirmed/rejected) come from Python's
+ * product_stats.get_match_activity — the single source of truth also
+ * used by app.stats.$productId.jsx, so both views agree on what an
+ * "event" is.
+ */
 import { useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
 // 30-day window, capped to keep the chart cheap.
 const WINDOW_DAYS = 30;
@@ -78,51 +89,20 @@ export const loader = async ({ request, params }) => {
     });
   }
 
-  // Match activity for this product
-  const matchActivity = await db.productLevelMatch.findMany({
-    where: {
-      shopDomain,
-      shopifyProductId: productId,
-      reviewStatus: { not: "REJECTED" },
-    },
-    include: {
-      ScrapedProduct: { select: { title: true, domain: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  // Convert matches to activity events
-  const matchEvents = matchActivity.flatMap((m) => {
-    const events = [];
-    if (m.createdAt) {
-      events.push({
-        matchId: m.id,
-        type: "created",
-        timestamp: m.createdAt,
-        description: `New competitor discovered: ${m.ScrapedProduct?.title} (${m.ScrapedProduct?.domain})`,
-      });
-    }
-    if (m.reviewStatus === "CONFIRMED" && m.reviewedAt) {
-      events.push({
-        matchId: m.id,
-        type: "confirmed",
-        timestamp: m.reviewedAt,
-        description: `Confirmed match: ${m.ScrapedProduct?.title}`,
-      });
-    }
-    if (m.reviewStatus === "REJECTED" && m.reviewedAt) {
-      events.push({
-        matchId: m.id,
-        type: "rejected",
-        timestamp: m.reviewedAt,
-        description: `Rejected match: ${m.ScrapedProduct?.title}`,
-      });
-    }
-    return events;
-  });
-
-  // Sort all events by timestamp desc
-  matchEvents.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  // Match activity events (created/confirmed/rejected) are synthesized by
+  // product_stats.get_match_activity — Python-owned so it never drifts from
+  // what app.stats.$productId.jsx's decision history considers an "event".
+  let matchEvents = [];
+  try {
+    const resp = await fetch(
+      `${PYTHON_API_URL}/internal/dynamic-pricing/match-activity` +
+      `?shop_domain=${encodeURIComponent(shopDomain)}&product_id=${encodeURIComponent(productId)}&days=${WINDOW_DAYS}`,
+    );
+    const json = await resp.json();
+    if (json.ok) matchEvents = json.events;
+  } catch (err) {
+    console.error("[history] Failed to fetch match activity:", err);
+  }
 
   return {
     product: { id: product.id, title: product.title, imageUrl: product.imageUrl },

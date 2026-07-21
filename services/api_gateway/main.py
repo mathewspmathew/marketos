@@ -7,7 +7,7 @@ Not exposed publicly — only reachable within the Docker network.
 Run: uvicorn services.api_gateway.main:app --host 0.0.0.0 --port 8000
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import structlog
 from dotenv import load_dotenv
@@ -25,6 +25,7 @@ from services.common.db import get_db
 from services.common.frequency import next_run_at
 from services.common.models import ProductUrl, ShopifyProduct
 from services.pricing_svc import product_stats
+from services.pricing_svc.decide import get_skip_reason_taxonomy
 from services.pricing_svc.revert import RevertError, revert_price_decision
 from services.pricing_svc.match_review import MatchReviewError, confirm_match, reject_match
 from services.scraper_svc.semantics import claim_and_enqueue_semantics
@@ -105,19 +106,71 @@ def backfill_shopify_semantics():
     return {"queued": len(claimed), "product_ids": claimed}
 
 
+# Ported from app._index.jsx's auto-kick and app.products.jsx's Refresh-button
+# debounce, which each did their own non-atomic read-then-write on ShopifyUser
+# and disagreed on the rule (the auto-kick had no timeout escape hatch; the
+# button did). This single atomic UPDATE is now the only place that decides
+# whether a sync may start, so two near-simultaneous callers can't both win.
+_CLAIM_SYNC_SLOT_SQL = text("""
+    UPDATE "ShopifyUser"
+    SET "productSyncState" = 'SYNCING', "productSyncStartedAt" = NOW()
+    WHERE "shopDomain" = :shop
+      AND (
+        "productSyncState" IS DISTINCT FROM 'SYNCING'
+        OR "productSyncStartedAt" IS NULL
+        OR NOW() - "productSyncStartedAt" > INTERVAL '10 minutes'
+      )
+    RETURNING "shopDomain"
+""")
+
+
 @app.post("/internal/shopify/sync-products")
-def shopify_sync_products(shop_domain: str):
-    """Triggered by the products page (Refresh button / loader auto-kick).
-    Enqueues a durable full product pull from Shopify into Postgres."""
+def shopify_sync_products(
+    shop_domain: str,
+    only_if_never_synced: bool = False,
+    skip_if_error: bool = False,
+):
+    """Triggered by the products page (Refresh/Retry button) and the homepage
+    loader's fresh-install auto-kick. Atomically claims a sync slot and
+    enqueues a durable full product pull from Shopify into Postgres — or
+    no-ops if a sync is already in flight (or, per the caller's flags, if the
+    shop has already synced before / is in a persistent ERROR state)."""
     if not shop_domain:
         raise HTTPException(status_code=422, detail="shop_domain is required")
 
     try:
+        with get_db() as session:
+            if only_if_never_synced:
+                row = session.execute(
+                    text(
+                        'SELECT "productSyncedAt", '
+                        '(SELECT COUNT(*) FROM "ShopifyProduct" WHERE "shopDomain" = :shop) AS product_count '
+                        'FROM "ShopifyUser" WHERE "shopDomain" = :shop'
+                    ),
+                    {"shop": shop_domain},
+                ).first()
+                if row and row.productSyncedAt is not None and row.product_count > 0:
+                    return {"queued": False, "reason": "already_synced", "shop_domain": shop_domain}
+
+            if skip_if_error:
+                state_row = session.execute(
+                    text('SELECT "productSyncState" FROM "ShopifyUser" WHERE "shopDomain" = :shop'),
+                    {"shop": shop_domain},
+                ).first()
+                if state_row and state_row.productSyncState == "ERROR":
+                    return {"queued": False, "reason": "error_awaits_manual_retry", "shop_domain": shop_domain}
+
+            claimed = session.execute(_CLAIM_SYNC_SLOT_SQL, {"shop": shop_domain}).first()
+            if not claimed:
+                return {"queued": False, "reason": "already_syncing", "shop_domain": shop_domain}
+
         celery_app.send_task(
             "shopify_sync.pull_products",
             args=[shop_domain],
             queue="shopify_sync_queue",
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("pull_products_dispatch_failed", shop_domain=shop_domain)
         raise HTTPException(status_code=503, detail="failed to queue product sync")
@@ -292,6 +345,29 @@ async def dynamic_pricing_products_stats_list(shop_domain: str):
     except Exception:
         logger.exception("dynamic_pricing_products_stats_list_failed", shop_domain=shop_domain)
         return {"ok": False, "error": "Something went wrong loading the stats list."}
+
+
+@app.get("/internal/dynamic-pricing/match-activity")
+async def dynamic_pricing_match_activity(shop_domain: str, product_id: str, days: int = 30):
+    try:
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        with get_db() as s:
+            return {"ok": True, "events": product_stats.get_match_activity(s, shop_domain, product_id, since)}
+    except Exception:
+        logger.exception(
+            "dynamic_pricing_match_activity_failed",
+            shop_domain=shop_domain, product_id=product_id,
+        )
+        return {"ok": False, "error": "Something went wrong loading match activity."}
+
+
+@app.get("/internal/dynamic-pricing/skip-reasons")
+async def dynamic_pricing_skip_reasons():
+    """The full skipReason taxonomy decide.py can write, with whether each
+    code means nothing shipped and merchant-facing copy. Fetched once per
+    page load by the pricing catalog so it never re-derives decide.py's
+    codes locally."""
+    return {"ok": True, "reasons": get_skip_reason_taxonomy()}
 
 
 @app.post("/internal/dynamic-pricing/delete")

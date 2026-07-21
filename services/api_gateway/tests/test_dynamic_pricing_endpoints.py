@@ -41,6 +41,21 @@ def _blank_config(**overrides):
     return defaults
 
 
+def test_skip_reasons_endpoint_returns_full_taxonomy():
+    resp = _client.get("/internal/dynamic-pricing/skip-reasons")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    reasons = body["reasons"]
+    assert set(reasons) == {
+        "below_min_competitors", "no_change", "clamped_per_round", "clamped_lifetime_cap",
+    }
+    assert reasons["below_min_competitors"]["blocked"] is True
+    assert reasons["clamped_per_round"]["blocked"] is False
+    for entry in reasons.values():
+        assert "label" in entry
+
+
 def test_apply_endpoint_success(seeded_product):
     shop, pid = seeded_product
     r = _client.post("/internal/dynamic-pricing/apply", json={

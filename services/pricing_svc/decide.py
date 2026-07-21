@@ -59,6 +59,38 @@ from services.common.db import get_db
 
 logger = structlog.get_logger(__name__)
 
+# Every skipReason this module writes, with whether it means nothing shipped
+# (vs. clamped_* which still applied a capped price) and merchant-facing copy.
+# Single source of truth — see get_skip_reason_taxonomy(); the frontend fetches
+# this instead of re-deriving it so it can't drift from the codes above.
+SKIP_REASON_TAXONOMY = {
+    "below_min_competitors": {
+        "blocked": True,
+        "label": "Not enough tracked competitors",
+        "hint": "Needs more confirmed matches, or check Auto rescrape in Settings.",
+    },
+    "no_change": {
+        "blocked": True,
+        "label": "No change needed",
+        "hint": "Computed price already matches current.",
+    },
+    "clamped_per_round": {
+        "blocked": False,
+        "label": "Change capped this cycle",
+        "hint": "Price moved, but limited by your max-change-per-update setting.",
+    },
+    "clamped_lifetime_cap": {
+        "blocked": False,
+        "label": "Capped at price bounds",
+        "hint": "Price moved, but limited by your min/max price band.",
+    },
+}
+
+
+def get_skip_reason_taxonomy() -> dict:
+    return SKIP_REASON_TAXONOMY
+
+
 # Note: MIN_CHANGE_PCT and ABS_MIN_FRESHNESS are now loaded from ShopSettings
 # minChangePctThreshold and minFreshnessHours respectively
 

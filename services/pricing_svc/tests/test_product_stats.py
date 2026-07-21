@@ -2,14 +2,16 @@
 so browser and chatbot clients see identical numbers — see
 test_decide_confirmed_likely_gate.py for the gate this reuses."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 
 from services.common.db import get_db
 from services.common import models
-from services.pricing_svc.product_stats import _clamp_explanation, get_product_stats, list_product_stats
+from services.pricing_svc.product_stats import (
+    _clamp_explanation, get_match_activity, get_product_stats, list_product_stats,
+)
 
 
 def test_clamp_explanation_per_round():
@@ -184,3 +186,35 @@ def test_list_product_stats_excludes_products_without_decisions(seeded_shop):
     finally:
         with get_db() as s:
             s.query(models.ShopifyProduct).filter(models.ShopifyProduct.id == other_product_id).delete(synchronize_session=False)
+
+
+def test_get_match_activity_includes_created_confirmed_and_rejected(seeded_shop):
+    shop, product_id, _variant_id = seeded_shop
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=1)
+
+    with get_db() as s:
+        scraped_confirmed = str(uuid.uuid4())
+        scraped_rejected = str(uuid.uuid4())
+        s.add(models.ScrapedProduct(id=scraped_confirmed, shopDomain=shop, domain="confirmed.example.com", title="Confirmed Competitor"))
+        s.add(models.ScrapedProduct(id=scraped_rejected, shopDomain=shop, domain="rejected.example.com", title="Rejected Competitor"))
+        s.flush()
+        s.add(models.ProductLevelMatch(
+            id=str(uuid.uuid4()), shopDomain=shop, shopifyProductId=product_id,
+            scrapedProductId=scraped_confirmed, confidence=0.9, confidenceTier="CONFIRMED",
+            reviewStatus="CONFIRMED", createdAt=now, reviewedAt=now, updatedAt=now,
+        ))
+        s.add(models.ProductLevelMatch(
+            id=str(uuid.uuid4()), shopDomain=shop, shopifyProductId=product_id,
+            scrapedProductId=scraped_rejected, confidence=0.7, confidenceTier="LIKELY",
+            reviewStatus="REJECTED", createdAt=now, reviewedAt=now, updatedAt=now,
+        ))
+
+    with get_db() as s:
+        events = get_match_activity(s, shop, product_id, since)
+
+    types = {e["type"] for e in events}
+    # Each match yields both a "created" event and a review-status event.
+    assert types == {"created", "confirmed", "rejected"}
+    rejected = [e for e in events if e["type"] == "rejected"]
+    assert rejected and "Rejected Competitor" in rejected[0]["description"]

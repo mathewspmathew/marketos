@@ -155,6 +155,8 @@ class ShopifyVariant(Base):
     isInStock      = Column("isInStock",      Boolean, default=True)
     stockQuantity  = Column("stockQuantity",  Integer)
     semanticText   = Column("semanticText",   Text)
+    cost               = Column("cost",               Numeric(10, 2))
+    inventoryQuantity  = Column("inventoryQuantity",  Integer)
     updatedAt      = Column("updatedAt",      DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
     product        = relationship("ShopifyProduct",  back_populates="variants")
@@ -345,6 +347,7 @@ class ProductUrl(Base):
 
 class ProductEmbedding(Base):
     __tablename__ = "ProductEmbedding"
+    # vector columns (vectorText, vectorImg) omitted — use raw SQL for pgvector writes
 
     id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     shopDomain     = Column("shopDomain",     String, ForeignKey("ShopifyUser.shopDomain"), nullable=False)
@@ -410,6 +413,8 @@ class ProductLevelMatch(Base):
     scrapedProductId = Column("scrapedProductId", String, ForeignKey("ScrapedProduct.id", ondelete="CASCADE"), nullable=False)
     confidence       = Column("confidence",       Numeric(4, 3), nullable=False, default=0)
     confidenceTier   = Column("confidenceTier",   _match_confidence_tier, nullable=False)
+    source           = Column("source",           String, nullable=False, default="DISCOVERY")
+    createdAt        = Column("createdAt",        DateTime(timezone=True), nullable=False, default=func.now())
     reviewedAt       = Column("reviewedAt",       DateTime(timezone=True), nullable=True)
     reviewStatus     = Column("reviewStatus",     _match_review_status, nullable=False, default="PENDING")
     updatedAt        = Column("updatedAt",        DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())

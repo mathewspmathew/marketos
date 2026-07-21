@@ -17,27 +17,17 @@ export const loader = async ({ request }) => {
     create: { shopDomain },
   });
 
-  // Non-blocking auto-kick: enqueue a background pull if the DB was never
-  // synced (fresh install / stale). Never await it — the loader is read-only.
-  // ERROR is excluded so a persistent failure (e.g. expired offline token)
-  // doesn't re-enqueue on every load — the Refresh/Retry button owns recovery.
+  // Non-blocking auto-kick: ask Python to claim a sync slot if the shop was
+  // never synced (fresh install / stale). Never await it — the loader is
+  // read-only. Python owns the atomic claim + the ERROR exclusion (a
+  // persistent failure shouldn't re-enqueue on every load — the
+  // Refresh/Retry button on the Products page owns recovery from ERROR).
   const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
-  const user = await db.shopifyUser.findUnique({ where: { shopDomain } });
-  const count = await db.shopifyProduct.count({ where: { shopDomain } });
-  if (
-    (count === 0 || user?.productSyncedAt == null) &&
-    user?.productSyncState !== "SYNCING" &&
-    user?.productSyncState !== "ERROR"
-  ) {
-    await db.shopifyUser.update({
-      where: { shopDomain },
-      data: { productSyncState: "SYNCING", productSyncStartedAt: new Date() },
-    });
-    void fetch(
-      `${PYTHON_API_URL}/internal/shopify/sync-products?shop_domain=${encodeURIComponent(shopDomain)}`,
-      { method: "POST" },
-    ).catch(() => {});
-  }
+  void fetch(
+    `${PYTHON_API_URL}/internal/shopify/sync-products` +
+    `?shop_domain=${encodeURIComponent(shopDomain)}&only_if_never_synced=true&skip_if_error=true`,
+    { method: "POST" },
+  ).catch(() => {});
 
   return {};
 };

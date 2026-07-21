@@ -45,6 +45,10 @@ def preview_price_change(shop_domain: str, session_id: str,
         "revenueDeltaEst": (
             sum(np - op for np, op in zip(new_prices, old_prices)) if old_prices else 0
         ),
+        # Frozen per-variant new prices, so the apply step (JS) reads the price
+        # this preview actually showed the merchant instead of recomputing it
+        # (JS Math.round vs Python round() disagree at .5 boundaries).
+        "newPriceByVariant": dict(zip(variant_ids, new_prices)),
     }
     preview_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc)

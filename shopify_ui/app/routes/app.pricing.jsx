@@ -1,3 +1,11 @@
+/**
+ * app.pricing.jsx — pricing catalog: every variant with filters (live/
+ * eligible/active/blocked/paused/all), price-compare strip, and a
+ * competitor panel. The skip-reason taxonomy (what "blocked" means, and
+ * its merchant-facing explanation) is fetched from
+ * services/pricing_svc/decide.py via /internal/dynamic-pricing/skip-reasons
+ * — this route classifies rows using that data, it doesn't own it.
+ */
 /* eslint-disable react/prop-types */
 import { useFetcher, useLoaderData, useRouteError, Link, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -20,6 +28,18 @@ export const loader = async ({ request }) => {
   const shop = session.shop;
   const url = new URL(request.url);
   const filter = url.searchParams.get("filter") || "live";
+
+  // Skip-reason taxonomy is owned by decide.py (services/pricing_svc/decide.py's
+  // SKIP_REASON_TAXONOMY) — fetched once per page load so this route never
+  // re-derives what a skipReason code means or which codes count as "blocked".
+  let skipReasons = {};
+  try {
+    const resp = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/skip-reasons`);
+    const json = await resp.json();
+    if (json.ok) skipReasons = json.reasons;
+  } catch (err) {
+    console.error("[pricing] Failed to fetch skip-reason taxonomy:", err);
+  }
 
   // All variants for this shop, plus product context.
   const variants = await db.shopifyVariant.findMany({
@@ -103,6 +123,9 @@ export const loader = async ({ request }) => {
         changePct:     lastDec.changePct != null ? Number(lastDec.changePct) : null,
         refPrice:      lastDec.refPrice != null ? Number(lastDec.refPrice) : null,
         formulaTarget: lastDec.formulaTarget != null ? Number(lastDec.formulaTarget) : null,
+        blockInfo:     lastDec.skipReason
+          ? (skipReasons[lastDec.skipReason] ?? { blocked: true, label: lastDec.skipReason, hint: null })
+          : null,
       } : null,
       lastChange: lastApplied ? {
         appliedAt:  lastApplied.appliedAt,
@@ -136,11 +159,9 @@ export const loader = async ({ request }) => {
     };
   });
 
-  // Only these two skipReason values mean nothing actually shipped —
-  // clamped_per_round/clamped_lifetime_cap decisions still applied a
-  // (capped) price, so they don't count as "blocked".
-  const NOTHING_SHIPPED = new Set(["below_min_competitors", "no_change"]);
-  const isBlocked = (r) => NOTHING_SHIPPED.has(r.lastDecision?.skipReason);
+  // "Blocked" (nothing shipped, vs. clamped_* which still applied a capped
+  // price) comes from decide.py's taxonomy via blockInfo, not re-derived here.
+  const isBlocked = (r) => r.lastDecision?.blockInfo?.blocked === true;
   const isLive = (r) => r.dynamicPricingEnabled && r.hasConfirmed;
   const filtered = rows.filter((r) => {
     if (filter === "live")     return isLive(r);
@@ -246,20 +267,6 @@ export default function PricingCatalog() {
   );
 }
 
-// Friendly explanations for the engine's internal skip codes. These are
-// what the merchant sees in the row — the raw skipReason string is kept
-// in the decision row for debugging.
-const BLOCK_REASONS = {
-  below_min_competitors: { label: "Not enough tracked competitors",  hint: "Needs more confirmed matches, or check Auto rescrape in Settings." },
-  no_change:              { label: "No change needed",                hint: "Computed price already matches current." },
-  clamped_per_round:      { label: "Change capped this cycle",        hint: "Price moved, but limited by your max-change-per-update setting." },
-  clamped_lifetime_cap:   { label: "Capped at price bounds",          hint: "Price moved, but limited by your min/max price band." },
-};
-
-function describeBlock(code) {
-  return BLOCK_REASONS[code] || { label: code, hint: null };
-}
-
 // Compact price comparison: Rule | ML | Final. The "Final" is what would
 // (or did) ship to Shopify; the others are shown side-by-side so the
 // merchant can see where each input landed.
@@ -294,7 +301,7 @@ function VariantRow({ row }) {
   const busy = fetcher.state !== "idle";
   const decision = row.lastDecision;
   const change   = row.lastChange;
-  const block    = decision?.skipReason ? describeBlock(decision.skipReason) : null;
+  const block    = decision?.blockInfo ?? null;
 
   return (
     <s-section>

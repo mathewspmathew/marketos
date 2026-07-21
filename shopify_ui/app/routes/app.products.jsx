@@ -1,3 +1,12 @@
+/**
+ * app.products.jsx — Dynamic Pricing product catalog: list, search/filter,
+ * and per-product config panel (search query, discovery settings, pricing
+ * tier, price bounds, rescrape frequency), plus the manual product-sync
+ * trigger. calculateMinMaxPrices() is a deliberate exception to "compute
+ * bounds in Python": it's a live per-keystroke preview as the merchant
+ * edits the pricing tier, not the authoritative clamp — decide.py still
+ * enforces the real lifetime-cap bound server-side at pricing time.
+ */
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { authenticate } from "../shopify.server";
@@ -104,22 +113,13 @@ export const action = async ({ request }) => {
   const shopDomain = session.shop;
 
   if (intent === "syncProducts") {
-    const user = await db.shopifyUser.findUnique({ where: { shopDomain } });
-
-    // Guard against double-trigger: if a sync started < 10 min ago, no-op.
-    const startedAt = user?.productSyncStartedAt?.getTime() ?? 0;
-    const recentlyStarted = user?.productSyncState === "SYNCING"
-      && Date.now() - startedAt < 10 * 60 * 1000;
-    if (!recentlyStarted) {
-      await db.shopifyUser.update({
-        where: { shopDomain },
-        data: { productSyncState: "SYNCING", productSyncStartedAt: new Date() },
-      });
-      void fetch(
-        `${PYTHON_API_URL}/internal/shopify/sync-products?shop_domain=${encodeURIComponent(shopDomain)}`,
-        { method: "POST" },
-      ).catch(() => {});
-    }
+    // Python atomically claims the sync slot (or no-ops if one's already in
+    // flight) and enqueues the pull — no local read/write here, so this and
+    // the homepage's auto-kick can't race each other.
+    void fetch(
+      `${PYTHON_API_URL}/internal/shopify/sync-products?shop_domain=${encodeURIComponent(shopDomain)}`,
+      { method: "POST" },
+    ).catch(() => {});
     return { ok: true };
   }
 
@@ -227,7 +227,6 @@ export default function HomePage() {
   }, [isBusy, revalidator]);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTag, setSelectedTag] = useState("all");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [expandedId, setExpandedId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -294,14 +293,6 @@ export default function HomePage() {
     }
   }, [expandedId, products, shopDefaults]);
 
-  const allTags = useMemo(() => {
-    const tagSet = new Set();
-    for (const p of products) {
-      if (Array.isArray(p.tags)) p.tags.forEach((t) => tagSet.add(t));
-    }
-    return [...tagSet].sort();
-  }, [products]);
-
   const allCategories = useMemo(() => {
     const catSet = new Set(products.map((p) => p.productType).filter(Boolean));
     return [...catSet].sort();
@@ -310,14 +301,10 @@ export default function HomePage() {
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
       const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase());
-      const productTags = (() => {
-        try { return JSON.parse(p.tags); } catch { return []; }
-      })();
-      const matchesTag = selectedTag === "all" || productTags.includes(selectedTag);
       const matchesCategory = selectedCategory === "all" || p.productType === selectedCategory;
-      return matchesSearch && matchesTag && matchesCategory;
+      return matchesSearch && matchesCategory;
     });
-  }, [products, searchQuery, selectedTag, selectedCategory]);
+  }, [products, searchQuery, selectedCategory]);
 
   const paginatedProducts = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
@@ -329,7 +316,7 @@ export default function HomePage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, selectedCategory, selectedTag]);
+  }, [searchQuery, selectedCategory]);
 
   const getLocal = (id) =>
     localState[id] ?? {
@@ -476,11 +463,6 @@ export default function HomePage() {
     setDeleteConfirmId(null);
   };
 
-  /* REMOVED: handleFieldChange function
-     - Was used to toggle sync options (Price/Description/Title)
-     - Only price syncing is active now; no UI for selecting fields
-  */
-
   const toggleExpand = (id) => {
     setExpandedId((prev) => (prev === id ? null : id));
   };
@@ -532,19 +514,6 @@ export default function HomePage() {
             clearButton
             onClearButtonClick={() => setSearchQuery("")}
           />
-          {/* <s-select
-            label="Tag"
-            value={selectedTag}
-            onChange={(e) => setSelectedTag(e.currentTarget.value)}
-          >
-            <s-option value="all">All Tags</s-option>
-            {allTags.map((tag) => (
-              <s-option key={tag} value={tag}>{tag}</s-option>
-            ))}
-          </s-select> */}
-
-
-          
           <s-select
             label="Category"
             value={selectedCategory}
@@ -888,14 +857,6 @@ export default function HomePage() {
                               )}
                             </div>
                           </div>
-
-                          <s-divider />
-
-                          {/* REMOVED: Sync to Shopify section (Price/Description/Title options)
-                              - Only price syncing is active now
-                              - syncPrice is always enabled
-                              - syncDescription and syncTitle removed from UI and form handlers
-                          */}
 
                           <s-divider />
 

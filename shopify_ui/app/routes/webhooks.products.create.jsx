@@ -1,5 +1,9 @@
+// PRODUCTS_CREATE webhook — forwards the raw payload to Python's
+// handle_product_update Celery task (same endpoint webhooks.products.update.jsx
+// uses). That task does INSERT ... ON CONFLICT DO UPDATE, so it's a correct
+// upsert for brand-new products too, and it enqueues the semantic pipeline
+// itself — no separate mapping logic or product-updated call needed here.
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
@@ -10,101 +14,14 @@ export const action = async ({ request }) => {
     return new Response("Unhandled topic", { status: 422 });
   }
 
-  const product  = payload;
-  const imageUrl = product.image?.src ?? product.images?.[0]?.src ?? null;
-  const tags     = product.tags ? product.tags.split(", ").map(t => t.trim()).filter(Boolean) : [];
-  const shopifyId = `gid://shopify/Product/${product.id}`;
-
-  // 1. Ensure ShopifyUser row exists (keyed by shop domain)
-  await db.shopifyUser.upsert({
-    where:  { shopDomain: shop },
-    update: {},
-    create: { shopDomain: shop },
-  });
-
-  // 2. Upsert ShopifyProduct
-  await db.shopifyProduct.upsert({
-    where: { id: shopifyId },
-    update: {
-      title:          product.title       ?? "",
-      description:    product.body_html   ?? "",
-      tags,
-      productType:    product.product_type ?? "",
-      imageUrl,
-      status:         product.status?.toUpperCase() ?? "ACTIVE",
-      semanticStatus: "PENDING",
-      semanticVersion: { increment: 1 },
-    },
-    create: {
-      id:             shopifyId,
-      shopDomain:     shop,
-      title:          product.title       ?? "",
-      description:    product.body_html   ?? "",
-      tags,
-      productType:    product.product_type ?? "",
-      imageUrl,
-      status:         product.status?.toUpperCase() ?? "ACTIVE",
-      semanticStatus: "PENDING",
-      updatedAt:      new Date(),
-    },
-  });
-
-  // 3. Upsert ShopifyVariants — reset semanticText so embeddings are regenerated
-  if (Array.isArray(product.variants)) {
-    for (const v of product.variants) {
-      const variantId = `gid://shopify/ProductVariant/${v.id}`;
-      const options   = {};
-      if (v.option1) options["Option1"] = v.option1;
-      if (v.option2) options["Option2"] = v.option2;
-      if (v.option3) options["Option3"] = v.option3;
-
-      await db.shopifyVariant.upsert({
-        where: { id: variantId },
-        update: {
-          title:             v.title,
-          currentPrice:      v.price,
-          compareAtPrice:    v.compare_at_price ?? null,
-          sku:               v.sku   ?? null,
-          barcode:           v.barcode ?? null,
-          options,
-          inventoryQuantity: v.inventory_quantity ?? null,
-          semanticText:      null, // reset so pipeline regenerates embedding
-        },
-        create: {
-          id:                variantId,
-          productId:         shopifyId,
-          title:             v.title,
-          currentPrice:      v.price,
-          compareAtPrice:    v.compare_at_price ?? null,
-          sku:               v.sku   ?? null,
-          barcode:           v.barcode ?? null,
-          options,
-          inventoryQuantity: v.inventory_quantity ?? null,
-          basePrice:         v.price ?? null,
-          updatedAt:         new Date(),
-        },
-      });
-    }
-  }
-
-  // 4. avgBasePrice is derived: average of the variants' basePrice anchors.
-  const avgBase = await db.shopifyVariant.aggregate({
-    where: { productId: shopifyId },
-    _avg:  { basePrice: true },
-  });
-  await db.shopifyProduct.update({
-    where: { id: shopifyId },
-    data: { avgBasePrice: avgBase._avg.basePrice },
-  });
-
-  // 5. Trigger semantic + embedding pipeline via the internal API gateway
   try {
-    await fetch(`${PYTHON_API_URL}/internal/shopify/product-updated?product_id=${encodeURIComponent(shopifyId)}`, {
+    await fetch(`${PYTHON_API_URL}/internal/shopify/product-update-webhook`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_domain: shop, payload }),
     });
   } catch (err) {
-    // Non-fatal: the semantic worker will catch up on the next scheduled run
-    console.error("[webhook] Failed to notify API gateway:", err);
+    console.error("[webhook] Failed to forward product create to API gateway:", err);
   }
 
   return new Response(null, { status: 200 });

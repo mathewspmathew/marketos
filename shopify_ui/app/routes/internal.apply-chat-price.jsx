@@ -3,9 +3,11 @@
  *
  * Called by chatbot_svc /apply-price tool with {preview_id}.
  * Re-validates the ChatPreview row (existence, expiry, single-use, kind),
- * computes new prices using the FROZEN variantIds + change, then issues
- * Shopify Admin productVariantsBulkUpdate. Marks ChatPreview.appliedAt
- * and stores per-variant succeeded/failed result.
+ * reads the new prices Python already computed and froze into
+ * preview.summary.newPriceByVariant at preview time (not recomputed here —
+ * see services/chatbot_svc/tools/preview.py's _compute_new_price, the single
+ * source of truth), then issues Shopify Admin productVariantsBulkUpdate.
+ * Marks ChatPreview.appliedAt and stores per-variant succeeded/failed result.
  *
  * Required env:
  *   INTERNAL_API_TOKEN — shared secret matched against X-Internal-Token
@@ -25,14 +27,6 @@ const VARIANT_BULK_UPDATE = `
     }
   }
 `;
-
-function computeNewPrice(current, change) {
-  const c = Number(current ?? 0);
-  if (change.type === "percent") return Math.round(c * (1 + change.value / 100) * 100) / 100;
-  if (change.type === "absolute") return Math.round((c + change.value) * 100) / 100;
-  if (change.type === "set") return Math.round(change.value * 100) / 100;
-  throw new Error(`bad change type: ${change.type}`);
-}
 
 export const action = async ({ request }) => {
   if (request.method !== "POST") {
@@ -75,8 +69,6 @@ export const action = async ({ request }) => {
     select: { id: true, productId: true, currentPrice: true },
   });
 
-  const change = preview.change;
-
   // unauthenticated.admin throws if the shop has no offline session row,
   // and the library handles Token Exchange refresh internally when the
   // stored token is past its expiry.
@@ -90,16 +82,24 @@ export const action = async ({ request }) => {
     );
   }
 
-  // Group variants by product (productVariantsBulkUpdate is per-product)
+  // Group variants by product (productVariantsBulkUpdate is per-product).
+  // Prices come from the preview's frozen newPriceByVariant map — not
+  // recomputed — so apply always matches what the merchant was shown.
+  const newPriceByVariant = preview.summary?.newPriceByVariant ?? {};
   const byProduct = new Map();
+  const succeeded = [];
+  const failed = [];
   for (const v of variants) {
+    const newPrice = newPriceByVariant[v.id];
+    if (newPrice == null) {
+      failed.push({ variant_id: v.id, reason: "price_not_in_preview" });
+      continue;
+    }
     const list = byProduct.get(v.productId) ?? [];
-    list.push({ id: v.id, price: String(computeNewPrice(v.currentPrice, change)) });
+    list.push({ id: v.id, price: String(newPrice) });
     byProduct.set(v.productId, list);
   }
 
-  const succeeded = [];
-  const failed = [];
   for (const [productId, payload] of byProduct) {
     try {
       const resp = await admin.graphql(VARIANT_BULK_UPDATE, {

@@ -254,3 +254,45 @@ def list_product_stats(session: Session, shop_domain: str) -> list[dict]:
             "lastSkipReason": r.skipReason if r else None,
         })
     return out
+
+
+def get_match_activity(session: Session, shop_domain: str, product_id: str, since: datetime) -> list[dict]:
+    """Match lifecycle events (discovered / confirmed / rejected) for the History
+    page's activity feed. Ported from shopify_ui/app/routes/app.history.$id.jsx,
+    which independently synthesized this from raw ProductLevelMatch rows — moved
+    here so any client sees the same events, and so rejected matches (previously
+    dropped by a query filter that made the JS "rejected" branch unreachable)
+    actually show up."""
+    rows = session.execute(
+        text("""
+            SELECT plm.id, plm."createdAt", plm."reviewStatus", plm."reviewedAt",
+                   sp.title, sp.domain
+            FROM "ProductLevelMatch" plm
+            JOIN "ScrapedProduct" sp ON sp.id = plm."scrapedProductId"
+            WHERE plm."shopifyProductId" = :pid AND plm."shopDomain" = :sd
+              AND (plm."createdAt" >= :since OR plm."reviewedAt" >= :since)
+            ORDER BY plm."createdAt" DESC
+        """),
+        {"pid": product_id, "sd": shop_domain, "since": since},
+    ).all()
+
+    events = []
+    for m in rows:
+        if m.createdAt and m.createdAt >= since:
+            events.append({
+                "matchId": m.id, "type": "created", "timestamp": m.createdAt.isoformat(),
+                "description": f"New competitor discovered: {m.title} ({m.domain})",
+            })
+        if m.reviewStatus == "CONFIRMED" and m.reviewedAt and m.reviewedAt >= since:
+            events.append({
+                "matchId": m.id, "type": "confirmed", "timestamp": m.reviewedAt.isoformat(),
+                "description": f"Confirmed match: {m.title}",
+            })
+        if m.reviewStatus == "REJECTED" and m.reviewedAt and m.reviewedAt >= since:
+            events.append({
+                "matchId": m.id, "type": "rejected", "timestamp": m.reviewedAt.isoformat(),
+                "description": f"Rejected match: {m.title}",
+            })
+
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+    return events
