@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 
 import structlog
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import or_, text
 
@@ -31,6 +33,25 @@ load_dotenv()
 logger = structlog.get_logger(__name__)
 
 app = FastAPI(title="MarketOS Internal API", docs_url=None, redoc_url=None)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    # A malformed request body/query never reaches a route's own try/except —
+    # FastAPI raises this before the route runs. Without this handler it's
+    # invisible in the logs and returns FastAPI's default {"detail": [...]}
+    # shape, which every JS caller's `data.ok ? ... : data.error` renders as
+    # a blank error message.
+    logger.warning("request_validation_failed", path=request.url.path, errors=exc.errors())
+    return JSONResponse(status_code=422, content={"ok": False, "error": "Invalid request."})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # Last-resort net for anything that escapes every route's own
+    # `except Exception` — e.g. a failure before the route body runs.
+    logger.exception("unhandled_exception", path=request.url.path, exc_info=exc)
+    return JSONResponse(status_code=500, content={"ok": False, "error": "Something went wrong."})
 
 
 @app.post("/internal/shopify/product-updated")
