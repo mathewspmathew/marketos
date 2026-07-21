@@ -73,16 +73,19 @@ _PROMPT = (Path(__file__).parent / "prompts" / "system.md").read_text()
 
 # Both models come from .env — no model names are hardcoded here.
 #   CHATBOT_MODEL          (required)  e.g. groq:openai/gpt-oss-120b
-#   CHATBOT_FALLBACK_MODEL (optional)  requests that fail on the primary
-#                          (429 quota, 5xx) transparently retry on this model.
-#                          Leave unset for eval runs (single-model scoring).
+#   CHATBOT_FALLBACK_MODEL (optional)  comma-separated list, tried in order
+#                          when a request fails on the model before it
+#                          (429 quota, 5xx). Each entry should be a model
+#                          you haven't already hit quota on today — Groq
+#                          tracks TPD/RPD per exact model string, so a
+#                          fresh model name means a fresh daily budget.
 load_dotenv()
 _MODEL = os.environ.get("CHATBOT_MODEL")
 if not _MODEL:
     raise RuntimeError("CHATBOT_MODEL is not set — add it to .env, e.g. CHATBOT_MODEL=groq:openai/gpt-oss-120b")
-_FALLBACK_MODEL = os.environ.get("CHATBOT_FALLBACK_MODEL")
+_FALLBACK_MODELS = [m.strip() for m in os.environ.get("CHATBOT_FALLBACK_MODEL", "").split(",") if m.strip()]
 
-_model = FallbackModel(_MODEL, _FALLBACK_MODEL) if _FALLBACK_MODEL else _MODEL
+_model = FallbackModel(_MODEL, *_FALLBACK_MODELS) if _FALLBACK_MODELS else _MODEL
 
 agent: Agent[AgentDeps, str] = Agent(
     _model,
