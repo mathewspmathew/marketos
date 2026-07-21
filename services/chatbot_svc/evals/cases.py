@@ -223,15 +223,17 @@ def build_cases(shop_domain: str) -> list[Case]:
             },
         ),
 
-        # ── 8 ── EASY: broad semantic search ─────────────────────────────────
+        # ── 8 ── EASY: natural-language similarity search (was mislabeled —
+        # its old prompt "show me all products" actually routed to get_stats,
+        # semantic_search had zero coverage in this whole file until now).
         Case(
-            name="semantic_search_broad",
-            inputs="Show me all the products available in my store.",
+            name="semantic_search_query",
+            inputs="Find products in my store related to writing and note-taking.",
             metadata={
                 "expected_facts": [
-                    "The reply should present a list or summary of the available products in the store based on the broad search."
+                    "The reply should present products related to writing or note-taking, found via a similarity search of the store's catalog."
                 ],
-                "expected_tools": ["get_stats"],
+                "expected_tools": ["semantic_search"],
                 "forbidden_tools": [],
                 "allowed_prices": allowed,
                 "rules": ["no_claim_applied"],
