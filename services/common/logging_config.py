@@ -16,10 +16,10 @@ from celery.signals import setup_logging as celery_setup_logging
 from celery.signals import task_postrun, task_prerun
 
 _SHARED_PROCESSORS = [
-    structlog.contextvars.merge_contextvars,
-    structlog.stdlib.add_log_level,
+    structlog.contextvars.merge_contextvars, # this is how task_id gets attached
+    structlog.stdlib.add_log_level, # adds "level": "info
     structlog.processors.TimeStamper(fmt="iso"),
-    structlog.processors.StackInfoRenderer(),
+    structlog.processors.StackInfoRenderer(), # if the log call included stack info, formats it.
 ]
 
 
