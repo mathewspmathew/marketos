@@ -24,6 +24,7 @@ from services.common.celery_app import app as celery_app
 from services.common.db import get_db
 from services.common.frequency import next_run_at
 from services.common.models import ProductUrl, ShopifyProduct
+from services.pricing_svc import product_stats
 from services.pricing_svc.revert import RevertError, revert_price_decision
 from services.pricing_svc.match_review import MatchReviewError, confirm_match, reject_match
 from services.scraper_svc.semantics import claim_and_enqueue_semantics
@@ -266,6 +267,31 @@ async def dynamic_pricing_delete_preview(shop_domain: str, product_id: str):
             shop_domain=shop_domain, product_id=product_id,
         )
         return {"ok": False, "error": "Something went wrong previewing the delete for this product."}
+
+
+@app.get("/internal/dynamic-pricing/product-stats")
+async def dynamic_pricing_product_stats(shop_domain: str, product_id: str):
+    try:
+        with get_db() as s:
+            return {"ok": True, **product_stats.get_product_stats(s, shop_domain, product_id)}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception(
+            "dynamic_pricing_product_stats_failed",
+            shop_domain=shop_domain, product_id=product_id,
+        )
+        return {"ok": False, "error": "Something went wrong loading stats for this product."}
+
+
+@app.get("/internal/dynamic-pricing/products-stats-list")
+async def dynamic_pricing_products_stats_list(shop_domain: str):
+    try:
+        with get_db() as s:
+            return {"ok": True, "products": product_stats.list_product_stats(s, shop_domain)}
+    except Exception:
+        logger.exception("dynamic_pricing_products_stats_list_failed", shop_domain=shop_domain)
+        return {"ok": False, "error": "Something went wrong loading the stats list."}
 
 
 @app.post("/internal/dynamic-pricing/delete")

@@ -1,7 +1,11 @@
 /**
  * app.stats.$productId.jsx
  *
- * Per-product auto-pricing stats:
+ * Per-product auto-pricing stats. Pure presentation layer — all data
+ * (usable-competitor gate, decision lifecycle status, clamp explanations,
+ * competitor price series) is computed by services/pricing_svc/product_stats.py
+ * and fetched as-is, so the browser UI and any other client (e.g. the
+ * chatbot) see identical numbers:
  *   - Header chips (tier / base / current) + open-in-Shopify-admin link
  *   - Empty-state banner when matches < minCompetitorsToPrice
  *   - 30-day competitor price chart (inline SVG, no chart lib)
@@ -11,9 +15,9 @@
 import { useLoaderData, Link } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
-import db from "../db.server";
 import { authenticate } from "../shopify.server";
 
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 const DAYS = 30;
 
 export const loader = async ({ request, params }) => {
@@ -21,168 +25,15 @@ export const loader = async ({ request, params }) => {
   const shopDomain = session.shop;
   const productId  = params.productId;
 
-  const product = await db.shopifyProduct.findFirst({
-    where: { id: productId, shopDomain },
-    include: { ShopifyVariant: { select: { id: true, title: true, currentPrice: true, basePrice: true } } },
-  });
-  if (!product) throw new Response("Product not found", { status: 404 });
-
-  const decisions = await db.priceDecision.findMany({
-    where: {
-      shopDomain,
-      shopifyVariantId: { in: product.ShopifyVariant.map((v) => v.id) },
-    },
-    orderBy: { decidedAt: "desc" },
-    take: 100,
-  });
-
-  const settings = await db.shopSettings.findUnique({ where: { shopDomain } });
-  const minCompetitorsToPrice = settings?.minCompetitorsToPrice ?? 4;
-  const strongMatchCount = await db.productLevelMatch.count({
-    where: {
-      shopifyProductId: productId, shopDomain,
-      reviewStatus: { not: "REJECTED" },
-      confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
-    },
-  });
-
-  const matches = await db.productLevelMatch.findMany({
-    where: { shopifyProductId: productId, shopDomain, reviewStatus: { not: "REJECTED" } },
-    orderBy: { confidence: "desc" },
-    take: 8,
-    include: {
-      ScrapedProduct: {
-        select: { title: true, domain: true, ScrapedVariant: { select: { id: true } } },
-      },
-    },
-  });
-
-  const competitorVariantIds = matches.flatMap((m) => m.ScrapedProduct.ScrapedVariant.map((v) => v.id));
-  const since = new Date(Date.now() - DAYS * 24 * 3600 * 1000);
-  const observations = competitorVariantIds.length === 0
-    ? []
-    : await db.competitorPriceObservation.findMany({
-        where: { competitorVariantId: { in: competitorVariantIds }, observedAt: { gte: since } },
-        orderBy: { observedAt: "asc" },
-        select: { competitorVariantId: true, price: true, observedAt: true },
-      });
-
-  const variantToProduct = new Map();
-  for (const m of matches) {
-    for (const v of m.ScrapedProduct.ScrapedVariant) {
-      variantToProduct.set(v.id, {
-        id: m.scrapedProductId,
-        title: m.ScrapedProduct.title,
-        domain: m.ScrapedProduct.domain,
-        confidence: Number(m.confidence),
-      });
-    }
-  }
-  const seriesByCompetitor = new Map();
-  for (const o of observations) {
-    const p = variantToProduct.get(o.competitorVariantId);
-    if (!p) continue;
-    if (!seriesByCompetitor.has(p.id)) {
-      seriesByCompetitor.set(p.id, { ...p, points: [] });
-    }
-    seriesByCompetitor.get(p.id).points.push({
-      t: o.observedAt.getTime(),
-      price: Number(o.price),
-    });
-  }
-
-  // Shopify admin URL for the "open in Shopify" link. Numeric id parsed
-  // from the GraphQL gid; store handle parsed from the shop domain.
-  const numericProductId = product.id.split("/").pop();
-  const storeHandle = shopDomain.replace(".myshopify.com", "");
-  const adminProductUrl = `https://admin.shopify.com/store/${storeHandle}/products/${numericProductId}`;
-
-  return {
-    waiting: { have: strongMatchCount, need: minCompetitorsToPrice },
-    product: {
-      id: product.id,
-      title: product.title,
-      dynamicPricingEnabled: product.dynamicPricingEnabled,
-      tier: product.pricingTier,
-      avgBasePrice: product.avgBasePrice ? Number(product.avgBasePrice) : null,
-      adminProductUrl,
-      variants: product.ShopifyVariant.map((v) => ({
-        id: v.id, title: v.title,
-        currentPrice: Number(v.currentPrice),
-        basePrice: v.basePrice ? Number(v.basePrice) : null,
-      })),
-    },
-    decisions: decisions.map((d) => {
-      // Distinguish four lifecycle states explicitly so the UI can't be
-      // misleading (an autoApplied=true row with appliedAt=NULL means Shopify
-      // rejected the push — NOT that we applied it).
-      const isApplied = !!d.appliedAt;
-      const status = isApplied
-        ? "applied"
-        : d.applyError
-          ? "failed"
-          : d.autoApplied
-            ? "pending"      // intent set, Shopify push hasn't succeeded yet
-            : "skipped";     // decide step didn't even try (skipReason explains why)
-      const clampReason = d.skipReason && d.skipReason.startsWith("clamped_") ? d.skipReason : null;
-      const skipReasonNotClamp = d.skipReason && !d.skipReason.startsWith("clamped_") ? d.skipReason : null;
-      return {
-        id: d.id,
-        variantId: d.shopifyVariantId,
-        oldPrice: Number(d.oldPrice),
-        newPrice: Number(d.newPrice),
-        changePct: d.changePct,
-        refPrice: d.refPrice ? Number(d.refPrice) : null,
-        tier: d.tierAtDecision,
-        competitorsUsed: d.competitorsUsed,
-        oosObservations: d.oosObservations,
-        currencyDrops:   d.currencyDrops,
-        appliedAt: d.appliedAt?.toISOString() ?? null,
-        decidedAt: d.decidedAt.toISOString(),
-        reason: d.reason,
-        applyError: d.applyError,
-        status,
-        clampReason,
-        skipReason: skipReasonNotClamp,
-      };
-    }),
-    competitorSeries: [...seriesByCompetitor.values()],
-  };
-};
-
-/**
- * Parse pricing reason and clamp type to generate merchant-friendly explanation.
- * Returns {line1, line2} or null if reason format doesn't match or clampReason is unknown.
- */
-function getClampExplanation(clampReason, decision) {
-  if (!clampReason) return null;
-
-  // Parse reason string: "ref=X target=Y tier=Z comps=N"
-  const reasonMatch = decision.reason.match(
-    /ref=([\d.]+)\s+target=([\d.]+)\s+tier=(\w+)\s+comps=(\d+)/
+  const res = await fetch(
+    `${PYTHON_API_URL}/internal/dynamic-pricing/product-stats?` +
+    `shop_domain=${encodeURIComponent(shopDomain)}&product_id=${encodeURIComponent(productId)}`,
   );
-  if (!reasonMatch) return null;
+  const data = await res.json();
+  if (!data.ok) throw new Response(data.error || "Product not found", { status: 404 });
 
-  const [, ref, target, tier, comps] = reasonMatch;
-  const targetPrice = parseFloat(target);
-  const appliedPrice = decision.newPrice;
-
-  if (clampReason === 'clamped_per_round') {
-    return {
-      line1: `Target ₹${targetPrice.toFixed(2)} → ₹${appliedPrice.toFixed(2)} (per-round cap)`,
-      line2: `Limited by maximum change per cycle. Reference: ₹${ref} from ${comps} competitors (${tier} tier).`,
-    };
-  }
-
-  if (clampReason === 'clamped_lifetime_cap') {
-    return {
-      line1: `Target ₹${targetPrice.toFixed(2)} → ₹${appliedPrice.toFixed(2)} (lifetime cap)`,
-      line2: `Price adjusted to stay within allowed range. Reference: ₹${ref} from ${comps} competitors (${tier} tier).`,
-    };
-  }
-
-  return null;
-}
+  return { product: data.product, decisions: data.decisions, competitorSeries: data.competitorSeries, waiting: data.waiting };
+};
 
 // ─── SVG line chart (Polaris has no built-in chart primitive) ─────────────
 function PriceChart({ competitorSeries, productPrice }) {
@@ -261,8 +112,6 @@ function StatusBadge({ status }) {
       return <s-badge tone="subdued">Skipped</s-badge>;
   }
 }
-
-export { getClampExplanation };
 
 export default function ProductStatsPage() {
   const { product, decisions, competitorSeries, waiting } = useLoaderData();
@@ -363,16 +212,12 @@ export default function ProductStatsPage() {
                     <s-stack direction="block" gap="tight">
                       <StatusBadge status={d.status} />
                       {d.clampReason && (
-                        (() => {
-                          const explanation = getClampExplanation(d.clampReason, d);
-                          if (!explanation) return d.clampReason;
-                          return (
-                            <s-stack direction="block" gap="tight">
-                              <s-text tone="subdued">{explanation.line1}</s-text>
-                              <s-text tone="subdued" size="small">{explanation.line2}</s-text>
-                            </s-stack>
-                          );
-                        })()
+                        d.clampExplanation ? (
+                          <s-stack direction="block" gap="tight">
+                            <s-text tone="subdued">{d.clampExplanation.line1}</s-text>
+                            <s-text tone="subdued" size="small">{d.clampExplanation.line2}</s-text>
+                          </s-stack>
+                        ) : d.clampReason
                       )}
                       {d.skipReason && (
                         <s-text tone="subdued">{d.skipReason}</s-text>

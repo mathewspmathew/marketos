@@ -3,74 +3,28 @@
  *
  * Product picker for the per-product stats page. Lists dynamic-pricing-
  * enabled products with a quick "last decision" snippet so the merchant
- * can spot which ones are actively moving.
+ * can spot which ones are actively moving. Pure presentation layer — the
+ * list and its computed lastStatus come from
+ * services/pricing_svc/product_stats.py::list_product_stats.
  */
 import { Link, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
-import db from "../db.server";
 import { authenticate } from "../shopify.server";
+
+const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  const products = await db.shopifyProduct.findMany({
-    where: { shopDomain, lastDecisionAt: { not: null } },
-    select: {
-      id: true,
-      title: true,
-      imageUrl: true,
-      pricingTier: true,
-      avgBasePrice: true,
-      ShopifyVariant: { select: { currentPrice: true }, take: 1 },
-    },
-    orderBy: { lastDecisionAt: "desc" },
-  });
+  const res = await fetch(
+    `${PYTHON_API_URL}/internal/dynamic-pricing/products-stats-list?shop_domain=${encodeURIComponent(shopDomain)}`,
+  );
+  const data = await res.json();
+  if (!data.ok) throw new Response(data.error || "Failed to load stats", { status: 500 });
 
-  // One latest PriceDecision per product (via its first variant).
-  const variantIds = products.flatMap((p) => p.ShopifyVariant.map((v) => v.currentPrice ? p.id : null)).filter(Boolean);
-  const productIds = products.map((p) => p.id);
-  const recent = productIds.length === 0 ? [] : await db.$queryRawUnsafe(`
-    SELECT DISTINCT ON (v."productId")
-           v."productId" AS pid, pd."changePct", pd."autoApplied",
-           pd."appliedAt", pd."applyError",
-           pd."skipReason", pd."decidedAt"
-      FROM "PriceDecision" pd
-      JOIN "ShopifyVariant" v ON v.id = pd."shopifyVariantId"
-     WHERE v."productId" = ANY($1)
-     ORDER BY v."productId", pd."decidedAt" DESC
-  `, productIds);
-
-  const recentByPid = new Map(recent.map((r) => [r.pid, r]));
-
-  return {
-    products: products.map((p) => {
-      const r = recentByPid.get(p.id);
-      // Lifecycle status — see app.stats.$productId.jsx for the same logic.
-      // autoApplied alone is just INTENT; the row only counts as "applied"
-      // when appliedAt is set (Shopify accepted the push).
-      let status = "none";
-      if (r) {
-        if (r.appliedAt) status = "applied";
-        else if (r.applyError) status = "failed";
-        else if (r.autoApplied) status = "pending";
-        else status = "skipped";
-      }
-      return {
-        id: p.id,
-        title: p.title,
-        imageUrl: p.imageUrl,
-        tier: p.pricingTier,
-        currentPrice: p.ShopifyVariant[0]?.currentPrice ? Number(p.ShopifyVariant[0].currentPrice) : null,
-        avgBasePrice: p.avgBasePrice ? Number(p.avgBasePrice) : null,
-        lastDecisionAt: r?.decidedAt ? new Date(r.decidedAt).toISOString() : null,
-        lastChangePct: r?.changePct ?? null,
-        lastStatus:    status,
-        lastSkipReason: r?.skipReason ?? null,
-      };
-    }),
-  };
+  return { products: data.products };
 };
 
 export default function StatsIndex() {

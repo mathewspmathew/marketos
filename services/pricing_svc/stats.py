@@ -4,6 +4,9 @@ services/pricing_svc/stats.py
 v1 competitor-stats refresh.
 
 For each merchant variant matched to one or more competitor variants:
+  - Only count matches usable for real pricing decisions: CONFIRMED-tier
+    always, LIKELY-tier only once a merchant has reviewed and confirmed it
+    (same gate as decide.py's product-level eligibility check).
   - Drop disabled competitors and out-of-stock observations.
   - Take the LATEST CompetitorPriceObservation per competitor variant.
   - Write competitorCount + min/median/max to VariantCompetitorStats.
@@ -53,6 +56,7 @@ def _recompute_for_variant(shop_domain: str, shopify_variant_id: str) -> str | N
                        cpo."observedAt"         AS observed_at,
                        cpo."isInStock"          AS in_stock
                 FROM "ProductMatch" pm
+                JOIN "ProductLevelMatch" plm ON plm.id = pm."productMatchId"
                 JOIN "ScrapedVariant" sv ON sv.id = pm."competitorVariantId"
                 JOIN "ScrapedProduct" sp ON sp.id = sv."productId"
                 LEFT JOIN "CompetitorPriceObservation" cpo
@@ -60,6 +64,9 @@ def _recompute_for_variant(shop_domain: str, shopify_variant_id: str) -> str | N
                 WHERE pm."shopifyVariantId" = :vid
                   AND pm."shopDomain"       = :sd
                   AND pm."dismissedAt" IS NULL
+                  AND plm."reviewStatus" != 'REJECTED'
+                  AND (plm."confidenceTier" = 'CONFIRMED'
+                       OR (plm."confidenceTier" = 'LIKELY' AND plm."reviewStatus" = 'CONFIRMED'))
                 ORDER BY pm."competitorVariantId", cpo."observedAt" DESC NULLS LAST
             """),
             {"vid": shopify_variant_id, "sd": shop_domain},
