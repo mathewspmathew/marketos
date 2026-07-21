@@ -434,3 +434,14 @@ def test_apply_clear_flag_ignores_simultaneous_value(seeded_product_with_url):
     with get_db() as s:
         product = s.get(models.ShopifyProduct, product_id)
         assert product.minPriceOverride is None
+
+
+def test_last_discovery_num_results_round_trips(seeded_product_with_url):
+    product_id, _ = seeded_product_with_url
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        product.lastDiscoveryNumResults = 15
+
+    with get_db() as s:
+        product = s.get(models.ShopifyProduct, product_id)
+        assert product.lastDiscoveryNumResults == 15

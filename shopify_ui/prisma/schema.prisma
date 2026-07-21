@@ -388,6 +388,7 @@ model ShopifyProduct {
   frequencyUnit                 String?
   searchQueryOverride           String?
   discoveryNumResults           Int?
+  lastDiscoveryNumResults       Int?
   listingExpansionCap           Int?
   pricingTier                   PricingTier           @default(COMPETITIVE)
   avgBasePrice                  Decimal?              @db.Decimal(10, 2)

@@ -122,6 +122,7 @@ class ShopifyProduct(Base):
     lastDiscoveryAt           = Column("lastDiscoveryAt",           DateTime(timezone=True), nullable=True)
     discoveryNumResults       = Column("discoveryNumResults",       Integer, nullable=False, default=10)
     listingExpansionCap       = Column("listingExpansionCap",       Integer, nullable=True)
+    lastDiscoveryNumResults   = Column("lastDiscoveryNumResults",   Integer, nullable=True)
     pricingTier         = Column("pricingTier",         _pricing_tier, nullable=False, server_default="'COMPETITIVE'")
     minPriceOverride    = Column("minPriceOverride",    Numeric(10, 2), nullable=True)
     maxPriceOverride    = Column("maxPriceOverride",    Numeric(10, 2), nullable=True)
