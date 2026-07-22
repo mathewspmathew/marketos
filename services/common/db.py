@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import NullPool
 
 load_dotenv()
 
@@ -26,15 +27,15 @@ def _build_engine():
         if url.startswith(prefix):
             url = "postgresql+psycopg" + url[len(prefix) - 3:]
             break
-    return create_engine(
-        url,
-        pool_size=1,        # one connection per process — no pooler in front, so keep the ceiling tight
-        max_overflow=0,     # no burst capacity; avoids per-process spikes multiplying across workers
-        pool_pre_ping=True, # discard stale connections before use
-        pool_recycle=900,   # recycle connections every 15 min (avoids TCP timeouts)
-        pool_timeout=10,    # raise after 10 s if no connection is available
-        echo_pool=True,     # log pool events for debugging
-    )
+    # NullPool: open a connection on checkout, close it for real on session.close().
+    # QueuePool with pool_size=1 held one connection open per process for its
+    # entire lifetime — with a dozen mostly-idle worker processes and no pooler
+    # in front, idle connections alone exhausted the shared Postgres instance's
+    # connection ceiling. NullPool trades a ~20-50ms handshake per task (noise
+    # next to the multi-second Groq/Firecrawl/Serper calls each task makes) for
+    # not holding a slot open while idle. Revisit with a pooler (PgBouncer/Aiven
+    # managed pool) if task throughput grows enough for that handshake to matter.
+    return create_engine(url, poolclass=NullPool)
 
 
 def _get_session_factory():
