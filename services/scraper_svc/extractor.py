@@ -5,9 +5,10 @@ Task 2 — extract_product (extraction_queue)
   Download .md from GCS → Groq extraction → upsert via ProductUrl.
   On permanent failure: log via helpers.log_error (stderr).
   Queue generate_variant_semantics.
-  Uses GROQ_API_KEY, shared with rescrape_extract. extract_candidate
-  (candidate.py) calls extract_with_groq() with its own client on
-  GROQ_API_KEY_CANDIDATE for separate TPM isolation.
+  Uses the "extraction" litellm Router group (GROQ_API_KEY +
+  GROQ_API_KEY_BACKUP), shared with rescrape_extract. extract_candidate
+  (candidate.py) calls extract_with_groq() with the "candidate" router
+  (GROQ_API_KEY_CANDIDATE) for separate TPM isolation.
 """
 
 import json
@@ -17,9 +18,9 @@ from urllib.parse import urlparse
 
 import structlog
 from dotenv import load_dotenv
-from groq import RateLimitError as GroqRateLimitError
+from litellm.exceptions import RateLimitError as GroqRateLimitError
 
-from services.common.groq_client import make_groq_client
+from services.common.groq_client import extraction_router
 from sqlalchemy import select, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -39,7 +40,6 @@ load_dotenv()
 
 logger = structlog.get_logger(__name__)
 
-_groq_client = make_groq_client()
 
 GROQ_EXTRACT_PROMPT = """You are a professional e-commerce data extractor.
 Extract structured product data from the markdown of this product page: {url}
@@ -89,11 +89,11 @@ def _clean_markdown(markdown: str) -> str:
     return '\n'.join(lines)[:8000]
 
 
-def extract_with_groq(markdown: str, url: str, client=None) -> ProductSchema | None:
-    client = client or _groq_client
+def extract_with_groq(markdown: str, url: str, router=None) -> ProductSchema | None:
+    router = router or extraction_router
     try:
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        response = router.completion(
+            model="groq",
             messages=[
                 {"role": "system", "content": "Output JSON only."},
                 {"role": "user",   "content": GROQ_EXTRACT_PROMPT.format(url=url) + f"\n\nMarkdown:\n{_clean_markdown(markdown)}"},
@@ -131,16 +131,17 @@ RULES:
 - Return ONLY raw JSON. No markdown. No commentary."""
 
 
-def extract_listing_with_groq(markdown: str, url: str) -> list[dict] | None:
+def extract_listing_with_groq(markdown: str, url: str, router=None) -> list[dict] | None:
     """Extract individual product-card URLs from a listing-page markdown.
 
     Returns a list of {"url": str, "title": str|None} dicts, or None on
     permanent extraction failure. Raises GroqRateLimitError so the caller
     can apply retry/backoff.
     """
+    router = router or extraction_router
     try:
-        response = _groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        response = router.completion(
+            model="groq",
             messages=[
                 {"role": "system", "content": "Output JSON only."},
                 {"role": "user",   "content": GROQ_LISTING_PROMPT.format(url=url) + f"\n\nMarkdown:\n{_clean_markdown(markdown)}"},

@@ -18,25 +18,18 @@ from datetime import datetime, timezone, timedelta
 import structlog
 from celery.exceptions import Retry as CeleryRetry
 from dotenv import load_dotenv
-from groq import RateLimitError as GroqRateLimitError
+from litellm.exceptions import RateLimitError as GroqRateLimitError
 from sqlalchemy import text, text as sa_text, update as sa_update
 
 from services.common.celery_app import app
 from services.common.db import get_db
-from services.common.groq_client import make_groq_client
+from services.common.groq_client import semantic_router, shopify_semantic_router
 from services.common.models import ScrapedProduct, ScrapedVariant, ShopifyProduct, ShopifyVariant
 from services.scraper_svc.helpers import log_error
 
 load_dotenv()
 
 logger = structlog.get_logger(__name__)
-
-# Three separate Groq clients (extraction has its own via extractor.py) so
-# competitor semantics, Shopify semantics, and extraction each get their own
-# TPM budget on the Groq free tier instead of stacking on one shared key.
-# All fall back to GROQ_API_KEY_BACKUP if their primary key auth fails.
-_groq_client         = make_groq_client(primary_env="GROQ_API_KEY_SEMANTIC")
-_groq_client_shopify = make_groq_client(primary_env="GROQ_API_KEY_SHOPIFY")
 
 GROQ_SEMANTIC_PROMPT = """You are a product cataloguing assistant. For each variant below
 produce a STRUCTURED FINGERPRINT used to compare this product against the same product
@@ -95,9 +88,9 @@ as \\n in the JSON string. No markdown, no extra keys, no commentary."""
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _groq_semantic_call(prompt: str, *, shopify: bool = False) -> dict[str, str]:
-    client = _groq_client_shopify if shopify else _groq_client
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+    router = shopify_semantic_router if shopify else semantic_router
+    response = router.completion(
+        model="groq",
         messages=[
             {"role": "system", "content": "Output JSON only."},
             {"role": "user",   "content": prompt},
@@ -142,7 +135,7 @@ def _groq_search_query(
     shopify: bool = True,
 ) -> str | None:
     """One small Groq call → product-level search query string, or None on failure."""
-    client = _groq_client_shopify if shopify else _groq_client
+    router = shopify_semantic_router if shopify else semantic_router
     prompt = GROQ_SEARCH_QUERY_PROMPT.format(
         title=title or "",
         vendor=vendor or "Unknown Brand",
@@ -150,8 +143,8 @@ def _groq_search_query(
         description=(description or "")[:400],
     )
     try:
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        response = router.completion(
+            model="groq",
             messages=[
                 {"role": "system", "content": "Output JSON only."},
                 {"role": "user",   "content": prompt},
