@@ -42,10 +42,6 @@ HOST_BLOCKLIST = (
     "instagram.com", "twitter.com", "x.com", "quora.com", "medium.com",
     "google.com", "wikipedia.org",
 )
-DEFAULT_MARKETPLACES = (
-    "amazon.com", "amazon.in", "ebay.com", "aliexpress.com", "walmart.com",
-    "flipkart.com", "etsy.com",
-)
 
 
 # Query params used purely for tracking/attribution — stripping them lets the
@@ -106,7 +102,7 @@ def _filter_candidates(
     per_domain: dict[str, int] = {}
     out: list[serper.CandidateHit] = []
 
-    host_blocked = set(HOST_BLOCKLIST) | set(marketplace_blocklist or DEFAULT_MARKETPLACES)
+    host_blocked = set(HOST_BLOCKLIST) | set(marketplace_blocklist)
     shop_host = shop_domain.lower()
 
     for h in hits:

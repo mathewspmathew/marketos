@@ -194,7 +194,7 @@ export default function SettingsPage() {
     serperHl: settings.serperHl,
     listingExpansionCap: String(settings.listingExpansionCap),
     discoveryNumResults: String(settings.discoveryNumResults),
-    marketplaceBlocklist: (settings.marketplaceBlocklist ?? []).join("\n"),
+    marketplaceBlocklist: settings.marketplaceBlocklist ?? [],
     markupPct: toPercentageDisplay(settings.markupPct),
     budgetUndercut: toPercentageDisplay(settings.budgetUndercut),
     premiumUplift: toPercentageDisplay(settings.premiumUplift),
@@ -214,6 +214,21 @@ export default function SettingsPage() {
 
   const [form, setForm] = useState(initialFormState);
   const [showSavedMessage, setShowSavedMessage] = useState(false);
+  const [newBlockedDomain, setNewBlockedDomain] = useState("");
+
+  const addBlockedDomain = () => {
+    const domain = newBlockedDomain.trim().toLowerCase();
+    if (!domain || form.marketplaceBlocklist.includes(domain)) return;
+    setForm((prev) => ({ ...prev, marketplaceBlocklist: [...prev.marketplaceBlocklist, domain] }));
+    setNewBlockedDomain("");
+  };
+
+  const removeBlockedDomain = (domain) => {
+    setForm((prev) => ({
+      ...prev,
+      marketplaceBlocklist: prev.marketplaceBlocklist.filter((d) => d !== domain),
+    }));
+  };
 
   // Check if form has unsaved changes
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialFormState);
@@ -239,7 +254,7 @@ export default function SettingsPage() {
         defaultPricingTier: form.defaultPricingTier,
         listingExpansionCap: form.listingExpansionCap,
         discoveryNumResults: form.discoveryNumResults,
-        marketplaceBlocklist: form.marketplaceBlocklist,
+        marketplaceBlocklist: form.marketplaceBlocklist.join("\n"),
         autoRescrapeEnabled: String(form.autoRescrapeEnabled),
         includeOosInPricing: String(form.includeOosInPricing),
         minCompetitorsToPrice: form.minCompetitorsToPrice,
@@ -341,13 +356,34 @@ export default function SettingsPage() {
             />
           </div>
 
-          <s-textarea
-            label="Exclude these marketplaces"
-            rows={5}
-            value={form.marketplaceBlocklist}
-            onInput={(e) => setField("marketplaceBlocklist", e.currentTarget.value)}
-            helpText="Domains to exclude from competitor discovery (e.g. amazon.in, ebay.com). One per line."
-          />
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <label style={{ fontWeight: "500" }}>Exclude these marketplaces</label>
+              <span title="Domains to exclude from competitor discovery. Nothing is blocked by default — add a domain (e.g. amazon.in, ebay.com) to stop scraping it." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+            </div>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              <s-text-field
+                value={newBlockedDomain}
+                onInput={(e) => setNewBlockedDomain(e.currentTarget.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addBlockedDomain(); } }}
+                placeholder="e.g. amazon.in"
+                style={{ flex: 1 }}
+              />
+              <s-button onClick={addBlockedDomain}>Add</s-button>
+            </div>
+            {form.marketplaceBlocklist.length === 0 ? (
+              <s-text tone="subdued" style={{ fontSize: "0.85em" }}>No domains excluded — all marketplaces are eligible for discovery.</s-text>
+            ) : (
+              <s-stack direction="block" gap="tight">
+                {form.marketplaceBlocklist.map((domain) => (
+                  <div key={domain} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#f6f6f7", borderRadius: "6px" }}>
+                    <span>{domain}</span>
+                    <s-button kind="tertiary" size="small" onClick={() => removeBlockedDomain(domain)}>Remove</s-button>
+                  </div>
+                ))}
+              </s-stack>
+            )}
+          </div>
         </s-stack>
       </s-section>
 
