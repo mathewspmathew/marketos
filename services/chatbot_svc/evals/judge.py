@@ -5,8 +5,10 @@ of correctness criteria derived from the case's `expected_facts`.  It returns
 a float score 0.0–1.0 and a one-sentence reasoning string.
 
 Model is configured via CHATBOT_EVAL_MODEL (Groq model string, e.g.
-"groq:llama-3.3-70b-versatile").  The agent is instantiated lazily on first
-call so the module can be imported even when the env var is not yet set.
+"groq:llama-3.3-70b-versatile"), with optional CHATBOT_EVAL_FALLBACK_MODEL
+(comma-separated) tried in order if the primary fails (429 quota, 5xx). The
+agent is instantiated lazily on first call so the module can be imported even
+when the env var is not yet set.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from functools import lru_cache
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
+from pydantic_ai.models.fallback import FallbackModel
 
 # ---------------------------------------------------------------------------
 # Judge output schema
@@ -75,7 +78,9 @@ def _get_judge_agent() -> Agent[None, JudgeVerdict]:
             "CHATBOT_EVAL_MODEL is not set — add it to .env, "
             "e.g. CHATBOT_EVAL_MODEL=groq:llama-3.3-70b-versatile"
         )
-    return Agent(model, output_type=JudgeVerdict, system_prompt=_SYSTEM)
+    fallbacks = [m.strip() for m in os.environ.get("CHATBOT_EVAL_FALLBACK_MODEL", "").split(",") if m.strip()]
+    judge_model = FallbackModel(model, *fallbacks) if fallbacks else model
+    return Agent(judge_model, output_type=JudgeVerdict, system_prompt=_SYSTEM)
 
 
 # ---------------------------------------------------------------------------
