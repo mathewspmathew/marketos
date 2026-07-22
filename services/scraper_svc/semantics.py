@@ -3,7 +3,8 @@ services/scraper_svc/semantics.py
 
 Task 3 — generate_variant_semantics (semantic_queue)
   One Groq call for all ScrapedVariants → bulk-update semanticText → queue embeddings.
-  Uses GROQ_API_KEY.
+  Uses GROQ_API_KEY_SEMANTIC (separate key for TPM isolation from extraction, which
+  shares GROQ_API_KEY with extract_product/extract_candidate).
 
 Task 4 — generate_shopify_variant_semantics (shopify_semantic_queue)
   Same flow for ShopifyVariants. Triggered by the API gateway on product create/update.
@@ -30,10 +31,11 @@ load_dotenv()
 
 logger = structlog.get_logger(__name__)
 
-# Two separate Groq clients so competitor (scraper) and Shopify-side semantic
-# generation each get their own TPM budget on the Groq free tier. Both fall
-# back to GROQ_API_KEY_BACKUP if their primary key auth fails.
-_groq_client         = make_groq_client()
+# Three separate Groq clients (extraction has its own via extractor.py) so
+# competitor semantics, Shopify semantics, and extraction each get their own
+# TPM budget on the Groq free tier instead of stacking on one shared key.
+# All fall back to GROQ_API_KEY_BACKUP if their primary key auth fails.
+_groq_client         = make_groq_client(primary_env="GROQ_API_KEY_SEMANTIC")
 _groq_client_shopify = make_groq_client(primary_env="GROQ_API_KEY_SHOPIFY")
 
 GROQ_SEMANTIC_PROMPT = """You are a product cataloguing assistant. For each variant below

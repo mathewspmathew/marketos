@@ -42,6 +42,7 @@ from services.common.gcs_utils import (
 )
 from services.common import models
 from services.common.frequency import next_run_at as _freq_next_run_at
+from services.common.groq_client import make_groq_client
 from services.scraper_svc.extractor import (
     _record_observations,
     extract_listing_with_groq,
@@ -56,6 +57,10 @@ load_dotenv()
 logger = structlog.get_logger(__name__)
 
 _firecrawl_client = V1FirecrawlApp(api_key=os.getenv("FIRECRAWL_API_KEY", "not-set"))
+
+# Own Groq key so extract_candidate's TPM budget is independent from
+# extract_product/rescrape_extract (extractor.py), which share GROQ_API_KEY.
+_groq_client_candidate = make_groq_client(primary_env="GROQ_API_KEY_CANDIDATE")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tunables
@@ -361,7 +366,7 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
         raise self.retry(exc=ValueError("empty markdown"))
 
     try:
-        product = extract_with_groq(markdown, url)
+        product = extract_with_groq(markdown, url, client=_groq_client_candidate)
     except GroqRateLimitError:
         if self.request.retries >= self.max_retries:
             with get_db() as db:

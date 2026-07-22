@@ -5,6 +5,9 @@ Task 2 — extract_product (extraction_queue)
   Download .md from GCS → Groq extraction → upsert via ProductUrl.
   On permanent failure: log via helpers.log_error (stderr).
   Queue generate_variant_semantics.
+  Uses GROQ_API_KEY, shared with rescrape_extract. extract_candidate
+  (candidate.py) calls extract_with_groq() with its own client on
+  GROQ_API_KEY_CANDIDATE for separate TPM isolation.
 """
 
 import json
@@ -86,9 +89,10 @@ def _clean_markdown(markdown: str) -> str:
     return '\n'.join(lines)[:8000]
 
 
-def extract_with_groq(markdown: str, url: str) -> ProductSchema | None:
+def extract_with_groq(markdown: str, url: str, client=None) -> ProductSchema | None:
+    client = client or _groq_client
     try:
-        response = _groq_client.chat.completions.create(
+        response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": "Output JSON only."},

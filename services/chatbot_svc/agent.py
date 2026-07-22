@@ -20,6 +20,8 @@ import logfire
 from dotenv import load_dotenv
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
 
 # Observability: write the agent's span tree to stderr, and upload to Logfire
 # when LOGFIRE_TOKEN is set (see .env / docker-compose). Environments without
@@ -85,7 +87,26 @@ if not _MODEL:
     raise RuntimeError("CHATBOT_MODEL is not set — add it to .env, e.g. CHATBOT_MODEL=groq:openai/gpt-oss-120b")
 _FALLBACK_MODELS = [m.strip() for m in os.environ.get("CHATBOT_FALLBACK_MODEL", "").split(",") if m.strip()]
 
-_model = FallbackModel(_MODEL, *_FALLBACK_MODELS) if _FALLBACK_MODELS else _MODEL
+# Dedicated key so the chatbot's TPM budget is independent from extraction /
+# semantics (services/common/groq_client.py). Falls back to GROQ_API_KEY if unset.
+_CHATBOT_GROQ_PROVIDER = GroqProvider(
+    api_key=os.environ.get("GROQ_API_KEY_CHATBOT") or os.environ.get("GROQ_API_KEY")
+)
+
+
+def _as_model(spec: str) -> GroqModel:
+    """Turn a 'groq:<model-name>' spec into a GroqModel using the chatbot's own key."""
+    provider, model_name = spec.split(":", 1)
+    if provider != "groq":
+        raise ValueError(f"Only groq: models are supported, got {spec!r}")
+    return GroqModel(model_name, provider=_CHATBOT_GROQ_PROVIDER)
+
+
+_model = (
+    FallbackModel(_as_model(_MODEL), *[_as_model(m) for m in _FALLBACK_MODELS])
+    if _FALLBACK_MODELS
+    else _as_model(_MODEL)
+)
 
 agent: Agent[AgentDeps, str] = Agent(
     _model,

@@ -58,6 +58,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_API_KEY_BACKUP=${GROQ_API_KEY_BACKUP}
+      - GROQ_API_KEY_CANDIDATE=${GROQ_API_KEY_CANDIDATE}
       - GCS_IMAGE_BUCKET=${GCS_IMAGE_BUCKET}
       - GCS_MARKDOWN_BUCKET=${GCS_MARKDOWN_BUCKET}
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
@@ -68,8 +69,9 @@ services:
     volumes:
       - ./services:/app/services
       - ~/.config/gcloud:/root/.config/gcloud:ro
-    # concurrency=1 + rate_limit='3/m' = 3 Groq calls/min = ~7800 tokens/min
-    # safely under the free-tier 14400 TPM limit for llama-3.1-8b-instant
+    # extract_product + rescrape_extract share GROQ_API_KEY at 3/m each (~15600
+    # TPM combined). extract_candidate now uses its own GROQ_API_KEY_CANDIDATE
+    # at 3/m so it isn't competing for the same free-tier 14400 TPM budget.
     command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "extraction_queue", "-n", "extraction-worker@%h", "--concurrency=1", "--loglevel=info"]
 
   scheduler-worker:
@@ -116,6 +118,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_API_KEY_BACKUP=${GROQ_API_KEY_BACKUP}
+      - GROQ_API_KEY_SEMANTIC=${GROQ_API_KEY_SEMANTIC}
     depends_on:
       redis:
         condition: service_healthy
@@ -284,6 +287,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_API_KEY_CHATBOT=${GROQ_API_KEY_CHATBOT}
       - CHATBOT_MODEL=${CHATBOT_MODEL}
       - CHATBOT_FALLBACK_MODEL=${CHATBOT_FALLBACK_MODEL:-}
       # Apply actions POST to the React Router app's internal routes. Defaults
