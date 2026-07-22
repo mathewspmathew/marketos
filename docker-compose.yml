@@ -45,7 +45,7 @@ services:
     volumes:
       - ./services:/app/services
       - ~/.config/gcloud:/root/.config/gcloud:ro
-    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "scraping_queue", "-n", "scraper-worker@%h", "--concurrency=2", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "scraping_queue", "-n", "scraper-worker@%h", "--concurrency=1", "--loglevel=info"]
 
   extraction-worker:
     build:
@@ -103,7 +103,7 @@ services:
         condition: service_healthy
     volumes:
       - ./services:/app/services
-    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "discovery_queue", "-n", "discovery-worker@%h", "--concurrency=2", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "discovery_queue", "-n", "discovery-worker@%h", "--concurrency=1", "--loglevel=info"]
 
   semantic-worker:
     build:
@@ -182,7 +182,7 @@ services:
         condition: service_healthy
     volumes:
       - ./services:/app/services
-    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "match_queue", "-n", "matcher-worker@%h", "--concurrency=2", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "match_queue", "-n", "matcher-worker@%h", "--concurrency=1", "--loglevel=info"]
 
   # Single worker handles all dynamic-pricing queues — stats, pricing decisions,
   # Shopify sync (orders/inventory pulls), and Shopify write-back. Combined to
