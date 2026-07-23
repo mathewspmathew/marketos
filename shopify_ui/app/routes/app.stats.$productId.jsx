@@ -76,8 +76,8 @@ function PriceChart({ competitorSeries, productPrice }) {
           const y = PAD.t + innerH - innerH * f;
           return (
             <g key={f}>
-              <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y} stroke="var(--p-color-border, #f3f4f6)" />
-              <text x={PAD.l - 6} y={y + 4} fontSize="10" textAnchor="end" fill="var(--p-color-text-subdued, #6b7280)">
+              <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y} stroke="var(--s-color-border, #f3f4f6)" />
+              <text x={PAD.l - 6} y={y + 4} fontSize="10" textAnchor="end" fill="var(--s-color-text-subdued, #6b7280)">
                 ₹{yVal.toFixed(0)}
               </text>
             </g>
@@ -87,7 +87,7 @@ function PriceChart({ competitorSeries, productPrice }) {
           const [, y] = xy(tMin, productPrice);
           return (
             <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y}
-                  stroke="var(--p-color-text, #111827)" strokeDasharray="4 4" strokeWidth="1.5" />
+                  stroke="var(--s-color-text, #111827)" strokeDasharray="4 4" strokeWidth="1.5" />
           );
         })()}
         {competitorSeries.map((s, i) => {
