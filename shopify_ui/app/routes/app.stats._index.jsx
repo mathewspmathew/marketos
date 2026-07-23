@@ -43,48 +43,63 @@ export default function StatsIndex() {
           <s-text>No products have dynamic pricing turned on yet.</s-text>
         </s-section>
       ) : (
-        <s-section>
-          <s-resource-list>
-            {products.map((p) => (
-              <s-resource-item key={p.id} id={p.id}>
-                <s-stack direction="block" gap="tight" style={{ width: "100%" }}>
-                  <Link to={`/app/stats/${encodeURIComponent(p.id)}`}
-                        style={{ textDecoration: "none", color: "inherit", display: "block" }}>
+        <s-section padding="none">
+          <s-table>
+            <s-table-header-row>
+              <s-table-header listSlot="primary">Product</s-table-header>
+              <s-table-header listSlot="inline">Tier</s-table-header>
+              <s-table-header listSlot="labeled" format="currency">Current price</s-table-header>
+              <s-table-header listSlot="secondary">Last decision</s-table-header>
+            </s-table-header-row>
+            <s-table-body>
+              {products.map((p) => (
+                <s-table-row key={p.id} clickDelegate={`stats-row-link-${p.id}`}>
+                  <s-table-cell>
                     <s-stack direction="inline" gap="base" align="center">
                       {p.imageUrl && (
-                        <img src={p.imageUrl} alt={p.title} width="48" height="48"
+                        <img src={p.imageUrl} alt={p.title} width="32" height="32"
                              style={{ objectFit: "cover", borderRadius: 4 }} />
                       )}
-                      <s-stack direction="block" gap="tight" style={{ flex: 1 }}>
-                        <s-text emphasis="bold">{p.title}</s-text>
-                        <s-text tone="subdued">
-                          Tier {p.tier} · current ₹{p.currentPrice != null ? Number(p.currentPrice).toFixed(2) : "—"} · base ₹{p.avgBasePrice != null ? Number(p.avgBasePrice).toFixed(2) : "—"}
-                        </s-text>
-                      </s-stack>
+                      <Link id={`stats-row-link-${p.id}`} to={`/app/stats/${encodeURIComponent(p.id)}`}>
+                        {p.title}
+                      </Link>
                     </s-stack>
-                  </Link>
-                  {p.lastDecisionAt ? (
-                    <s-stack direction="inline" gap="tight" align="center">
+                  </s-table-cell>
+                  <s-table-cell>Tier {p.tier}</s-table-cell>
+                  <s-table-cell>
+                    <s-stack direction="block" gap="tight">
                       <s-text>
-                        Last: {new Date(p.lastDecisionAt).toLocaleString()}
+                        {p.currentPrice != null ? `₹${Number(p.currentPrice).toFixed(2)}` : "—"}
                       </s-text>
-                      <s-text tone={p.lastChangePct < 0 ? "critical" : "success"}>
-                        {p.lastChangePct != null
-                          ? `${(p.lastChangePct * 100).toFixed(2)}%`
-                          : "no change"}
-                      </s-text>
-                      {p.lastStatus === "applied"  && <s-badge tone="success">Applied</s-badge>}
-                      {p.lastStatus === "failed"   && <s-badge tone="critical">Push failed</s-badge>}
-                      {p.lastStatus === "pending"  && <s-badge tone="warning">Pending push</s-badge>}
-                      {p.lastStatus === "skipped"  && <s-badge tone="subdued">Skipped</s-badge>}
+                      {p.avgBasePrice != null && (
+                        <s-text tone="subdued" size="small">
+                          Base ₹{Number(p.avgBasePrice).toFixed(2)}
+                        </s-text>
+                      )}
                     </s-stack>
-                  ) : (
-                    <s-text tone="subdued">No decisions yet</s-text>
-                  )}
-                </s-stack>
-              </s-resource-item>
-            ))}
-          </s-resource-list>
+                  </s-table-cell>
+                  <s-table-cell>
+                    {p.lastDecisionAt ? (
+                      <s-stack direction="inline" gap="tight" align="center">
+                        <s-text>{new Date(p.lastDecisionAt).toLocaleString()}</s-text>
+                        <s-text tone={p.lastChangePct < 0 ? "critical" : "success"}>
+                          {p.lastChangePct != null
+                            ? `${(p.lastChangePct * 100).toFixed(2)}%`
+                            : "no change"}
+                        </s-text>
+                        {p.lastStatus === "applied"  && <s-badge tone="success">Applied</s-badge>}
+                        {p.lastStatus === "failed"   && <s-badge tone="critical">Push failed</s-badge>}
+                        {p.lastStatus === "pending"  && <s-badge tone="warning">Pending push</s-badge>}
+                        {p.lastStatus === "skipped"  && <s-badge tone="subdued">Skipped</s-badge>}
+                      </s-stack>
+                    ) : (
+                      <s-text tone="subdued">No decisions yet</s-text>
+                    )}
+                  </s-table-cell>
+                </s-table-row>
+              ))}
+            </s-table-body>
+          </s-table>
         </s-section>
       )}
     </s-page>
