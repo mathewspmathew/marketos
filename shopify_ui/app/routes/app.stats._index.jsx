@@ -60,8 +60,12 @@ export default function StatsIndex() {
                         <img src={p.imageUrl} alt="" width="32" height="32"
                              style={{ objectFit: "cover", borderRadius: 4 }} />
                       )}
-                      <Link id={`stats-row-link-${p.id}`} to={`/app/stats/${encodeURIComponent(p.id)}`}>
-                        {p.title}
+                      <Link
+                        id={`stats-row-link-${p.id}`}
+                        to={`/app/stats/${encodeURIComponent(p.id)}`}
+                        style={{ textDecoration: "none", color: "inherit" }}
+                      >
+                        <s-text emphasis="bold">{p.title}</s-text>
                       </Link>
                     </s-stack>
                   </s-table-cell>
