@@ -57,7 +57,7 @@ export default function StatsIndex() {
                   <s-table-cell>
                     <s-stack direction="inline" gap="base" align="center">
                       {p.imageUrl && (
-                        <img src={p.imageUrl} alt={p.title} width="32" height="32"
+                        <img src={p.imageUrl} alt="" width="32" height="32"
                              style={{ objectFit: "cover", borderRadius: 4 }} />
                       )}
                       <Link id={`stats-row-link-${p.id}`} to={`/app/stats/${encodeURIComponent(p.id)}`}>
@@ -65,7 +65,7 @@ export default function StatsIndex() {
                       </Link>
                     </s-stack>
                   </s-table-cell>
-                  <s-table-cell>Tier {p.tier}</s-table-cell>
+                  <s-table-cell>{p.tier}</s-table-cell>
                   <s-table-cell>
                     <s-stack direction="block" gap="tight">
                       <s-text>

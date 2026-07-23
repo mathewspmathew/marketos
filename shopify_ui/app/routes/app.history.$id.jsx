@@ -240,21 +240,23 @@ export default function HistoryPage() {
         ) : (
           <s-table>
             <s-table-header-row>
-              <s-table-header>When</s-table-header>
-              <s-table-header>Old</s-table-header>
-              <s-table-header>New</s-table-header>
-              <s-table-header>Applied</s-table-header>
-              <s-table-header>Reason</s-table-header>
+              <s-table-header listSlot="primary">When</s-table-header>
+              <s-table-header listSlot="labeled" format="currency">Old</s-table-header>
+              <s-table-header listSlot="labeled" format="currency">New</s-table-header>
+              <s-table-header listSlot="inline">Applied</s-table-header>
+              <s-table-header listSlot="secondary">Reason</s-table-header>
             </s-table-header-row>
-            {decisions.slice().reverse().map((d, i) => (
-              <s-table-row key={i}>
-                <s-table-cell>{new Date(d.t).toLocaleString()}</s-table-cell>
-                <s-table-cell>${d.oldPrice.toFixed(2)}</s-table-cell>
-                <s-table-cell>${d.newPrice.toFixed(2)}</s-table-cell>
-                <s-table-cell>{d.applied ? "yes" : "no"}</s-table-cell>
-                <s-table-cell><s-text tone="subdued">{d.reason}</s-text></s-table-cell>
-              </s-table-row>
-            ))}
+            <s-table-body>
+              {decisions.slice().reverse().map((d, i) => (
+                <s-table-row key={i}>
+                  <s-table-cell>{new Date(d.t).toLocaleString()}</s-table-cell>
+                  <s-table-cell>${d.oldPrice.toFixed(2)}</s-table-cell>
+                  <s-table-cell>${d.newPrice.toFixed(2)}</s-table-cell>
+                  <s-table-cell>{d.applied ? "yes" : "no"}</s-table-cell>
+                  <s-table-cell><s-text tone="subdued">{d.reason}</s-text></s-table-cell>
+                </s-table-row>
+              ))}
+            </s-table-body>
           </s-table>
         )}
       </s-section>
