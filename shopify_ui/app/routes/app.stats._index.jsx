@@ -67,7 +67,7 @@ export default function StatsIndex() {
                   </s-table-cell>
                   <s-table-cell>{p.tier}</s-table-cell>
                   <s-table-cell>
-                    <s-stack direction="block" gap="tight">
+                    <s-stack direction="block" gap="small">
                       <s-text>
                         {p.currentPrice != null ? `₹${Number(p.currentPrice).toFixed(2)}` : "—"}
                       </s-text>
@@ -80,7 +80,7 @@ export default function StatsIndex() {
                   </s-table-cell>
                   <s-table-cell>
                     {p.lastDecisionAt ? (
-                      <s-stack direction="inline" gap="tight" alignItems="center">
+                      <s-stack direction="inline" gap="small" alignItems="center">
                         <s-text>{new Date(p.lastDecisionAt).toLocaleString()}</s-text>
                         <s-text tone={p.lastChangePct < 0 ? "critical" : "success"}>
                           {p.lastChangePct != null

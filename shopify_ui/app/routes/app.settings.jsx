@@ -374,7 +374,7 @@ export default function SettingsPage() {
             {form.marketplaceBlocklist.length === 0 ? (
               <s-text tone="subdued" style={{ fontSize: "0.85em" }}>No domains excluded — all marketplaces are eligible for discovery.</s-text>
             ) : (
-              <s-stack direction="block" gap="tight">
+              <s-stack direction="block" gap="small">
                 {form.marketplaceBlocklist.map((domain) => (
                   <div key={domain} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#f6f6f7", borderRadius: "6px" }}>
                     <span>{domain}</span>

@@ -25,14 +25,14 @@ function CompetitorRow({ m, onConfirm, onReject, actionable = true, showConfirme
           {m.scrapedImageUrl && (
             <img src={m.scrapedImageUrl} alt={m.scrapedTitle} width="40" height="40" style={{ objectFit: "cover", borderRadius: 4 }} />
           )}
-          <s-stack direction="block" gap="tight">
+          <s-stack direction="block" gap="small">
             <s-text emphasis="bold">{m.scrapedTitle}</s-text>
             <s-badge>{m.scrapedDomain}</s-badge>
           </s-stack>
         </s-stack>
       </s-table-cell>
       <s-table-cell>
-        <s-stack direction="inline" gap="tight" alignItems="center">
+        <s-stack direction="inline" gap="small" alignItems="center">
           <s-badge tone={m.confidenceTier === "CONFIRMED" ? "success" : "info"}>
             {m.confidenceTier} ({(m.confidence * 100).toFixed(0)}%)
           </s-badge>
@@ -40,14 +40,14 @@ function CompetitorRow({ m, onConfirm, onReject, actionable = true, showConfirme
         </s-stack>
       </s-table-cell>
       <s-table-cell>
-        <s-stack direction="inline" gap="tight" alignItems="center">
+        <s-stack direction="inline" gap="small" alignItems="center">
           {m.competitorPrice && <s-text>₹{m.competitorPrice}</s-text>}
           {m.competitorUrl && <s-link href={m.competitorUrl} target="_blank">Open</s-link>}
         </s-stack>
       </s-table-cell>
       <s-table-cell>
         {actionable && m.confidenceTier === "LIKELY" && m.reviewStatus === "PENDING" && (
-          <s-stack direction="inline" gap="tight">
+          <s-stack direction="inline" gap="small">
             <s-button size="slim" onClick={() => onConfirm(m.id)}>Confirm</s-button>
             <s-button size="slim" variant="plain" onClick={() => onReject(m.id)}>Reject</s-button>
           </s-stack>
@@ -181,7 +181,7 @@ export default function MatchesPage() {
       {/* Products Section */}
       {groups.length === 0 ? (
         <s-section>
-          <s-stack direction="block" gap="tight" alignItems="center">
+          <s-stack direction="block" gap="small" alignItems="center">
             <s-text emphasis="bold">No matches yet</s-text>
             <s-text tone="subdued">Enable Dynamic Pricing on a product to start discovering competitors.</s-text>
           </s-stack>
@@ -192,7 +192,7 @@ export default function MatchesPage() {
             {/* Product Header */}
             <s-stack direction="inline" gap="base" alignItems="center" wrap>
               {product.imageUrl && <img src={product.imageUrl} alt={product.title} width="48" height="48" style={{ objectFit: "cover", borderRadius: 4 }} />}
-              <s-stack direction="block" gap="tight" style={{ flexGrow: 1 }}>
+              <s-stack direction="block" gap="small" style={{ flexGrow: 1 }}>
                 <s-text>{product.merchantPrice ? `Your price: ₹${product.merchantPrice}` : "Price not set"}</s-text>
                 <s-text tone="subdued">{product.matchCount} competitor{product.matchCount !== 1 ? "s" : ""} found</s-text>
               </s-stack>

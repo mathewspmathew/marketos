@@ -12,6 +12,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { getCurrencySymbol } from "../lib/currencyFormatter";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
@@ -31,6 +32,8 @@ export const loader = async ({ request, params }) => {
   if (!product) {
     throw new Response("Product not found", { status: 404 });
   }
+
+  const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain } });
 
   const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const variantIds = product.ShopifyVariant.map((v) => v.id);
@@ -106,6 +109,7 @@ export const loader = async ({ request, params }) => {
 
   return {
     product: { id: product.id, title: product.title, imageUrl: product.imageUrl },
+    currency: shopSettings?.currency,
     decisions: decisions.map((d) => ({
       t: d.decidedAt.toISOString(),
       oldPrice: Number(d.oldPrice),
@@ -160,7 +164,8 @@ function PolyLine({ pts, width, height, tR, pR, stroke, dashed }) {
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#6366f1"];
 
 export default function HistoryPage() {
-  const { product, decisions, competitorSeries, matchActivity } = useLoaderData();
+  const { product, currency, decisions, competitorSeries, matchActivity } = useLoaderData();
+  const sym = getCurrencySymbol(currency);
   const pR = priceRange(decisions, competitorSeries);
   const tR = timeRange(decisions, competitorSeries);
 
@@ -184,20 +189,20 @@ export default function HistoryPage() {
               <PolyLine pts={merchantPts} width={W} height={H} tR={tR} pR={pR} stroke="#111" dashed />
             </svg>
 
-            <s-stack direction="inline" gap="loose" wrap>
-              <s-stack direction="inline" gap="tight" alignItems="center">
+            <s-stack direction="inline" gap="large" wrap>
+              <s-stack direction="inline" gap="small" alignItems="center">
                 <span style={{ display: "inline-block", width: 14, height: 2, borderTop: "2px dashed #111" }} />
                 <s-text>Your suggested price</s-text>
               </s-stack>
               {competitorSeries.map((s, i) => (
-                <s-stack key={s.domain} direction="inline" gap="tight" alignItems="center">
+                <s-stack key={s.domain} direction="inline" gap="small" alignItems="center">
                   <span style={{ display: "inline-block", width: 14, height: 2, background: COLORS[i % COLORS.length] }} />
                   <s-text>{s.domain}</s-text>
                 </s-stack>
               ))}
             </s-stack>
             <s-text tone="subdued">
-              Range: ${pR.min.toFixed(2)} — ${pR.max.toFixed(2)}
+              Range: {sym}{pR.min.toFixed(2)} — {sym}{pR.max.toFixed(2)}
             </s-text>
           </s-stack>
         )}
@@ -207,7 +212,7 @@ export default function HistoryPage() {
         {matchActivity.length === 0 ? (
           <s-text tone="subdued">No match activity yet.</s-text>
         ) : (
-          <s-stack direction="block" gap="tight">
+          <s-stack direction="block" gap="small">
             {matchActivity.map((activity, idx) => (
               <div key={`${activity.matchId}-${idx}`} style={{ padding: "12px", borderRadius: "8px", border: "1px solid #e4e5e7" }}>
                 <s-stack direction="inline" gap="base" justifyContent="space-between">
@@ -217,7 +222,7 @@ export default function HistoryPage() {
                       {activity.type === "rejected" && "✕"}
                       {activity.type === "created" && "★"}
                     </div>
-                    <s-stack direction="block" gap="tight">
+                    <s-stack direction="block" gap="small">
                       <s-text>{activity.description}</s-text>
                       <s-text tone="subdued" style={{ fontSize: "12px" }}>
                         {new Date(activity.timestamp).toLocaleString()}
@@ -250,8 +255,8 @@ export default function HistoryPage() {
               {decisions.slice().reverse().map((d, i) => (
                 <s-table-row key={i}>
                   <s-table-cell>{new Date(d.t).toLocaleString()}</s-table-cell>
-                  <s-table-cell>${d.oldPrice.toFixed(2)}</s-table-cell>
-                  <s-table-cell>${d.newPrice.toFixed(2)}</s-table-cell>
+                  <s-table-cell>{sym}{d.oldPrice.toFixed(2)}</s-table-cell>
+                  <s-table-cell>{sym}{d.newPrice.toFixed(2)}</s-table-cell>
                   <s-table-cell>{d.applied ? "yes" : "no"}</s-table-cell>
                   <s-table-cell><s-text tone="subdued">{d.reason}</s-text></s-table-cell>
                 </s-table-row>

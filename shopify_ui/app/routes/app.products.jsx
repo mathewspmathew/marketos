@@ -525,7 +525,7 @@ export default function HomePage() {
 
       <s-section heading="Products">
         {filteredProducts.length === 0 ? (
-          <s-stack direction="block" gap="tight" alignItems="center">
+          <s-stack direction="block" gap="small" alignItems="center">
             <s-text emphasis="bold">No products match your filters</s-text>
             <s-text tone="subdued">
               Try clearing the search or selecting a different tag or category.
@@ -569,7 +569,7 @@ export default function HomePage() {
                       <div style={{ width: "50px", height: "50px", background: "#ddd", borderRadius: "4px" }} />
                     )}
 
-                    <s-stack direction="block" gap="tight">
+                    <s-stack direction="block" gap="small">
                       <s-text emphasis="bold">{product.title}</s-text>
                       <s-text tone="subdued">{product.productType || "Product"}</s-text>
                     </s-stack>
@@ -577,7 +577,7 @@ export default function HomePage() {
                     <s-text emphasis="bold">{getCurrencySymbol(shopDefaults?.currency)}{product.price}</s-text>
 
                     {isOn ? (
-                      <s-stack direction="inline" gap="tight" alignItems="center">
+                      <s-stack direction="inline" gap="small" alignItems="center">
                         <s-badge tone="success">ON</s-badge>
                         <div style={{ position: "relative" }}>
                           <s-button
@@ -651,7 +651,7 @@ export default function HomePage() {
                         </div>
                       </s-stack>
                     ) : isPausedConfigured ? (
-                      <s-stack direction="inline" gap="tight" alignItems="center">
+                      <s-stack direction="inline" gap="small" alignItems="center">
                         <s-badge tone="warning">Paused</s-badge>
                         <s-button
                           size="slim"

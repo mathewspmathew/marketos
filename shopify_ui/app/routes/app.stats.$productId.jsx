@@ -157,7 +157,7 @@ export default function ProductStatsPage() {
       <s-section heading="Competitor prices (last 30 days)">
         <s-stack direction="block" gap="base">
           <PriceChart competitorSeries={competitorSeries} productPrice={primaryVariantPrice} />
-          <s-stack direction="block" gap="tight">
+          <s-stack direction="block" gap="small">
             <s-text emphasis="bold">Legend</s-text>
             <s-text tone="subdued">Dashed black line = your current price.</s-text>
             {competitorSeries.map((s) => (
@@ -213,11 +213,11 @@ export default function ProductStatsPage() {
                   </s-table-cell>
                   <s-table-cell>{d.tier ?? "—"}</s-table-cell>
                   <s-table-cell>
-                    <s-stack direction="block" gap="tight">
+                    <s-stack direction="block" gap="small">
                       <StatusBadge status={d.status} />
                       {d.clampReason && (
                         d.clampExplanation ? (
-                          <s-stack direction="block" gap="tight">
+                          <s-stack direction="block" gap="small">
                             <s-text tone="subdued">{d.clampExplanation.line1}</s-text>
                             <s-text tone="subdued" size="small">{d.clampExplanation.line2}</s-text>
                           </s-stack>
