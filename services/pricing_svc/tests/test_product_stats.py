@@ -10,7 +10,8 @@ import pytest
 from services.common.db import get_db
 from services.common import models
 from services.pricing_svc.product_stats import (
-    _clamp_explanation, get_match_activity, get_product_stats, list_product_stats,
+    _clamp_explanation, get_match_activity, get_product_stats, list_matches_for_product,
+    list_matches_for_review, list_product_stats,
 )
 
 
@@ -218,3 +219,50 @@ def test_get_match_activity_includes_created_confirmed_and_rejected(seeded_shop)
     assert types == {"created", "confirmed", "rejected"}
     rejected = [e for e in events if e["type"] == "rejected"]
     assert rejected and "Rejected Competitor" in rejected[0]["description"]
+
+
+def test_list_matches_for_review_excludes_weak_and_rejected(seeded_shop):
+    shop, product_id, _variant_id = seeded_shop
+    with get_db() as s:
+        _add_match(s, shop, product_id, tier="CONFIRMED", confirmed=False)
+        _add_match(s, shop, product_id, tier="LIKELY", confirmed=True)
+        _add_match(s, shop, product_id, tier="WEAK", confirmed=False)  # excluded
+
+    with get_db() as s:
+        result = list_matches_for_review(s, shop)
+
+    group = next(g for g in result["groups"] if g["id"] == product_id)
+    assert group["matchCount"] == 2
+    assert group["topMatch"]["confidenceTier"] == "CONFIRMED"
+    assert result["metrics"]["totalProducts"] == 1
+    # Neither match has reviewedAt set yet (_add_match doesn't stamp it).
+    assert result["metrics"]["pendingReviews"] == 2
+
+
+def test_list_matches_for_review_reflects_confirm(seeded_shop):
+    shop, product_id, _variant_id = seeded_shop
+    with get_db() as s:
+        _add_match(s, shop, product_id, tier="LIKELY", confirmed=True)
+        s.query(models.ProductLevelMatch).filter(
+            models.ProductLevelMatch.shopifyProductId == product_id,
+        ).update({"reviewedAt": datetime.now(timezone.utc)}, synchronize_session=False)
+
+    with get_db() as s:
+        result = list_matches_for_review(s, shop)
+
+    assert result["metrics"]["pendingReviews"] == 0
+    assert result["metrics"]["reviewPercentage"] == 100
+
+
+def test_list_matches_for_product_respects_limit_and_ordering(seeded_shop):
+    shop, product_id, _variant_id = seeded_shop
+    with get_db() as s:
+        _add_match(s, shop, product_id, tier="CONFIRMED", confirmed=False)
+        _add_match(s, shop, product_id, tier="LIKELY", confirmed=False)
+
+    with get_db() as s:
+        result = list_matches_for_product(s, shop, product_id, limit=1)
+
+    assert result["totalCount"] == 2
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["confidenceTier"] == "CONFIRMED"

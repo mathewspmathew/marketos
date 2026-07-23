@@ -17,6 +17,14 @@ from sqlalchemy.orm import Session
 
 from services.common.models import PriceDecision, ShopifyProduct, ShopifyVariant, ShopSettings
 
+# Matches page only ever shows CONFIRMED/LIKELY, never WEAK — same tiers the
+# gate above treats as usable, but review status isn't restricted to
+# CONFIRMED here since PENDING LIKELY matches are exactly what need review.
+_REVIEWABLE_TIER_SQL = """
+    AND plm."reviewStatus" != 'REJECTED'
+    AND plm."confidenceTier" IN ('CONFIRMED', 'LIKELY')
+"""
+
 DAYS = 30
 
 # Same gate as decide.py's real pricing eligibility check: CONFIRMED counts
@@ -296,3 +304,165 @@ def get_match_activity(session: Session, shop_domain: str, product_id: str, sinc
 
     events.sort(key=lambda e: e["timestamp"], reverse=True)
     return events
+
+
+def _latest_competitor_prices(session: Session, scraped_product_ids: list[str]) -> dict[str, float]:
+    if not scraped_product_ids:
+        return {}
+    rows = session.execute(
+        text("""
+            SELECT DISTINCT ON ("productId") "productId", "currentPrice"
+            FROM "ScrapedVariant"
+            WHERE "productId" = ANY(:pids)
+            ORDER BY "productId", "updatedAt" DESC
+        """),
+        {"pids": scraped_product_ids},
+    ).all()
+    return {r.productId: float(r.currentPrice) for r in rows}
+
+
+def _competitor_urls(session: Session, scraped_product_ids: list[str]) -> dict[str, str]:
+    if not scraped_product_ids:
+        return {}
+    rows = session.execute(
+        text('SELECT "prodId", url FROM "ProductUrl" WHERE "prodId" = ANY(:pids)'),
+        {"pids": scraped_product_ids},
+    ).all()
+    return {r.prodId: r.url for r in rows}
+
+
+def list_matches_for_review(session: Session, shop_domain: str) -> dict:
+    """Grouped-by-product view for the Matches page (or a chatbot): one top
+    match per product plus counts, ported from app.matches.jsx's loader,
+    which built this shape itself in JS with its own Prisma queries."""
+    rows = session.execute(
+        text(f"""
+            SELECT plm.id, plm.confidence, plm."confidenceTier", plm.source,
+                   plm."reviewStatus", plm."reviewedAt", plm."shopifyProductId",
+                   plm."scrapedProductId",
+                   sp.title AS "scrapedTitle", sp.domain AS "scrapedDomain",
+                   sp."imageUrl" AS "scrapedImageUrl"
+            FROM "ProductLevelMatch" plm
+            JOIN "ScrapedProduct" sp ON sp.id = plm."scrapedProductId"
+            WHERE plm."shopDomain" = :sd
+            {_REVIEWABLE_TIER_SQL}
+            ORDER BY plm."shopifyProductId" ASC, plm.confidence DESC
+        """),
+        {"sd": shop_domain},
+    ).all()
+
+    if not rows:
+        return {
+            "metrics": {"totalProducts": 0, "pendingReviews": 0, "reviewPercentage": 0, "avgConfidence": 0.0},
+            "groups": [],
+        }
+
+    pending_reviews = sum(1 for r in rows if r.reviewedAt is None)
+    total_matches = len(rows)
+    reviewed_matches = total_matches - pending_reviews
+    review_percentage = round((reviewed_matches / total_matches) * 100)
+    avg_confidence = round(sum(float(r.confidence) for r in rows) / total_matches, 1)
+
+    product_ids = list({r.shopifyProductId for r in rows})
+    product_rows = session.execute(
+        text("""
+            SELECT p.id, p.title, p."imageUrl",
+                   (SELECT v."currentPrice" FROM "ShopifyVariant" v
+                    WHERE v."productId" = p.id ORDER BY v.id ASC LIMIT 1) AS "merchantPrice"
+            FROM "ShopifyProduct" p
+            WHERE p.id = ANY(:pids)
+        """),
+        {"pids": product_ids},
+    ).all()
+    product_by_id = {p.id: p for p in product_rows}
+
+    scraped_ids = list({r.scrapedProductId for r in rows})
+    url_by_scraped = _competitor_urls(session, scraped_ids)
+    price_by_scraped = _latest_competitor_prices(session, scraped_ids)
+
+    groups: dict[str, dict] = {}
+    for r in rows:
+        p = product_by_id.get(r.shopifyProductId)
+        if p is None:
+            continue
+        grp = groups.setdefault(r.shopifyProductId, {
+            "id": p.id, "title": p.title, "imageUrl": p.imageUrl,
+            "merchantPrice": str(p.merchantPrice) if p.merchantPrice is not None else None,
+            "matchCount": 0, "topMatch": None,
+        })
+        grp["matchCount"] += 1
+        if grp["topMatch"] is None:
+            grp["topMatch"] = {
+                "id": r.id,
+                "confidence": float(r.confidence),
+                "confidenceTier": r.confidenceTier,
+                "source": r.source,
+                "reviewStatus": r.reviewStatus,
+                "scrapedTitle": r.scrapedTitle,
+                "scrapedDomain": r.scrapedDomain,
+                "scrapedImageUrl": r.scrapedImageUrl,
+                "competitorPrice": str(price_by_scraped[r.scrapedProductId]) if r.scrapedProductId in price_by_scraped else None,
+                "competitorUrl": url_by_scraped.get(r.scrapedProductId),
+                "scrapedProductId": r.scrapedProductId,
+            }
+
+    return {
+        "metrics": {
+            "totalProducts": len(groups),
+            "pendingReviews": pending_reviews,
+            "reviewPercentage": review_percentage,
+            "avgConfidence": avg_confidence,
+        },
+        "groups": list(groups.values()),
+    }
+
+
+def list_matches_for_product(session: Session, shop_domain: str, product_id: str, limit: int) -> dict:
+    """One product's reviewable matches (top `limit` by confidence), ported
+    from app.matches.lazy.jsx's loader."""
+    total_count = session.execute(
+        text(f"""
+            SELECT COUNT(*) FROM "ProductLevelMatch" plm
+            WHERE plm."shopDomain" = :sd AND plm."shopifyProductId" = :pid
+            {_REVIEWABLE_TIER_SQL}
+        """),
+        {"sd": shop_domain, "pid": product_id},
+    ).scalar()
+
+    rows = session.execute(
+        text(f"""
+            SELECT plm.id, plm.confidence, plm."confidenceTier", plm.source, plm."reviewStatus",
+                   plm."scrapedProductId",
+                   sp.title AS "scrapedTitle", sp.domain AS "scrapedDomain", sp."imageUrl" AS "scrapedImageUrl"
+            FROM "ProductLevelMatch" plm
+            JOIN "ScrapedProduct" sp ON sp.id = plm."scrapedProductId"
+            WHERE plm."shopDomain" = :sd AND plm."shopifyProductId" = :pid
+            {_REVIEWABLE_TIER_SQL}
+            ORDER BY plm.confidence DESC
+            LIMIT :limit
+        """),
+        {"sd": shop_domain, "pid": product_id, "limit": limit},
+    ).all()
+
+    scraped_ids = [r.scrapedProductId for r in rows]
+    url_by_scraped = _competitor_urls(session, scraped_ids)
+    price_by_scraped = _latest_competitor_prices(session, scraped_ids)
+
+    matches = [
+        {
+            "id": r.id,
+            "confidence": float(r.confidence),
+            "confidenceTier": r.confidenceTier,
+            "source": r.source,
+            "reviewStatus": r.reviewStatus,
+            "scrapedTitle": r.scrapedTitle,
+            "scrapedDomain": r.scrapedDomain,
+            "scrapedImageUrl": r.scrapedImageUrl,
+            "competitorPrice": str(price_by_scraped[r.scrapedProductId]) if r.scrapedProductId in price_by_scraped else None,
+            "competitorUrl": url_by_scraped.get(r.scrapedProductId),
+            "scrapedProductId": r.scrapedProductId,
+        }
+        for r in rows
+    ]
+
+    return {"matches": matches, "totalCount": total_count}

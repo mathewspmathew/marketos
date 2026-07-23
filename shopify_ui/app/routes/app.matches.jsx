@@ -1,15 +1,16 @@
 /**
  * app.matches.jsx — "Matched competitors" review page. Groups matched
  * competitor products by merchant product (one top match + expandable
- * list per product, fetched lazily via app.matches.lazy.jsx), with
- * confirm/reject actions proxied to services/pricing_svc/match_review.py
- * via /internal/matches/review.
+ * list per product, fetched lazily via app.matches.lazy.jsx). All grouping/
+ * metrics computation lives in services/pricing_svc/product_stats.py
+ * (list_matches_for_review) so the browser and a future chatbot tool see
+ * identical numbers; confirm/reject actions are proxied to
+ * services/pricing_svc/match_review.py via /internal/matches/review.
  */
 import React from "react";
 import { useFetcher, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
-import db from "../db.server";
 import { authenticate } from "../shopify.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
@@ -18,99 +19,13 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  const allMatches = await db.productLevelMatch.findMany({
-    where: {
-      shopDomain,
-      reviewStatus: { not: "REJECTED" },
-      confidenceTier: { in: ["CONFIRMED", "LIKELY"] },
-    },
-    include: {
-      ShopifyProduct: {
-        include: { ShopifyVariant: { take: 1 } },
-      },
-      ScrapedProduct: {
-        include: {
-          ScrapedVariant: {
-            orderBy: { updatedAt: "desc" },
-            take: 1,
-          },
-        },
-      },
-    },
-    orderBy: [{ shopifyProductId: "asc" }, { confidence: "desc" }],
-  });
+  const res = await fetch(
+    `${PYTHON_API_URL}/internal/dynamic-pricing/matches?shop_domain=${encodeURIComponent(shopDomain)}`,
+  );
+  const data = await res.json();
+  if (!data.ok) throw new Response(data.error ?? "Failed to load matches.", { status: 502 });
 
-  // Metrics
-  const uniqueProducts = new Set(allMatches.map((m) => m.shopifyProductId));
-  const totalProducts = uniqueProducts.size;
-  const unreviewed = allMatches.filter((m) => m.reviewedAt === null);
-  const pendingReviews = unreviewed.length;
-  const totalMatches = allMatches.length;
-  const reviewedMatches = totalMatches - pendingReviews;
-  const reviewPercentage = totalMatches > 0 ? Math.round((reviewedMatches / totalMatches) * 100) : 0;
-  const confidenceSum = allMatches.reduce((sum, m) => sum + Number(m.confidence), 0);
-  const avgConfidence = allMatches.length > 0 ? (confidenceSum / allMatches.length).toFixed(1) : "0.0";
-
-  // Group by Shopify product with top 1 match
-  const byProduct = new Map();
-  for (const m of allMatches) {
-    const sp = m.ShopifyProduct;
-    if (!sp) continue;
-    if (!byProduct.has(sp.id)) {
-      byProduct.set(sp.id, {
-        id: sp.id,
-        title: sp.title,
-        imageUrl: sp.imageUrl,
-        merchantPrice: sp.ShopifyVariant[0]?.currentPrice?.toString() ?? null,
-        matchCount: 0,
-        topMatch: null,
-      });
-    }
-    const product = byProduct.get(sp.id);
-    product.matchCount += 1;
-
-    if (!product.topMatch) {
-      const scraped = m.ScrapedProduct;
-      const variant = scraped?.ScrapedVariant[0];
-      product.topMatch = {
-        id: m.id,
-        confidence: Number(m.confidence),
-        confidenceTier: m.confidenceTier,
-        source: m.source,
-        reviewStatus: m.reviewStatus,
-        scrapedTitle: scraped?.title ?? "(missing)",
-        scrapedDomain: scraped?.domain ?? "",
-        scrapedImageUrl: scraped?.imageUrl ?? null,
-        competitorPrice: variant?.currentPrice?.toString() ?? null,
-        competitorUrl: null,
-        scrapedProductId: scraped?.id,
-      };
-    }
-  }
-
-  const topScrapedIds = [...byProduct.values()].map((p) => p.topMatch?.scrapedProductId).filter(Boolean);
-  if (topScrapedIds.length) {
-    const urls = await db.productUrl.findMany({
-      where: { prodId: { in: topScrapedIds } },
-      select: { prodId: true, url: true },
-    });
-    const urlByScraped = new Map(urls.map((u) => [u.prodId, u.url]));
-    for (const grp of byProduct.values()) {
-      if (grp.topMatch) {
-        grp.topMatch.competitorUrl = urlByScraped.get(grp.topMatch.scrapedProductId) ?? null;
-      }
-    }
-  }
-
-  return {
-    metrics: {
-      totalProducts,
-      pendingReviews,
-      reviewPercentage,
-      avgConfidence: parseFloat(avgConfidence),
-    },
-    groups: [...byProduct.values()],
-  };
+  return { metrics: data.metrics, groups: data.groups };
 };
 
 export const action = async ({ request }) => {

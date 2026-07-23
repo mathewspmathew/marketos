@@ -361,6 +361,29 @@ async def dynamic_pricing_match_activity(shop_domain: str, product_id: str, days
         return {"ok": False, "error": "Something went wrong loading match activity."}
 
 
+@app.get("/internal/dynamic-pricing/matches")
+async def dynamic_pricing_matches(shop_domain: str):
+    try:
+        with get_db() as s:
+            return {"ok": True, **product_stats.list_matches_for_review(s, shop_domain)}
+    except Exception:
+        logger.exception("dynamic_pricing_matches_failed", shop_domain=shop_domain)
+        return {"ok": False, "error": "Something went wrong loading matches."}
+
+
+@app.get("/internal/dynamic-pricing/matches/product")
+async def dynamic_pricing_matches_for_product(shop_domain: str, product_id: str, limit: int = 3):
+    try:
+        with get_db() as s:
+            return {"ok": True, **product_stats.list_matches_for_product(s, shop_domain, product_id, limit)}
+    except Exception:
+        logger.exception(
+            "dynamic_pricing_matches_for_product_failed",
+            shop_domain=shop_domain, product_id=product_id,
+        )
+        return {"ok": False, "error": "Something went wrong loading matches for this product."}
+
+
 @app.get("/internal/dynamic-pricing/skip-reasons")
 async def dynamic_pricing_skip_reasons():
     """The full skipReason taxonomy decide.py can write, with whether each
