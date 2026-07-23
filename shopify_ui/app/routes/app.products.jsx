@@ -435,10 +435,6 @@ export default function HomePage() {
     );
   };
 
-  const handleDeleteWithData = (productId) => {
-    setDeleteConfirmId(productId);
-  };
-
   const confirmDelete = (productId) => {
     lastActionRef.current = { productId, priorState: getLocal(productId) };
     setLocalState((prev) => ({
@@ -536,165 +532,162 @@ export default function HomePage() {
             </s-text>
           </s-stack>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "0", border: "1px solid #ddd", borderRadius: "4px", overflow: "hidden" }}>
-            {/* Table Header */}
-            <div style={{ display: "flex", padding: "12px 16px", borderBottom: "2px solid #f0f0f0", background: "#f9f9f9", fontWeight: "bold", fontSize: "12px", color: "#666", gap: "16px", alignItems: "center" }}>
-              <div style={{ width: "50px" }}>Image</div>
-              <div style={{ flex: 1, minWidth: "220px" }}>Product Name</div>
-              <div style={{ width: "70px" }}>Price</div>
-              <div style={{ width: "80px" }}>DP Status</div>
-              <div style={{ width: "100px" }}>Rescrape</div>
-              <div style={{ width: "80px" }}>Matches</div>
-              <div style={{ width: "60px" }}></div>
-            </div>
-
-            {/* Product Rows */}
-            {paginatedProducts.map((product) => {
+          <>
+            {/* Column header — mirrors the row grid below so labels line up with values */}
+            <s-box paddingBlockEnd="tight">
+              <s-grid gridTemplateColumns="50px minmax(180px,1fr) 90px 160px 150px 90px 90px" gap="base" alignItems="center">
+                <div />
+                <s-text tone="subdued" size="small">Product</s-text>
+                <s-text tone="subdued" size="small">Price</s-text>
+                <s-text tone="subdued" size="small">DP status</s-text>
+                <s-text tone="subdued" size="small">Rescrape</s-text>
+                <s-text tone="subdued" size="small">Matches</s-text>
+                <div />
+              </s-grid>
+            </s-box>
+            <s-divider />
+            <s-stack direction="block" gap="none">
+              {paginatedProducts.flatMap((product, idx) => {
               const local = getLocal(product.id);
               const isOn = local.dynamicPricingEnabled;
               const isExpanded = expandedId === product.id;
+              const isPausedConfigured = !isOn && local.frequencyUnit && local.frequencyUnit !== "never";
 
-              return (
-                <div key={product.id}>
+              const row = (
+                <s-box key={product.id} padding="base">
                   {/* Product Row */}
-                  <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid #f0f0f0", alignItems: "center", gap: "16px", background: "white" }}>
-                    {product.imageUrl && (
+                  <s-grid gridTemplateColumns="50px minmax(180px,1fr) 90px 160px 150px 90px 90px" gap="base" alignItems="center">
+                    {product.imageUrl ? (
                       <img
                         src={product.imageUrl}
                         alt={product.title}
                         width="50"
                         height="50"
-                        style={{ objectFit: "cover", borderRadius: "4px", flex: "0 0 50px" }}
+                        style={{ objectFit: "cover", borderRadius: "4px" }}
                       />
+                    ) : (
+                      <div style={{ width: "50px", height: "50px", background: "#ddd", borderRadius: "4px" }} />
                     )}
-                    {!product.imageUrl && (
-                      <div style={{ width: "50px", height: "50px", background: "#ddd", borderRadius: "4px", flex: "0 0 50px" }} />
-                    )}
 
-                    <div style={{ flex: 1, minWidth: "220px" }}>
-                      <div style={{ fontWeight: "500", marginBottom: "4px" }}>{product.title}</div>
-                      <div style={{ fontSize: "12px", color: "#666" }}>{product.productType || "Product"}</div>
-                    </div>
+                    <s-stack direction="block" gap="tight">
+                      <s-text emphasis="bold">{product.title}</s-text>
+                      <s-text tone="subdued">{product.productType || "Product"}</s-text>
+                    </s-stack>
 
-                    <div style={{ width: "70px", fontWeight: "500" }}>{getCurrencySymbol(shopDefaults?.currency)}{product.price}</div>
+                    <s-text emphasis="bold">{getCurrencySymbol(shopDefaults?.currency)}{product.price}</s-text>
 
-                    <div style={{ width: "80px", display: "flex", gap: "6px", alignItems: "center" }}>
-                      {isOn ? (
-                        <>
-                          <span style={{ background: "#4CAF50", color: "white", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>ON</span>
-                          <div style={{ position: "relative" }}>
-                            <s-button
-                              variant="plain"
-                              size="slim"
-                              onClick={() => setOpenMenuId(openMenuId === product.id ? null : product.id)}
-                              style={{ fontSize: "10px", padding: "0 4px" }}
-                            >
-                              ⋮
-                            </s-button>
-                            {openMenuId === product.id && (
-                              <div style={{
-                                position: "absolute",
-                                top: "100%",
-                                right: 0,
-                                background: "white",
-                                border: "1px solid #ddd",
-                                borderRadius: "4px",
-                                boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-                                zIndex: 100,
-                                minWidth: "140px",
-                              }}>
-                                {local.frequencyUnit && local.frequencyUnit !== "never" && (
-                                  <>
-                                    <button
-                                      onClick={() => {
-                                        handlePause(product.id);
-                                        setOpenMenuId(null);
-                                      }}
-                                      style={{
-                                        display: "block",
-                                        width: "100%",
-                                        padding: "8px 12px",
-                                        border: "none",
-                                        background: "none",
-                                        cursor: "pointer",
-                                        fontSize: "12px",
-                                        textAlign: "left",
-                                      }}
-                                      onMouseEnter={(e) => e.target.style.background = "#f5f5f5"}
-                                      onMouseLeave={(e) => e.target.style.background = "none"}
-                                    >
-                                      Pause
-                                    </button>
-                                    <div style={{ borderTop: "1px solid #f0f0f0" }} />
-                                  </>
-                                )}
-                                <button
-                                  onClick={() => {
-                                    handleDeleteWithData(product.id);
-                                    setOpenMenuId(null);
-                                  }}
-                                  style={{
-                                    display: "block",
-                                    width: "100%",
-                                    padding: "8px 12px",
-                                    border: "none",
-                                    background: "none",
-                                    cursor: "pointer",
-                                    fontSize: "12px",
-                                    textAlign: "left",
-                                    color: "#d32f2f",
-                                  }}
-                                  onMouseEnter={(e) => e.target.style.background = "#ffebee"}
-                                  onMouseLeave={(e) => e.target.style.background = "none"}
-                                >
-                                  Delete with Data
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </>
-                      ) : local.frequencyUnit && local.frequencyUnit !== "never" ? (
-                        <span style={{ background: "#FF9800", color: "white", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>Pause</span>
-                      ) : (
-                        <span style={{ background: "#ccc", color: "#666", padding: "4px 8px", borderRadius: "3px", fontSize: "11px" }}>OFF</span>
-                      )}
-                    </div>
-
-                    <div style={{ width: "100px", fontSize: "12px" }}>
-                      {isOn && local.frequencyUnit && local.frequencyUnit !== "never"
-                        ? `${local.frequencyInterval || ""} ${local.frequencyUnit}`
-                        : !isOn && local.frequencyUnit && local.frequencyUnit !== "never"
-                        ? <s-button
+                    {isOn ? (
+                      <s-stack direction="inline" gap="tight" align="center">
+                        <s-badge tone="success">ON</s-badge>
+                        <div style={{ position: "relative" }}>
+                          <s-button
+                            variant="plain"
                             size="slim"
-                            variant="secondary"
-                            onClick={() => {
-                              handleResume(product.id);
-                              setOpenMenuId(null);
-                            }}
-                            style={{ fontSize: "11px" }}
+                            onClick={() => setOpenMenuId(openMenuId === product.id ? null : product.id)}
                           >
-                            Resume
+                            ⋮
                           </s-button>
-                        : "–"}
-                    </div>
+                          {openMenuId === product.id && (
+                            <div style={{
+                              position: "absolute",
+                              top: "100%",
+                              right: 0,
+                              background: "white",
+                              border: "1px solid #ddd",
+                              borderRadius: "4px",
+                              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                              zIndex: 100,
+                              minWidth: "140px",
+                            }}>
+                              {local.frequencyUnit && local.frequencyUnit !== "never" && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      handlePause(product.id);
+                                      setOpenMenuId(null);
+                                    }}
+                                    style={{
+                                      display: "block",
+                                      width: "100%",
+                                      padding: "8px 12px",
+                                      border: "none",
+                                      background: "none",
+                                      cursor: "pointer",
+                                      fontSize: "12px",
+                                      textAlign: "left",
+                                    }}
+                                    onMouseEnter={(e) => e.target.style.background = "#f5f5f5"}
+                                    onMouseLeave={(e) => e.target.style.background = "none"}
+                                  >
+                                    Pause
+                                  </button>
+                                  <div style={{ borderTop: "1px solid #f0f0f0" }} />
+                                </>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setDeleteConfirmId(product.id);
+                                  setOpenMenuId(null);
+                                  document.getElementById("delete-dp-modal")?.showOverlay();
+                                }}
+                                style={{
+                                  display: "block",
+                                  width: "100%",
+                                  padding: "8px 12px",
+                                  border: "none",
+                                  background: "none",
+                                  cursor: "pointer",
+                                  fontSize: "12px",
+                                  textAlign: "left",
+                                  color: "#d32f2f",
+                                }}
+                                onMouseEnter={(e) => e.target.style.background = "#ffebee"}
+                                onMouseLeave={(e) => e.target.style.background = "none"}
+                              >
+                                Delete with Data
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </s-stack>
+                    ) : isPausedConfigured ? (
+                      <s-stack direction="inline" gap="tight" align="center">
+                        <s-badge tone="warning">Paused</s-badge>
+                        <s-button
+                          size="slim"
+                          variant="secondary"
+                          onClick={() => {
+                            handleResume(product.id);
+                            setOpenMenuId(null);
+                          }}
+                        >
+                          Resume
+                        </s-button>
+                      </s-stack>
+                    ) : (
+                      <s-badge tone="subdued">OFF</s-badge>
+                    )}
 
-                    <div style={{ width: "80px", fontSize: "12px" }}>{product.matchCount || 0}</div>
+                    {isOn && local.frequencyUnit && local.frequencyUnit !== "never" ? (
+                      <s-text tone="subdued">Rescrape every {local.frequencyInterval || ""} {local.frequencyUnit}</s-text>
+                    ) : !isOn && !isPausedConfigured ? (
+                      <s-text tone="subdued">–</s-text>
+                    ) : null}
 
-                    <div style={{ width: "60px" }}>
-                      <s-button
-                        variant="plain"
-                        size="slim"
-                        onClick={() => toggleExpand(product.id)}
-                        style={{ fontSize: "11px" }}
-                      >
-                        {isExpanded ? "▾ Hide" : "▸ Details"}
-                      </s-button>
-                    </div>
-                  </div>
+                    <s-text tone="subdued">{product.matchCount || 0} match{product.matchCount === 1 ? "" : "es"}</s-text>
+
+                    <s-button
+                      variant="plain"
+                      size="slim"
+                      onClick={() => toggleExpand(product.id)}
+                    >
+                      {isExpanded ? "▾ Hide" : "▸ Details"}
+                    </s-button>
+                  </s-grid>
 
                   {/* Expanded Details Panel */}
                   {isExpanded && (
-                    <div style={{ padding: "20px 16px", borderBottom: "1px solid #f0f0f0", background: "#f9f9f9" }}>
+                    <div style={{ marginTop: "16px" }}>
                       <s-box
                         padding="base"
                         borderWidth="base"
@@ -932,9 +925,12 @@ export default function HomePage() {
                       </s-box>
                     </div>
                   )}
-                </div>
+                </s-box>
               );
-            })}
+
+              return idx === 0 ? [row] : [<s-divider key={`div-${product.id}`} />, row];
+              })}
+            </s-stack>
 
             {/* Pagination Controls */}
             <div style={{ display: "flex", justifyContent: "center", gap: "8px", padding: "16px", borderTop: "1px solid #f0f0f0", fontSize: "12px" }}>
@@ -968,65 +964,21 @@ export default function HomePage() {
                 Next →
               </s-button>
             </div>
-          </div>
+          </>
         )}
 
         {/* Delete Confirmation Modal */}
-        {deleteConfirmId && (
-          <div style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}>
-            <div style={{
-              background: "white",
-              borderRadius: "8px",
-              padding: "24px",
-              maxWidth: "400px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-            }}>
-              <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: "600" }}>
-                Delete Dynamic Pricing?
-              </h3>
-              <p style={{ margin: "0 0 20px 0", fontSize: "14px", color: "#666" }}>
-                This will permanently delete all dynamic pricing configuration, competitor matches, and scraped product data for this product. This action cannot be undone.
-              </p>
-              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-                <button
-                  onClick={() => setDeleteConfirmId(null)}
-                  style={{
-                    padding: "8px 16px",
-                    border: "1px solid #ddd",
-                    borderRadius: "4px",
-                    background: "white",
-                    cursor: "pointer",
-                    fontSize: "14px",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => confirmDelete(deleteConfirmId)}
-                  style={{
-                    padding: "8px 16px",
-                    border: "none",
-                    borderRadius: "4px",
-                    background: "#d32f2f",
-                    color: "white",
-                    cursor: "pointer",
-                    fontSize: "14px",
-                  }}
-                >
-                  Delete with Data
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <s-modal id="delete-dp-modal" heading="Delete Dynamic Pricing?" size="small">
+          <s-text>
+            This will permanently delete all dynamic pricing configuration, competitor matches, and scraped product data for this product. This action cannot be undone.
+          </s-text>
+          <s-button slot="secondary-actions" commandFor="delete-dp-modal" command="--hide" onClick={() => setDeleteConfirmId(null)}>
+            Cancel
+          </s-button>
+          <s-button slot="primary-action" tone="critical" commandFor="delete-dp-modal" command="--hide" onClick={() => confirmDelete(deleteConfirmId)}>
+            Delete with Data
+          </s-button>
+        </s-modal>
       </s-section>
     </s-page>
   );
