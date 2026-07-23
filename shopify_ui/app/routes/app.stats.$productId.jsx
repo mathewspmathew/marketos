@@ -125,7 +125,7 @@ export default function ProductStatsPage() {
   return (
     <s-page heading={product.title}>
       <s-section>
-        <s-stack direction="inline" gap="base" align="center" wrap>
+        <s-stack direction="inline" gap="base" alignItems="center" wrap>
           <s-button variant="plain" icon="arrow-left" href="/app/stats">Back to all stats</s-button>
           <s-link href={product.adminProductUrl} target="_blank">
             Open in Shopify admin ↗

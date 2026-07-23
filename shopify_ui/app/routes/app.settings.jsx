@@ -631,7 +631,7 @@ export default function SettingsPage() {
         </s-stack>
       </s-section>
 
-      <s-stack direction="inline" gap="base" align="center">
+      <s-stack direction="inline" gap="base" alignItems="center">
         <s-button variant="primary" onClick={submit}>Save settings</s-button>
         {isDirty && <s-text tone="warning">Not saved</s-text>}
         {showSavedMessage && <s-text tone="success">Saved!</s-text>}

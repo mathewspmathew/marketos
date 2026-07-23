@@ -21,7 +21,7 @@ function CompetitorRow({ m, onConfirm, onReject, actionable = true, showConfirme
   return (
     <s-table-row>
       <s-table-cell>
-        <s-stack direction="inline" gap="base" align="center">
+        <s-stack direction="inline" gap="base" alignItems="center">
           {m.scrapedImageUrl && (
             <img src={m.scrapedImageUrl} alt={m.scrapedTitle} width="40" height="40" style={{ objectFit: "cover", borderRadius: 4 }} />
           )}
@@ -32,7 +32,7 @@ function CompetitorRow({ m, onConfirm, onReject, actionable = true, showConfirme
         </s-stack>
       </s-table-cell>
       <s-table-cell>
-        <s-stack direction="inline" gap="tight" align="center">
+        <s-stack direction="inline" gap="tight" alignItems="center">
           <s-badge tone={m.confidenceTier === "CONFIRMED" ? "success" : "info"}>
             {m.confidenceTier} ({(m.confidence * 100).toFixed(0)}%)
           </s-badge>
@@ -40,7 +40,7 @@ function CompetitorRow({ m, onConfirm, onReject, actionable = true, showConfirme
         </s-stack>
       </s-table-cell>
       <s-table-cell>
-        <s-stack direction="inline" gap="tight" align="center">
+        <s-stack direction="inline" gap="tight" alignItems="center">
           {m.competitorPrice && <s-text>₹{m.competitorPrice}</s-text>}
           {m.competitorUrl && <s-link href={m.competitorUrl} target="_blank">Open</s-link>}
         </s-stack>
@@ -181,7 +181,7 @@ export default function MatchesPage() {
       {/* Products Section */}
       {groups.length === 0 ? (
         <s-section>
-          <s-stack direction="block" gap="tight" align="center">
+          <s-stack direction="block" gap="tight" alignItems="center">
             <s-text emphasis="bold">No matches yet</s-text>
             <s-text tone="subdued">Enable Dynamic Pricing on a product to start discovering competitors.</s-text>
           </s-stack>
@@ -190,7 +190,7 @@ export default function MatchesPage() {
         groups.map((product) => (
           <s-section key={product.id} heading={product.title}>
             {/* Product Header */}
-            <s-stack direction="inline" gap="base" align="center" wrap>
+            <s-stack direction="inline" gap="base" alignItems="center" wrap>
               {product.imageUrl && <img src={product.imageUrl} alt={product.title} width="48" height="48" style={{ objectFit: "cover", borderRadius: 4 }} />}
               <s-stack direction="block" gap="tight" style={{ flexGrow: 1 }}>
                 <s-text>{product.merchantPrice ? `Your price: ₹${product.merchantPrice}` : "Price not set"}</s-text>

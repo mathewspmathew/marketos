@@ -185,12 +185,12 @@ export default function HistoryPage() {
             </svg>
 
             <s-stack direction="inline" gap="loose" wrap>
-              <s-stack direction="inline" gap="tight" align="center">
+              <s-stack direction="inline" gap="tight" alignItems="center">
                 <span style={{ display: "inline-block", width: 14, height: 2, borderTop: "2px dashed #111" }} />
                 <s-text>Your suggested price</s-text>
               </s-stack>
               {competitorSeries.map((s, i) => (
-                <s-stack key={s.domain} direction="inline" gap="tight" align="center">
+                <s-stack key={s.domain} direction="inline" gap="tight" alignItems="center">
                   <span style={{ display: "inline-block", width: 14, height: 2, background: COLORS[i % COLORS.length] }} />
                   <s-text>{s.domain}</s-text>
                 </s-stack>
@@ -210,8 +210,8 @@ export default function HistoryPage() {
           <s-stack direction="block" gap="tight">
             {matchActivity.map((activity, idx) => (
               <div key={`${activity.matchId}-${idx}`} style={{ padding: "12px", borderRadius: "8px", border: "1px solid #e4e5e7" }}>
-                <s-stack direction="inline" gap="base" align="space-between">
-                  <s-stack direction="inline" gap="base" align="start">
+                <s-stack direction="inline" gap="base" justifyContent="space-between">
+                  <s-stack direction="inline" gap="base" alignItems="start">
                     <div style={{ fontSize: "16px" }}>
                       {activity.type === "confirmed" && "✓"}
                       {activity.type === "rejected" && "✕"}

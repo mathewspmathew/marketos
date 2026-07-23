@@ -55,7 +55,7 @@ export default function StatsIndex() {
               {products.map((p) => (
                 <s-table-row key={p.id} clickDelegate={`stats-row-link-${p.id}`}>
                   <s-table-cell>
-                    <s-stack direction="inline" gap="base" align="center">
+                    <s-stack direction="inline" gap="base" alignItems="center">
                       {p.imageUrl && (
                         <img src={p.imageUrl} alt="" width="32" height="32"
                              style={{ objectFit: "cover", borderRadius: 4 }} />
@@ -80,7 +80,7 @@ export default function StatsIndex() {
                   </s-table-cell>
                   <s-table-cell>
                     {p.lastDecisionAt ? (
-                      <s-stack direction="inline" gap="tight" align="center">
+                      <s-stack direction="inline" gap="tight" alignItems="center">
                         <s-text>{new Date(p.lastDecisionAt).toLocaleString()}</s-text>
                         <s-text tone={p.lastChangePct < 0 ? "critical" : "success"}>
                           {p.lastChangePct != null

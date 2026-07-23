@@ -525,7 +525,7 @@ export default function HomePage() {
 
       <s-section heading="Products">
         {filteredProducts.length === 0 ? (
-          <s-stack direction="block" gap="tight" align="center">
+          <s-stack direction="block" gap="tight" alignItems="center">
             <s-text emphasis="bold">No products match your filters</s-text>
             <s-text tone="subdued">
               Try clearing the search or selecting a different tag or category.
@@ -577,7 +577,7 @@ export default function HomePage() {
                     <s-text emphasis="bold">{getCurrencySymbol(shopDefaults?.currency)}{product.price}</s-text>
 
                     {isOn ? (
-                      <s-stack direction="inline" gap="tight" align="center">
+                      <s-stack direction="inline" gap="tight" alignItems="center">
                         <s-badge tone="success">ON</s-badge>
                         <div style={{ position: "relative" }}>
                           <s-button
@@ -651,7 +651,7 @@ export default function HomePage() {
                         </div>
                       </s-stack>
                     ) : isPausedConfigured ? (
-                      <s-stack direction="inline" gap="tight" align="center">
+                      <s-stack direction="inline" gap="tight" alignItems="center">
                         <s-badge tone="warning">Paused</s-badge>
                         <s-button
                           size="slim"
@@ -783,7 +783,7 @@ export default function HomePage() {
                               <s-text tone="subdued" style={SECTION_HELP_TEXT_STYLE}>
                                 Which strategy should we use to price relative to competitors?
                               </s-text>
-                              <s-stack direction="inline" gap="base" align="center">
+                              <s-stack direction="inline" gap="base" alignItems="center">
                                 {["BUDGET", "COMPETITIVE", "PREMIUM"].map((t) => (
                                   <label key={t} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
                                     <input
@@ -894,7 +894,7 @@ export default function HomePage() {
                           {/* === ACTION BUTTONS (at bottom, after all inputs) === */}
                           <s-divider />
 
-                          <s-stack direction="inline" gap="base" align="center">
+                          <s-stack direction="inline" gap="base" alignItems="center">
                             <s-button
                               variant="primary"
                               onClick={() => submitOverrides(product.id, { enable: !isOn })}
