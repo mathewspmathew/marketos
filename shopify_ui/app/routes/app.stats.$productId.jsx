@@ -8,11 +8,13 @@
  * chatbot) see identical numbers:
  *   - Header chips (tier / base / current) + open-in-Shopify-admin link
  *   - Empty-state banner when matches < minCompetitorsToPrice
- *   - 30-day competitor price chart (inline SVG, no chart lib)
- *   - Decision history table with explicit applied / failed / pending /
- *     skipped status — distinct from "intent to apply"
+ *   - 30-day competitor price chart (inline SVG, no chart lib — Polaris
+ *     Viz was evaluated and rejected, see docs/superpowers/specs/
+ *     2026-07-23-stats-matches-polaris-ui-refactor-design.md)
+ *   - Decision history table (s-table) with explicit applied / failed /
+ *     pending / skipped status — distinct from "intent to apply"
  */
-import { useLoaderData, Link } from "react-router";
+import { useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
@@ -35,7 +37,7 @@ export const loader = async ({ request, params }) => {
   return { product: data.product, decisions: data.decisions, competitorSeries: data.competitorSeries, waiting: data.waiting };
 };
 
-// ─── SVG line chart (Polaris has no built-in chart primitive) ─────────────
+// ─── SVG line chart (Polaris has no built-in chart primitive; polaris-viz is decommissioned) ─
 function PriceChart({ competitorSeries, productPrice }) {
   const W = 720;
   const H = 240;
@@ -67,34 +69,36 @@ function PriceChart({ competitorSeries, productPrice }) {
   const palette = ["#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ca8a04", "#0891b2", "#db2777", "#65a30d"];
 
   return (
-    <svg width={W} height={H} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 4 }}>
-      {[0, 0.25, 0.5, 0.75, 1].map((f) => {
-        const yVal = pMin + (pMax - pMin) * f;
-        const y = PAD.t + innerH - innerH * f;
-        return (
-          <g key={f}>
-            <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y} stroke="#f3f4f6" />
-            <text x={PAD.l - 6} y={y + 4} fontSize="10" textAnchor="end" fill="#6b7280">
-              ₹{yVal.toFixed(0)}
-            </text>
-          </g>
-        );
-      })}
-      {productPrice && (() => {
-        const [, y] = xy(tMin, productPrice);
-        return (
-          <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y}
-                stroke="#111827" strokeDasharray="4 4" strokeWidth="1.5" />
-        );
-      })()}
-      {competitorSeries.map((s, i) => {
-        const pts = s.points.map((p) => xy(p.t, p.price).join(",")).join(" ");
-        return (
-          <polyline key={s.id} points={pts} fill="none"
-                    stroke={palette[i % palette.length]} strokeWidth="1.5" />
-        );
-      })}
-    </svg>
+    <s-box padding="base" borderRadius="base" borderWidth="base" borderColor="base">
+      <svg width={W} height={H}>
+        {[0, 0.25, 0.5, 0.75, 1].map((f) => {
+          const yVal = pMin + (pMax - pMin) * f;
+          const y = PAD.t + innerH - innerH * f;
+          return (
+            <g key={f}>
+              <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y} stroke="var(--p-color-border, #f3f4f6)" />
+              <text x={PAD.l - 6} y={y + 4} fontSize="10" textAnchor="end" fill="var(--p-color-text-subdued, #6b7280)">
+                ₹{yVal.toFixed(0)}
+              </text>
+            </g>
+          );
+        })}
+        {productPrice && (() => {
+          const [, y] = xy(tMin, productPrice);
+          return (
+            <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y}
+                  stroke="var(--p-color-text, #111827)" strokeDasharray="4 4" strokeWidth="1.5" />
+          );
+        })()}
+        {competitorSeries.map((s, i) => {
+          const pts = s.points.map((p) => xy(p.t, p.price).join(",")).join(" ");
+          return (
+            <polyline key={s.id} points={pts} fill="none"
+                      stroke={palette[i % palette.length]} strokeWidth="1.5" />
+          );
+        })}
+      </svg>
+    </s-box>
   );
 }
 
@@ -122,7 +126,7 @@ export default function ProductStatsPage() {
     <s-page heading={product.title}>
       <s-section>
         <s-stack direction="inline" gap="base" align="center" wrap>
-          <Link to="/app/stats">← Back to all stats</Link>
+          <s-button variant="plain" icon="arrow-left" href="/app/stats">Back to all stats</s-button>
           <s-link href={product.adminProductUrl} target="_blank">
             Open in Shopify admin ↗
           </s-link>
@@ -169,33 +173,33 @@ export default function ProductStatsPage() {
         {decisions.length === 0 ? (
           <s-text tone="subdued">No price decisions yet for this product.</s-text>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--p-color-border, #e5e7eb)" }}>
-                <th style={{ padding: 8, fontWeight: 600 }}>When</th>
-                <th style={{ padding: 8, fontWeight: 600 }}>Old → New</th>
-                <th style={{ padding: 8, fontWeight: 600 }}>Δ</th>
-                <th style={{ padding: 8, fontWeight: 600 }}>Ref</th>
-                <th style={{ padding: 8, fontWeight: 600 }}>Comps</th>
-                <th style={{ padding: 8, fontWeight: 600 }}>Tier</th>
-                <th style={{ padding: 8, fontWeight: 600 }}>Status</th>
-                <th style={{ padding: 8, fontWeight: 600 }}>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
+          <s-table>
+            <s-table-header-row>
+              <s-table-header listSlot="primary">When</s-table-header>
+              <s-table-header listSlot="secondary">Old → New</s-table-header>
+              <s-table-header listSlot="labeled" format="numeric">Δ</s-table-header>
+              <s-table-header listSlot="labeled" format="currency">Ref</s-table-header>
+              <s-table-header listSlot="labeled" format="numeric">Comps</s-table-header>
+              <s-table-header listSlot="inline">Tier</s-table-header>
+              <s-table-header listSlot="labeled">Status</s-table-header>
+              <s-table-header listSlot="labeled">Reason</s-table-header>
+            </s-table-header-row>
+            <s-table-body>
               {decisions.map((d) => (
-                <tr key={d.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                  <td style={{ padding: 8 }}>{new Date(d.decidedAt).toLocaleString()}</td>
-                  <td style={{ padding: 8 }}>
+                <s-table-row key={d.id}>
+                  <s-table-cell>{new Date(d.decidedAt).toLocaleString()}</s-table-cell>
+                  <s-table-cell>
                     ₹{d.oldPrice.toFixed(2)} → ₹{d.newPrice.toFixed(2)}
-                  </td>
-                  <td style={{ padding: 8, color: (d.changePct ?? 0) < 0 ? "#dc2626" : "#16a34a" }}>
-                    {d.changePct != null ? `${(d.changePct * 100).toFixed(2)}%` : "—"}
-                  </td>
-                  <td style={{ padding: 8 }}>
+                  </s-table-cell>
+                  <s-table-cell>
+                    <s-text tone={(d.changePct ?? 0) < 0 ? "critical" : "success"}>
+                      {d.changePct != null ? `${(d.changePct * 100).toFixed(2)}%` : "—"}
+                    </s-text>
+                  </s-table-cell>
+                  <s-table-cell>
                     {d.refPrice != null ? `₹${d.refPrice.toFixed(2)}` : "—"}
-                  </td>
-                  <td style={{ padding: 8 }}>
+                  </s-table-cell>
+                  <s-table-cell>
                     {d.competitorsUsed}
                     {(d.oosObservations > 0 || d.currencyDrops > 0) && (
                       <s-text tone="subdued">
@@ -206,9 +210,9 @@ export default function ProductStatsPage() {
                         {")"}
                       </s-text>
                     )}
-                  </td>
-                  <td style={{ padding: 8 }}>{d.tier ?? "—"}</td>
-                  <td style={{ padding: 8 }}>
+                  </s-table-cell>
+                  <s-table-cell>{d.tier ?? "—"}</s-table-cell>
+                  <s-table-cell>
                     <s-stack direction="block" gap="tight">
                       <StatusBadge status={d.status} />
                       {d.clampReason && (
@@ -226,12 +230,14 @@ export default function ProductStatsPage() {
                         <s-text tone="critical">{d.applyError}</s-text>
                       )}
                     </s-stack>
-                  </td>
-                  <td style={{ padding: 8, color: "#6b7280" }}>{d.reason}</td>
-                </tr>
+                  </s-table-cell>
+                  <s-table-cell>
+                    <s-text tone="subdued">{d.reason}</s-text>
+                  </s-table-cell>
+                </s-table-row>
               ))}
-            </tbody>
-          </table>
+            </s-table-body>
+          </s-table>
         )}
       </s-section>
     </s-page>
