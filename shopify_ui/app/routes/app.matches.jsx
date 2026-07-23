@@ -15,6 +15,59 @@ import { authenticate } from "../shopify.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
+// One row of a competitor-match table: shared by the top-match, expanded-top-3,
+// and all-matches sections below, which all render the exact same match shape.
+function CompetitorRow({ m, onConfirm, onReject, actionable = true, showConfirmedBadge = false }) {
+  return (
+    <s-table-row>
+      <s-table-cell>
+        <s-stack direction="inline" gap="base" align="center">
+          {m.scrapedImageUrl && (
+            <img src={m.scrapedImageUrl} alt={m.scrapedTitle} width="40" height="40" style={{ objectFit: "cover", borderRadius: 4 }} />
+          )}
+          <s-stack direction="block" gap="tight">
+            <s-text emphasis="bold">{m.scrapedTitle}</s-text>
+            <s-badge>{m.scrapedDomain}</s-badge>
+          </s-stack>
+        </s-stack>
+      </s-table-cell>
+      <s-table-cell>
+        <s-stack direction="inline" gap="tight" align="center">
+          <s-badge tone={m.confidenceTier === "CONFIRMED" ? "success" : "info"}>
+            {m.confidenceTier} ({(m.confidence * 100).toFixed(0)}%)
+          </s-badge>
+          {showConfirmedBadge && m.reviewStatus === "CONFIRMED" && <s-badge tone="success">Confirmed</s-badge>}
+        </s-stack>
+      </s-table-cell>
+      <s-table-cell>
+        <s-stack direction="inline" gap="tight" align="center">
+          {m.competitorPrice && <s-text>₹{m.competitorPrice}</s-text>}
+          {m.competitorUrl && <s-link href={m.competitorUrl} target="_blank">Open</s-link>}
+        </s-stack>
+      </s-table-cell>
+      <s-table-cell>
+        {actionable && m.confidenceTier === "LIKELY" && m.reviewStatus === "PENDING" && (
+          <s-stack direction="inline" gap="tight">
+            <s-button size="slim" onClick={() => onConfirm(m.id)}>Confirm</s-button>
+            <s-button size="slim" variant="plain" onClick={() => onReject(m.id)}>Reject</s-button>
+          </s-stack>
+        )}
+      </s-table-cell>
+    </s-table-row>
+  );
+}
+
+function MatchTableHeader() {
+  return (
+    <s-table-header-row>
+      <s-table-header listSlot="primary">Product</s-table-header>
+      <s-table-header listSlot="labeled">Confidence</s-table-header>
+      <s-table-header listSlot="secondary">Price</s-table-header>
+      <s-table-header listSlot="inline">Actions</s-table-header>
+    </s-table-header-row>
+  );
+}
+
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
@@ -151,59 +204,24 @@ export default function MatchesPage() {
 
             {/* Top Match (always shown) */}
             {product.topMatch && (
-              <s-resource-list>
-                <s-resource-item key={product.topMatch.id}>
-                  {product.topMatch.scrapedImageUrl && (
-                    <img slot="media" src={product.topMatch.scrapedImageUrl} alt={product.topMatch.scrapedTitle} width="50" height="50" style={{ objectFit: "cover", borderRadius: 4 }} />
-                  )}
-                  <s-stack direction="block" gap="tight">
-                    <s-stack direction="inline" gap="base" align="center">
-                      <s-text emphasis="bold">{product.topMatch.scrapedTitle}</s-text>
-                      <s-badge>{product.topMatch.scrapedDomain}</s-badge>
-                      <s-badge tone={product.topMatch.confidenceTier === "CONFIRMED" ? "success" : "info"}>
-                        {product.topMatch.confidenceTier} ({(product.topMatch.confidence * 100).toFixed(0)}%)
-                      </s-badge>
-                      {product.topMatch.reviewStatus === "CONFIRMED" && <s-badge tone="success">Confirmed</s-badge>}
-                    </s-stack>
-                    <s-stack direction="inline" gap="loose" align="center">
-                      {product.topMatch.competitorPrice && <s-text>Their price: ₹{product.topMatch.competitorPrice}</s-text>}
-                      {product.topMatch.competitorUrl && <s-link href={product.topMatch.competitorUrl} target="_blank">Open</s-link>}
-                    </s-stack>
-                  </s-stack>
-                </s-resource-item>
-              </s-resource-list>
+              <s-table>
+                <MatchTableHeader />
+                <s-table-body>
+                  <CompetitorRow m={product.topMatch} actionable={false} showConfirmedBadge />
+                </s-table-body>
+              </s-table>
             )}
 
             {/* Expanded Matches (Top 3) */}
             {expandedProducts[product.id] && matchesCache[product.id] && (
-              <s-resource-list>
-                {matchesCache[product.id].slice(0, 3).map((m) => (
-                  <s-resource-item key={m.id} id={m.id}>
-                    {m.scrapedImageUrl && (
-                      <img slot="media" src={m.scrapedImageUrl} alt={m.scrapedTitle} width="50" height="50" style={{ objectFit: "cover", borderRadius: 4 }} />
-                    )}
-                    <s-stack direction="block" gap="tight">
-                      <s-stack direction="inline" gap="base" align="center">
-                        <s-text emphasis="bold">{m.scrapedTitle}</s-text>
-                        <s-badge>{m.scrapedDomain}</s-badge>
-                        <s-badge tone={m.confidenceTier === "CONFIRMED" ? "success" : "info"}>
-                          {m.confidenceTier} ({(m.confidence * 100).toFixed(0)}%)
-                        </s-badge>
-                      </s-stack>
-                      <s-stack direction="inline" gap="loose" align="center">
-                        {m.competitorPrice && <s-text>₹{m.competitorPrice}</s-text>}
-                        {m.competitorUrl && <s-link href={m.competitorUrl} target="_blank">Open</s-link>}
-                        {m.confidenceTier === "LIKELY" && m.reviewStatus === "PENDING" && (
-                          <>
-                            <s-button size="slim" onClick={() => act(m.id, "confirm")}>Confirm</s-button>
-                            <s-button size="slim" variant="plain" onClick={() => act(m.id, "reject")}>Reject</s-button>
-                          </>
-                        )}
-                      </s-stack>
-                    </s-stack>
-                  </s-resource-item>
-                ))}
-              </s-resource-list>
+              <s-table>
+                <MatchTableHeader />
+                <s-table-body>
+                  {matchesCache[product.id].slice(0, 3).map((m) => (
+                    <CompetitorRow key={m.id} m={m} onConfirm={(id) => act(id, "confirm")} onReject={(id) => act(id, "reject")} />
+                  ))}
+                </s-table-body>
+              </s-table>
             )}
 
             {/* View All Button */}
@@ -215,34 +233,14 @@ export default function MatchesPage() {
 
             {/* All Matches */}
             {expandedProducts[product.id] && matchesCache[`${product.id}-all`] && (
-              <s-resource-list>
-                {matchesCache[`${product.id}-all`].map((m) => (
-                  <s-resource-item key={m.id} id={m.id}>
-                    {m.scrapedImageUrl && (
-                      <img slot="media" src={m.scrapedImageUrl} alt={m.scrapedTitle} width="50" height="50" style={{ objectFit: "cover", borderRadius: 4 }} />
-                    )}
-                    <s-stack direction="block" gap="tight">
-                      <s-stack direction="inline" gap="base" align="center">
-                        <s-text emphasis="bold">{m.scrapedTitle}</s-text>
-                        <s-badge>{m.scrapedDomain}</s-badge>
-                        <s-badge tone={m.confidenceTier === "CONFIRMED" ? "success" : "info"}>
-                          {m.confidenceTier} ({(m.confidence * 100).toFixed(0)}%)
-                        </s-badge>
-                      </s-stack>
-                      <s-stack direction="inline" gap="loose" align="center">
-                        {m.competitorPrice && <s-text>₹{m.competitorPrice}</s-text>}
-                        {m.competitorUrl && <s-link href={m.competitorUrl} target="_blank">Open</s-link>}
-                        {m.confidenceTier === "LIKELY" && m.reviewStatus === "PENDING" && (
-                          <>
-                            <s-button size="slim" onClick={() => act(m.id, "confirm")}>Confirm</s-button>
-                            <s-button size="slim" variant="plain" onClick={() => act(m.id, "reject")}>Reject</s-button>
-                          </>
-                        )}
-                      </s-stack>
-                    </s-stack>
-                  </s-resource-item>
-                ))}
-              </s-resource-list>
+              <s-table>
+                <MatchTableHeader />
+                <s-table-body>
+                  {matchesCache[`${product.id}-all`].map((m) => (
+                    <CompetitorRow key={m.id} m={m} onConfirm={(id) => act(id, "confirm")} onReject={(id) => act(id, "reject")} />
+                  ))}
+                </s-table-body>
+              </s-table>
             )}
           </s-section>
         ))
