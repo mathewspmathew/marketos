@@ -129,7 +129,6 @@ class ShopifyProduct(Base):
     maxAutoApplyChangePctOverride = Column("maxAutoApplyChangePctOverride", Float, nullable=True)
     lifetimeCapPctOverride        = Column("lifetimeCapPctOverride", Float, nullable=True)
     syncPrice           = Column("syncPrice",           Boolean, nullable=False, default=True)
-    syncedAt            = Column("syncedAt",            DateTime(timezone=True), nullable=True)
     lastDecisionAt      = Column("lastDecisionAt",      DateTime(timezone=True), nullable=True)
     createdAt   = Column("createdAt",   DateTime(timezone=True), server_default=func.now())
     updatedAt   = Column("updatedAt",   DateTime(timezone=True), default=func.now(), onupdate=func.now())

@@ -379,7 +379,6 @@ model ShopifyProduct {
   handle                        String?
   shopDomain                    String
   syncPrice                     Boolean               @default(true)
-  syncedAt                      DateTime?             @db.Timestamptz(3)
   categoryTop                   String?
   productGender                 String?
   lastDiscoveryAt               DateTime?             @db.Timestamptz(3)
