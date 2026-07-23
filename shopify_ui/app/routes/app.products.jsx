@@ -670,9 +670,9 @@ export default function HomePage() {
 
                     {isOn && local.frequencyUnit && local.frequencyUnit !== "never" ? (
                       <s-text tone="subdued">Rescrape every {local.frequencyInterval || ""} {local.frequencyUnit}</s-text>
-                    ) : !isOn && !isPausedConfigured ? (
+                    ) : (
                       <s-text tone="subdued">–</s-text>
-                    ) : null}
+                    )}
 
                     <s-text tone="subdued">{product.matchCount || 0} match{product.matchCount === 1 ? "" : "es"}</s-text>
 
