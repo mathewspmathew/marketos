@@ -86,25 +86,43 @@ export default function MatchesPage() {
   return (
     <s-page heading="Matched competitors" subheading={`${metrics.totalProducts} product${metrics.totalProducts === 1 ? "" : "s"}`}>
       {/* Metrics Section */}
-      <s-section>
-        <s-stack direction="inline" gap="loose" wrap>
-          <div style={{ flex: 1, padding: "12px", borderRadius: "8px", border: "1px solid #e4e5e7" }}>
-            <div style={{ fontSize: "12px", color: "#6d7175", marginBottom: "4px" }}>Products with matches</div>
-            <div style={{ fontSize: "22px", fontWeight: "700" }}>{metrics.totalProducts}</div>
-          </div>
-          <div style={{ flex: 1, padding: "12px", borderRadius: "8px", border: "1px solid #e4e5e7" }}>
-            <div style={{ fontSize: "12px", color: "#6d7175", marginBottom: "4px" }}>Pending review</div>
-            <div style={{ fontSize: "22px", fontWeight: "700", color: metrics.pendingReviews > 0 ? "#bf0711" : "#0a0a0a" }}>{metrics.pendingReviews}</div>
-          </div>
-          <div style={{ flex: 1, padding: "12px", borderRadius: "8px", border: "1px solid #e4e5e7" }}>
-            <div style={{ fontSize: "12px", color: "#6d7175", marginBottom: "4px" }}>Review completion</div>
-            <div style={{ fontSize: "22px", fontWeight: "700", color: metrics.reviewPercentage >= 80 ? "#0a5a2a" : "#0a0a0a" }}>{metrics.reviewPercentage}%</div>
-          </div>
-          <div style={{ flex: 1, padding: "12px", borderRadius: "8px", border: "1px solid #e4e5e7" }}>
-            <div style={{ fontSize: "12px", color: "#6d7175", marginBottom: "4px" }}>Avg confidence</div>
-            <div style={{ fontSize: "22px", fontWeight: "700" }}>{metrics.avgConfidence}</div>
-          </div>
-        </s-stack>
+      <s-section padding="base">
+        <s-grid
+          gridTemplateColumns="@container (inline-size <= 400px) 1fr, 1fr auto 1fr auto 1fr auto 1fr"
+          gap="small"
+        >
+          <s-box paddingBlock="small-400" paddingInline="small-100">
+            <s-grid gap="small-300">
+              <s-heading>Products with matches</s-heading>
+              <s-text>{metrics.totalProducts}</s-text>
+            </s-grid>
+          </s-box>
+          <s-divider direction="block"></s-divider>
+          <s-box paddingBlock="small-400" paddingInline="small-100">
+            <s-grid gap="small-300">
+              <s-heading>Pending review</s-heading>
+              <s-text tone={metrics.pendingReviews > 0 ? "critical" : undefined}>
+                {metrics.pendingReviews}
+              </s-text>
+            </s-grid>
+          </s-box>
+          <s-divider direction="block"></s-divider>
+          <s-box paddingBlock="small-400" paddingInline="small-100">
+            <s-grid gap="small-300">
+              <s-heading>Review completion</s-heading>
+              <s-text tone={metrics.reviewPercentage >= 80 ? "success" : undefined}>
+                {metrics.reviewPercentage}%
+              </s-text>
+            </s-grid>
+          </s-box>
+          <s-divider direction="block"></s-divider>
+          <s-box paddingBlock="small-400" paddingInline="small-100">
+            <s-grid gap="small-300">
+              <s-heading>Avg confidence</s-heading>
+              <s-text>{metrics.avgConfidence}</s-text>
+            </s-grid>
+          </s-box>
+        </s-grid>
       </s-section>
 
       {/* Products Section */}
@@ -121,10 +139,10 @@ export default function MatchesPage() {
             {/* Product Header */}
             <s-stack direction="inline" gap="base" align="center" wrap>
               {product.imageUrl && <img src={product.imageUrl} alt={product.title} width="48" height="48" style={{ objectFit: "cover", borderRadius: 4 }} />}
-              <div style={{ flex: 1 }}>
+              <s-stack direction="block" gap="tight" style={{ flexGrow: 1 }}>
                 <s-text>{product.merchantPrice ? `Your price: ₹${product.merchantPrice}` : "Price not set"}</s-text>
                 <s-text tone="subdued">{product.matchCount} competitor{product.matchCount !== 1 ? "s" : ""} found</s-text>
-              </div>
+              </s-stack>
               <s-button size="slim" onClick={() => toggleExpand(product.id)} variant={expandedProducts[product.id] ? "primary" : "plain"}>
                 {expandedProducts[product.id] ? "Collapse" : "Expand"}
               </s-button>
