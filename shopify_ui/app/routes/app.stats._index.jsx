@@ -76,7 +76,7 @@ export default function StatsIndex() {
                         {p.currentPrice != null ? `₹${Number(p.currentPrice).toFixed(2)}` : "—"}
                       </s-text>
                       {p.avgBasePrice != null && (
-                        <s-text tone="subdued" size="small">
+                        <s-text tone="subdued" type="small">
                           Base ₹{Number(p.avgBasePrice).toFixed(2)}
                         </s-text>
                       )}

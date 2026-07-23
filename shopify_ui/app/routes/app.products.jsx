@@ -537,11 +537,11 @@ export default function HomePage() {
             <s-box paddingBlockEnd="tight">
               <s-grid gridTemplateColumns="50px minmax(180px,1fr) 90px 160px 150px 90px 90px" gap="base" alignItems="center">
                 <div />
-                <s-text tone="subdued" size="small">Product</s-text>
-                <s-text tone="subdued" size="small">Price</s-text>
-                <s-text tone="subdued" size="small">DP status</s-text>
-                <s-text tone="subdued" size="small">Rescrape</s-text>
-                <s-text tone="subdued" size="small">Matches</s-text>
+                <s-text tone="subdued" type="small">Product</s-text>
+                <s-text tone="subdued" type="small">Price</s-text>
+                <s-text tone="subdued" type="small">DP status</s-text>
+                <s-text tone="subdued" type="small">Rescrape</s-text>
+                <s-text tone="subdued" type="small">Matches</s-text>
                 <div />
               </s-grid>
             </s-box>

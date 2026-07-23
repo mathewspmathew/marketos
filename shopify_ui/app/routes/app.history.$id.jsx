@@ -186,12 +186,12 @@ export default function HistoryPage() {
               {competitorSeries.map((s, i) => (
                 <PolyLine key={s.domain} pts={s.pts} width={W} height={H} tR={tR} pR={pR} stroke={COLORS[i % COLORS.length]} />
               ))}
-              <PolyLine pts={merchantPts} width={W} height={H} tR={tR} pR={pR} stroke="#111" dashed />
+              <PolyLine pts={merchantPts} width={W} height={H} tR={tR} pR={pR} stroke="var(--s-color-text, #111)" dashed />
             </svg>
 
             <s-stack direction="inline" gap="large" wrap>
               <s-stack direction="inline" gap="small" alignItems="center">
-                <span style={{ display: "inline-block", width: 14, height: 2, borderTop: "2px dashed #111" }} />
+                <span style={{ display: "inline-block", width: 14, height: 2, borderTop: "2px dashed var(--s-color-text, #111)" }} />
                 <s-text>Your suggested price</s-text>
               </s-stack>
               {competitorSeries.map((s, i) => (
@@ -214,17 +214,17 @@ export default function HistoryPage() {
         ) : (
           <s-stack direction="block" gap="small">
             {matchActivity.map((activity, idx) => (
-              <div key={`${activity.matchId}-${idx}`} style={{ padding: "12px", borderRadius: "8px", border: "1px solid #e4e5e7" }}>
+              <s-box key={`${activity.matchId}-${idx}`} padding="base" borderWidth="base" borderRadius="base">
                 <s-stack direction="inline" gap="base" justifyContent="space-between">
                   <s-stack direction="inline" gap="base" alignItems="start">
-                    <div style={{ fontSize: "16px" }}>
+                    <s-text>
                       {activity.type === "confirmed" && "✓"}
                       {activity.type === "rejected" && "✕"}
                       {activity.type === "created" && "★"}
-                    </div>
+                    </s-text>
                     <s-stack direction="block" gap="small">
                       <s-text>{activity.description}</s-text>
-                      <s-text tone="subdued" style={{ fontSize: "12px" }}>
+                      <s-text tone="subdued">
                         {new Date(activity.timestamp).toLocaleString()}
                       </s-text>
                     </s-stack>
@@ -233,7 +233,7 @@ export default function HistoryPage() {
                     {activity.type === "confirmed" ? "Confirmed" : activity.type === "rejected" ? "Rejected" : "Discovered"}
                   </s-badge>
                 </s-stack>
-              </div>
+              </s-box>
             ))}
           </s-stack>
         )}

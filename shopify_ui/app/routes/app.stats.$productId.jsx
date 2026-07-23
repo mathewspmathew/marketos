@@ -219,7 +219,7 @@ export default function ProductStatsPage() {
                         d.clampExplanation ? (
                           <s-stack direction="block" gap="small">
                             <s-text tone="subdued">{d.clampExplanation.line1}</s-text>
-                            <s-text tone="subdued" size="small">{d.clampExplanation.line2}</s-text>
+                            <s-text tone="subdued" type="small">{d.clampExplanation.line2}</s-text>
                           </s-stack>
                         ) : d.clampReason
                       )}
