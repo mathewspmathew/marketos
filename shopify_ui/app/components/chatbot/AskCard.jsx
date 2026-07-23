@@ -12,7 +12,7 @@ export default function AskCard({ ask, onAnswer }) {
       <s-stack direction="block" gap="base">
         <s-paragraph>{ask.question}</s-paragraph>
         {ask.options?.length ? (
-          <s-stack direction="inline" gap="tight">
+          <s-stack direction="inline" gap="small">
             {ask.options.map((o) => (
               <s-button key={o} onClick={() => onAnswer(o)}>{o}</s-button>
             ))}

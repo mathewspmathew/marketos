@@ -1,3 +1,4 @@
+import { useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
@@ -29,13 +30,16 @@ export const loader = async ({ request }) => {
     { method: "POST" },
   ).catch(() => {});
 
-  return {};
+  const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain } });
+
+  return { currency: shopSettings?.currency };
 };
 
 export default function HomePage() {
+  const { currency } = useLoaderData();
   return (
     <s-page heading="Assistant">
-      <ChatPanel />
+      <ChatPanel currency={currency} />
     </s-page>
   );
 }

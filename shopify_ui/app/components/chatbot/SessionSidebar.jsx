@@ -21,7 +21,7 @@ export default function SessionSidebar({
   busy = false,
 }) {
   return (
-    <div style={{ width: "220px", flexShrink: 0, borderRight: "1px solid #e1e3e5", paddingRight: "12px" }}>
+    <div style={{ width: "220px", flexShrink: 0, borderRight: "1px solid var(--s-color-border, #e1e3e5)", paddingRight: "12px" }}>
       <s-stack direction="block" gap="base">
         <s-button variant="primary" onClick={onNew} disabled={busy}>
           + New chat
@@ -30,7 +30,7 @@ export default function SessionSidebar({
         {sessions.length === 0 ? (
           <s-paragraph tone="subdued">No chats yet.</s-paragraph>
         ) : (
-          <s-stack direction="block" gap="tight">
+          <s-stack direction="block" gap="small">
             {sessions.map((sess) => (
               <div
                 key={sess.id}
@@ -45,7 +45,7 @@ export default function SessionSidebar({
                   padding: "6px 8px",
                   borderRadius: "8px",
                   cursor: "pointer",
-                  background: sess.id === activeId ? "#f1f1f1" : "transparent",
+                  background: sess.id === activeId ? "var(--s-color-bg-subdued, #f1f1f1)" : "transparent",
                   opacity: busy ? 0.6 : 1,
                   pointerEvents: busy ? "none" : "auto",
                 }}

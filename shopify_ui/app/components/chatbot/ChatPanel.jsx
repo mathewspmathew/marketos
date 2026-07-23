@@ -5,13 +5,14 @@
  * lives in Python; this component only renders it and forwards actions.
  */
 import { useState, useRef, useEffect, useCallback } from "react";
+import PropTypes from "prop-types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import PreviewCard from "./PreviewCard";
 import AskCard from "./AskCard";
 import SessionSidebar from "./SessionSidebar";
 
-export default function ChatPanel() {
+export default function ChatPanel({ currency }) {
   const [turns, setTurns] = useState([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -167,7 +168,7 @@ export default function ChatPanel() {
                         <div style={{ display: "flex", justifyContent: "flex-end" }}>
                           <div
                             style={{
-                              background: "var(--p-color-bg-surface-secondary, #f1f1f1)",
+                              background: "var(--s-color-bg-subdued, #f1f1f1)",
                               borderRadius: "12px",
                               padding: "8px 12px",
                               maxWidth: "75%",
@@ -184,7 +185,7 @@ export default function ChatPanel() {
                       )
                     )}
                     {t.preview && (
-                      <PreviewCard preview={t.preview} onApply={applyPreview} onCancel={() => {}} busy={busy} /> // TODO: wire cancel
+                      <PreviewCard preview={t.preview} currency={currency} onApply={applyPreview} onCancel={() => {}} busy={busy} /> // TODO: wire cancel
                     )}
                     {t.ask && <AskCard ask={t.ask} onAnswer={send} />}
                   </div>
@@ -215,3 +216,7 @@ export default function ChatPanel() {
     </s-section>
   );
 }
+
+ChatPanel.propTypes = {
+  currency: PropTypes.string,
+};
