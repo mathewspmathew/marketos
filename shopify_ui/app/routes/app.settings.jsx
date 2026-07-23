@@ -163,17 +163,16 @@ export const action = async ({ request }) => {
   return { ok: true };
 };
 
-const INFO_BUTTON_STYLE = { display: "inline-flex", alignItems: "center", marginLeft: "4px", cursor: "help" };
-const TOOLTIP_STYLE = { fontSize: "0.75em", color: "#666", display: "block", marginTop: "4px" };
-
-function InfoButton({ children }) {
-  const [show, setShow] = useState(false);
+// A field label paired with a real Polaris tooltip (s-tooltip + a trigger
+// button using `interestFor`), replacing a hand-styled "ⓘ" span. `id` must
+// be unique per field on the page.
+function FieldLabel({ id, text, tooltip }) {
   return (
-    <span style={INFO_BUTTON_STYLE} onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
-      <s-icon-button kind="secondary" size="small" icon="help">
-        {show && <div style={TOOLTIP_STYLE}>{children}</div>}
-      </s-icon-button>
-    </span>
+    <s-stack direction="inline" gap="base" alignItems="center">
+      <s-text emphasis="bold">{text}</s-text>
+      <s-button variant="plain" size="slim" icon="info" interestFor={id} accessibilityLabel="Help" />
+      <s-tooltip id={id}>{tooltip}</s-tooltip>
+    </s-stack>
   );
 }
 
@@ -278,66 +277,61 @@ export default function SettingsPage() {
     <s-page heading="Shop settings">
       {/* 1. How to Find Competitors */}
       <s-section heading="🔍 How to Find Competitors">
-        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
-          Controls where we search for competitors and how many we track.
-        </s-text>
         <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            Controls where we search for competitors and how many we track.
+          </s-text>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Search location</label>
-              <span title="Your market location for competitor search. More precise = more relevant results. E.g., Kochi, Kerala vs. India." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-serper-location" text="Search location" tooltip="Your market location for competitor search. More precise = more relevant results. E.g., Kochi, Kerala vs. India." />
             <s-text-field
+              label="Search location"
+              labelAccessibilityVisibility="exclusive"
               value={form.serperLocation}
               onInput={(e) => setField("serperLocation", e.currentTarget.value)}
-              helpText="Most precise: city, state, country. E.g., Kochi, Kerala or Mumbai, India."
+              details="Most precise: city, state, country. E.g., Kochi, Kerala or Mumbai, India."
             />
           </div>
 
-          <div style={{ display: "flex", gap: "12px" }}>
+          <s-stack direction="inline" gap="base">
             <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                <label style={{ fontWeight: "500", fontSize: "14px" }}>Country code</label>
-                <span title="2-letter country code (e.g., in, us, gb, ae). Falls back to this if location is vague." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-              </div>
+              <FieldLabel id="tip-serper-gl" text="Country code" tooltip="2-letter country code (e.g., in, us, gb, ae). Falls back to this if location is vague." />
               <s-text-field
+                label="Country code"
+                labelAccessibilityVisibility="exclusive"
                 value={form.serperGl}
                 onInput={(e) => setField("serperGl", e.currentTarget.value)}
-                helpText="E.g., in, us, gb, ae"
+                details="E.g., in, us, gb, ae"
               />
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                <label style={{ fontWeight: "500", fontSize: "14px" }}>Language</label>
-                <span title="2-letter language code (e.g., en, hi, ar, de). Filters results by language." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-              </div>
+              <FieldLabel id="tip-serper-hl" text="Language" tooltip="2-letter language code (e.g., en, hi, ar, de). Filters results by language." />
               <s-text-field
+                label="Language"
+                labelAccessibilityVisibility="exclusive"
                 value={form.serperHl}
                 onInput={(e) => setField("serperHl", e.currentTarget.value)}
-                helpText="E.g., en, hi, ar, de"
+                details="E.g., en, hi, ar, de"
               />
             </div>
-          </div>
+          </s-stack>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Currency code</label>
-              <span title="3-letter currency code (e.g., USD, INR, GBP, EUR). Used to display prices with the correct symbol." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-currency" text="Currency code" tooltip="3-letter currency code (e.g., USD, INR, GBP, EUR). Used to display prices with the correct symbol." />
             <s-text-field
+              label="Currency code"
+              labelAccessibilityVisibility="exclusive"
               value={form.currency}
               onInput={(e) => setField("currency", e.currentTarget.value.toUpperCase())}
-              helpText="E.g., USD ($), INR (₹), GBP (£), EUR (€)"
+              details="E.g., USD ($), INR (₹), GBP (£), EUR (€)"
               placeholder="INR"
             />
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Products per listing page</label>
-              <span title="When we find a category page, extract this many product cards. Higher = broader but slower." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-listing-cap" text="Products per listing page" tooltip="When we find a category page, extract this many product cards. Higher = broader but slower." />
             <s-text-field
+              label="Products per listing page"
+              labelAccessibilityVisibility="exclusive"
               type="number"
               value={form.listingExpansionCap}
               onInput={(e) => setField("listingExpansionCap", e.currentTarget.value)}
@@ -345,11 +339,10 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Competitor products per run</label>
-              <span title="Number of competitor search results to fetch per discovery run. Higher = more candidates to work with." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-discovery-results" text="Competitor products per run" tooltip="Number of competitor search results to fetch per discovery run. Higher = more candidates to work with." />
             <s-text-field
+              label="Competitor products per run"
+              labelAccessibilityVisibility="exclusive"
               type="number"
               value={form.discoveryNumResults}
               onInput={(e) => setField("discoveryNumResults", e.currentTarget.value)}
@@ -357,29 +350,31 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Exclude these marketplaces</label>
-              <span title="Domains to exclude from competitor discovery. Nothing is blocked by default — add a domain (e.g. amazon.in, ebay.com) to stop scraping it." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-              <s-text-field
-                value={newBlockedDomain}
-                onInput={(e) => setNewBlockedDomain(e.currentTarget.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addBlockedDomain(); } }}
-                placeholder="e.g. amazon.in"
-                style={{ flex: 1 }}
-              />
+            <FieldLabel id="tip-blocklist" text="Exclude these marketplaces" tooltip="Domains to exclude from competitor discovery. Nothing is blocked by default — add a domain (e.g. amazon.in, ebay.com) to stop scraping it." />
+            <s-stack direction="inline" gap="small">
+              <div style={{ flex: 1 }}>
+                <s-text-field
+                  label="Add a marketplace to exclude"
+                  labelAccessibilityVisibility="exclusive"
+                  value={newBlockedDomain}
+                  onInput={(e) => setNewBlockedDomain(e.currentTarget.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addBlockedDomain(); } }}
+                  placeholder="e.g. amazon.in"
+                />
+              </div>
               <s-button onClick={addBlockedDomain}>Add</s-button>
-            </div>
+            </s-stack>
             {form.marketplaceBlocklist.length === 0 ? (
-              <s-text tone="subdued" style={{ fontSize: "0.85em" }}>No domains excluded — all marketplaces are eligible for discovery.</s-text>
+              <s-text tone="subdued">No domains excluded — all marketplaces are eligible for discovery.</s-text>
             ) : (
               <s-stack direction="block" gap="small">
                 {form.marketplaceBlocklist.map((domain) => (
-                  <div key={domain} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#f6f6f7", borderRadius: "6px" }}>
-                    <span>{domain}</span>
-                    <s-button kind="tertiary" size="small" onClick={() => removeBlockedDomain(domain)}>Remove</s-button>
-                  </div>
+                  <s-box key={domain} padding="small" borderRadius="base" background="subdued">
+                    <s-stack direction="inline" gap="base" justifyContent="space-between" alignItems="center">
+                      <s-text>{domain}</s-text>
+                      <s-button variant="tertiary" size="small" onClick={() => removeBlockedDomain(domain)}>Remove</s-button>
+                    </s-stack>
+                  </s-box>
                 ))}
               </s-stack>
             )}
@@ -389,162 +384,135 @@ export default function SettingsPage() {
 
       {/* 2. Pricing Strategy */}
       <s-section heading="💰 Pricing Strategy">
-        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
-          Define how your prices relate to competitors.
-        </s-text>
         <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            Define how your prices relate to competitors.
+          </s-text>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Discount applied to competitive tier products </label>
-              <span title="Suggested price = median × (1 - discount). E.g., 5% means sell 5% cheaper than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <s-text-field
-                type="number"
-                value={form.markupPct}
-                onInput={(e) => setField("markupPct", e.currentTarget.value)}
-                placeholder="5"
-                style={{ flex: 1 }}
-              />
-              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
-            </div>
-            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 15</s-text>
+            <FieldLabel id="tip-markup" text="Discount applied to competitive tier products" tooltip="Suggested price = median × (1 - discount). E.g., 5% means sell 5% cheaper than average." />
+            <s-text-field
+              label="Discount applied to competitive tier products"
+              labelAccessibilityVisibility="exclusive"
+              type="number"
+              value={form.markupPct}
+              onInput={(e) => setField("markupPct", e.currentTarget.value)}
+              placeholder="5"
+              suffix="%"
+              details="E.g., enter 5 or 15"
+            />
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Discount applied to budget tier products</label>
-              <span title="For Budget products, additional undercut below median. E.g., 5% = offer 5% cheaper than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <s-text-field
-                type="number"
-                value={form.budgetUndercut}
-                onInput={(e) => setField("budgetUndercut", e.currentTarget.value)}
-                placeholder="5"
-                style={{ flex: 1 }}
-              />
-              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
-            </div>
-            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 15</s-text>
+            <FieldLabel id="tip-budget" text="Discount applied to budget tier products" tooltip="For Budget products, additional undercut below median. E.g., 5% = offer 5% cheaper than average." />
+            <s-text-field
+              label="Discount applied to budget tier products"
+              labelAccessibilityVisibility="exclusive"
+              type="number"
+              value={form.budgetUndercut}
+              onInput={(e) => setField("budgetUndercut", e.currentTarget.value)}
+              placeholder="5"
+              suffix="%"
+              details="E.g., enter 5 or 15"
+            />
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Markup applied to premium tier products</label>
-              <span title="For Premium products, additional markup above median. E.g., 5% = charge 5% more than average." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <s-text-field
-                type="number"
-                value={form.premiumUplift}
-                onInput={(e) => setField("premiumUplift", e.currentTarget.value)}
-                placeholder="5"
-                style={{ flex: 1 }}
-              />
-              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
-            </div>
-            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 15</s-text>
+            <FieldLabel id="tip-premium" text="Markup applied to premium tier products" tooltip="For Premium products, additional markup above median. E.g., 5% = charge 5% more than average." />
+            <s-text-field
+              label="Markup applied to premium tier products"
+              labelAccessibilityVisibility="exclusive"
+              type="number"
+              value={form.premiumUplift}
+              onInput={(e) => setField("premiumUplift", e.currentTarget.value)}
+              placeholder="5"
+              suffix="%"
+              details="E.g., enter 5 or 15"
+            />
           </div>
         </s-stack>
       </s-section>
 
       {/* 3. Price Change Rules */}
       <s-section heading="🛡️ Price Change Rules">
-        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
-          Safety limits on automatic price updates.
-        </s-text>
         <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            Safety limits on automatic price updates.
+          </s-text>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Number of minimum competitors to calculate price</label>
-              <span title="Safety gate: don't calculate price until we have at least this many matched (semantically similar) competitor products. Higher = more confident but slower." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-min-comps" text="Number of minimum competitors to calculate price" tooltip="Safety gate: don't calculate price until we have at least this many matched (semantically similar) competitor products. Higher = more confident but slower." />
             <s-text-field
+              label="Number of minimum competitors to calculate price"
+              labelAccessibilityVisibility="exclusive"
               type="number"
               value={form.minCompetitorsToPrice}
               onInput={(e) => setField("minCompetitorsToPrice", e.currentTarget.value)}
-              helpText="E.g., 4. Ensures enough signal before pricing activates."
+              details="E.g., 4. Ensures enough signal before pricing activates."
             />
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Focus on top N most-similar</label>
-              <span title="Quality filter: among all matched competitors, use only the K most-confident for price calculation. Avoids noise from distant matches. E.g., top 3 = use the 3 strongest matches." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-top-k" text="Focus on top N most-similar" tooltip="Quality filter: among all matched competitors, use only the K most-confident for price calculation. Avoids noise from distant matches. E.g., top 3 = use the 3 strongest matches." />
             <s-text-field
+              label="Focus on top N most-similar"
+              labelAccessibilityVisibility="exclusive"
               type="number"
               value={form.topKCompetitors}
               onInput={(e) => setField("topKCompetitors", e.currentTarget.value)}
-              helpText="E.g., 3 or 4. Used for weighted average calculation."
+              details="E.g., 3 or 4. Used for weighted average calculation."
             />
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Max price change per update</label>
-              <span title="Hard limit on price movement in one cycle. Prevents sudden big jumps. E.g., 5% = won't jump more than ±5%." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <s-text-field
-                type="number"
-                value={form.maxAutoApplyChangePct}
-                onInput={(e) => setField("maxAutoApplyChangePct", e.currentTarget.value)}
-                placeholder="5"
-                style={{ flex: 1 }}
-              />
-              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
-            </div>
-            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 15</s-text>
-          </div>
-
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Don't drift more than (lifetime) - affects min and max prices</label>
-              <span title="Price can't stray this far from base price. E.g., $100 base with 25% cap = stay between $75–$125." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <s-text-field
-                type="number"
-                value={form.lifetimeCapPct}
-                onInput={(e) => setField("lifetimeCapPct", e.currentTarget.value)}
-                placeholder="25"
-                style={{ flex: 1 }}
-              />
-              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
-            </div>
-            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>E.g., enter 5 or 25</s-text>
-          </div>
-
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Minimum price change to apply in a single run</label>
-              <span title="Ignore price changes smaller than this threshold. Prevents applying tiny 0.1% wiggles. E.g., 0.5% = only apply if change is ≥0.5%. The goal is to avoid quick apply of prices when competitors matched. Don't change if you don't understand" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <s-text-field
-                type="number"
-                value={form.minChangePctThreshold}
-                onInput={(e) => setField("minChangePctThreshold", e.currentTarget.value)}
-                placeholder="0.5"
-                style={{ flex: 1 }}
-              />
-              <span style={{ fontSize: "14px", color: "#666", fontWeight: "500" }}>%</span>
-            </div>
-            <s-text tone="subdued" style={{ fontSize: "0.85em", marginTop: "4px", display: "block" }}>Default: 0.5% (ignore changes smaller than this)</s-text>
-          </div>
-
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Observation freshness requirement</label>
-              <span title="Drop competitor price observations older than this many hours. Ensures pricing is based on recent data. E.g., 24 = ignore prices older than 24 hours." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-max-change" text="Max price change per update" tooltip="Hard limit on price movement in one cycle. Prevents sudden big jumps. E.g., 5% = won't jump more than ±5%." />
             <s-text-field
+              label="Max price change per update"
+              labelAccessibilityVisibility="exclusive"
+              type="number"
+              value={form.maxAutoApplyChangePct}
+              onInput={(e) => setField("maxAutoApplyChangePct", e.currentTarget.value)}
+              placeholder="5"
+              suffix="%"
+              details="E.g., enter 5 or 15"
+            />
+          </div>
+
+          <div>
+            <FieldLabel id="tip-lifetime-cap" text="Don't drift more than (lifetime) - affects min and max prices" tooltip="Price can't stray this far from base price. E.g., $100 base with 25% cap = stay between $75–$125." />
+            <s-text-field
+              label="Don't drift more than (lifetime)"
+              labelAccessibilityVisibility="exclusive"
+              type="number"
+              value={form.lifetimeCapPct}
+              onInput={(e) => setField("lifetimeCapPct", e.currentTarget.value)}
+              placeholder="25"
+              suffix="%"
+              details="E.g., enter 5 or 25"
+            />
+          </div>
+
+          <div>
+            <FieldLabel id="tip-min-change-threshold" text="Minimum price change to apply in a single run" tooltip="Ignore price changes smaller than this threshold. Prevents applying tiny 0.1% wiggles. E.g., 0.5% = only apply if change is ≥0.5%. The goal is to avoid quick apply of prices when competitors matched. Don't change if you don't understand" />
+            <s-text-field
+              label="Minimum price change to apply in a single run"
+              labelAccessibilityVisibility="exclusive"
+              type="number"
+              value={form.minChangePctThreshold}
+              onInput={(e) => setField("minChangePctThreshold", e.currentTarget.value)}
+              placeholder="0.5"
+              suffix="%"
+              details="Default: 0.5% (ignore changes smaller than this)"
+            />
+          </div>
+
+          <div>
+            <FieldLabel id="tip-freshness" text="Observation freshness requirement" tooltip="Drop competitor price observations older than this many hours. Ensures pricing is based on recent data. E.g., 24 = ignore prices older than 24 hours." />
+            <s-text-field
+              label="Observation freshness requirement"
+              labelAccessibilityVisibility="exclusive"
               type="number"
               value={form.minFreshnessHours}
               onInput={(e) => setField("minFreshnessHours", e.currentTarget.value)}
-              helpText="Default: 24 hours. Prices older than this are considered stale."
+              details="Default: 24 hours. Prices older than this are considered stale."
             />
           </div>
         </s-stack>
@@ -552,80 +520,79 @@ export default function SettingsPage() {
 
       {/* 4. Update Frequency */}
       <s-section heading="⏱️ Update Frequency">
-        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
-          How often to check for competitor price changes.
-        </s-text>
-        <s-stack direction="inline" gap="base">
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Every</label>
-              <span title="Default rescrape interval. More frequent = better accuracy but higher cost. Never = one-time discovery only." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
+        <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            How often to check for competitor price changes.
+          </s-text>
+          <s-stack direction="inline" gap="base">
+            <div>
+              <FieldLabel id="tip-frequency" text="Every" tooltip="Default rescrape interval. More frequent = better accuracy but higher cost. Never = one-time discovery only." />
+              <s-text-field
+                label="Every"
+                labelAccessibilityVisibility="exclusive"
+                type="number"
+                value={form.frequencyInterval}
+                onInput={(e) => setField("frequencyInterval", e.currentTarget.value)}
+              />
             </div>
-            <s-text-field
-              type="number"
-              value={form.frequencyInterval}
-              onInput={(e) => setField("frequencyInterval", e.currentTarget.value)}
-            />
-          </div>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "500" }}>Unit</label>
+            <div>
+              <s-select
+                label="Unit"
+                value={form.frequencyUnit}
+                onChange={(e) => setField("frequencyUnit", e.currentTarget.value)}
+              >
+                {FREQ_UNITS.map((u) => (
+                  <s-option key={u.value} value={u.value}>{u.label}</s-option>
+                ))}
+              </s-select>
             </div>
-            <s-select
-              value={form.frequencyUnit}
-              onChange={(e) => setField("frequencyUnit", e.currentTarget.value)}
-            >
-              {FREQ_UNITS.map((u) => (
-                <s-option key={u.value} value={u.value}>{u.label}</s-option>
-              ))}
-            </s-select>
-          </div>
+          </s-stack>
         </s-stack>
       </s-section>
 
       <s-section heading="🏷️ Default Pricing Tier">
-        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
-          Used for new products when the chatbot isn't told a tier explicitly.
-        </s-text>
-        <s-select
-          value={form.defaultPricingTier}
-          onChange={(e) => setField("defaultPricingTier", e.currentTarget.value)}
-        >
-          {PRICING_TIERS.map((t) => (
-            <s-option key={t.value} value={t.value}>{t.label}</s-option>
-          ))}
-        </s-select>
+        <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            Used for new products when the chatbot isn't told a tier explicitly.
+          </s-text>
+          <s-select
+            value={form.defaultPricingTier}
+            onChange={(e) => setField("defaultPricingTier", e.currentTarget.value)}
+          >
+            {PRICING_TIERS.map((t) => (
+              <s-option key={t.value} value={t.value}>{t.label}</s-option>
+            ))}
+          </s-select>
+        </s-stack>
       </s-section>
 
       {/* 5. Controls */}
       <s-section heading="⚙️ Controls">
-        <s-text tone="subdued" style={{ marginBottom: "12px", display: "block" }}>
-          Master switches for the system.
-        </s-text>
         <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            Master switches for the system.
+          </s-text>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "600" }}>Auto rescrape</label>
-              <span title="Master on/off for all competitor checks. Turn OFF to pause (e.g., testing or emergency)." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-auto-rescrape" text="Auto rescrape" tooltip="Master on/off for all competitor checks. Turn OFF to pause (e.g., testing or emergency)." />
             <s-checkbox
               id="auto-rescrape"
+              label="Auto rescrape"
+              labelAccessibilityVisibility="exclusive"
               checked={form.autoRescrapeEnabled || undefined}
               onChange={() => setField("autoRescrapeEnabled", !form.autoRescrapeEnabled)}
-              helpText="Master switch for refreshing competitor prices."
+              details="Master switch for refreshing competitor prices."
             />
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <label style={{ fontWeight: "600" }}>Include out-of-stock</label>
-              <span title="When ON, OOS competitor prices count in calculations. Turn ON if stock detection is unreliable." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
-            </div>
+            <FieldLabel id="tip-include-oos" text="Include out-of-stock" tooltip="When ON, OOS competitor prices count in calculations. Turn ON if stock detection is unreliable." />
             <s-checkbox
               id="include-oos"
+              label="Include out-of-stock"
+              labelAccessibilityVisibility="exclusive"
               checked={form.includeOosInPricing || undefined}
               onChange={() => setField("includeOosInPricing", !form.includeOosInPricing)}
-              helpText="Include OOS competitor prices in pricing calculations."
+              details="Include OOS competitor prices in pricing calculations."
             />
           </div>
         </s-stack>
