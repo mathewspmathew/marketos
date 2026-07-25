@@ -14,12 +14,14 @@
  *   - Decision history table (s-table) with explicit applied / failed /
  *     pending / skipped status — distinct from "intent to apply"
  */
-import { useLoaderData } from "react-router";
+import { useEffect } from "react";
+import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
 const DAYS = 30;
 
 export const loader = async ({ request, params }) => {
@@ -30,11 +32,28 @@ export const loader = async ({ request, params }) => {
   const res = await fetch(
     `${PYTHON_API_URL}/internal/dynamic-pricing/product-stats?` +
     `shop_domain=${encodeURIComponent(shopDomain)}&product_id=${encodeURIComponent(productId)}`,
+    { headers: INTERNAL_HEADERS },
   );
   const data = await res.json();
   if (!data.ok) throw new Response(data.error || "Product not found", { status: 404 });
 
   return { product: data.product, decisions: data.decisions, competitorSeries: data.competitorSeries, waiting: data.waiting };
+};
+
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const shopDomain = session.shop;
+  const formData = await request.formData();
+  const variantId = formData.get("variantId");
+  const decisionId = formData.get("decisionId");
+
+  const res = await fetch(`${PYTHON_API_URL}/internal/pricing/revert`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...INTERNAL_HEADERS },
+    body: JSON.stringify({ shop_domain: shopDomain, variant_id: variantId, decision_id: decisionId }),
+  });
+  const data = await res.json();
+  return data.ok ? { ok: true } : { ok: false, error: data.error };
 };
 
 // ─── SVG line chart (Polaris has no built-in chart primitive; polaris-viz is decommissioned) ─
@@ -122,6 +141,20 @@ export default function ProductStatsPage() {
   const primaryVariantPrice = product.variants[0]?.currentPrice;
   const needsMore = product.dynamicPricingEnabled && waiting.have < waiting.need;
 
+  const revertFetcher = useFetcher();
+  const revalidator = useRevalidator();
+  const reverting = revertFetcher.state !== "idle";
+
+  useEffect(() => {
+    if (revertFetcher.state === "idle" && revertFetcher.data?.ok) {
+      revalidator.revalidate();
+    }
+  }, [revertFetcher.state, revertFetcher.data, revalidator]);
+
+  const revert = (variantId, decisionId) => {
+    revertFetcher.submit({ variantId, decisionId }, { method: "POST" });
+  };
+
   return (
     <s-page heading={product.title}>
       <s-section>
@@ -149,6 +182,26 @@ export default function ProductStatsPage() {
               {" "}You have {waiting.have} CONFIRMED/LIKELY matches, need {waiting.need}.{" "}
               Not enough competitors? Pause this product on the Products page, adjust the
               competitor search settings, then Resume.
+            </s-text>
+          </s-banner>
+        </s-section>
+      )}
+
+      {revertFetcher.data?.ok === false && (
+        <s-section>
+          <s-banner tone="critical">
+            <s-text>{revertFetcher.data.error}</s-text>
+          </s-banner>
+        </s-section>
+      )}
+
+      {revertFetcher.data?.ok === true && (
+        <s-section>
+          <s-banner tone="success">
+            <s-text>
+              Price reverted and pushed to Shopify. Dynamic pricing has been paused for this
+              product so it is not immediately re-applied — resume it from the Products page
+              when ready.
             </s-text>
           </s-banner>
         </s-section>
@@ -183,6 +236,7 @@ export default function ProductStatsPage() {
               <s-table-header listSlot="inline">Tier</s-table-header>
               <s-table-header listSlot="labeled">Status</s-table-header>
               <s-table-header listSlot="labeled">Reason</s-table-header>
+              <s-table-header listSlot="inline">Actions</s-table-header>
             </s-table-header-row>
             <s-table-body>
               {decisions.map((d) => (
@@ -215,6 +269,7 @@ export default function ProductStatsPage() {
                   <s-table-cell>
                     <s-stack direction="block" gap="small">
                       <StatusBadge status={d.status} />
+                      {d.revertedAt && <s-badge tone="subdued">Reverted</s-badge>}
                       {d.clampReason && (
                         d.clampExplanation ? (
                           <s-stack direction="block" gap="small">
@@ -233,6 +288,19 @@ export default function ProductStatsPage() {
                   </s-table-cell>
                   <s-table-cell>
                     <s-text tone="subdued">{d.reason}</s-text>
+                  </s-table-cell>
+                  <s-table-cell>
+                    {d.status === "applied" && !d.revertedAt && (
+                      <s-button
+                        size="slim"
+                        variant="plain"
+                        tone="critical"
+                        disabled={reverting}
+                        onClick={() => revert(d.variantId, d.id)}
+                      >
+                        Revert
+                      </s-button>
+                    )}
                   </s-table-cell>
                 </s-table-row>
               ))}

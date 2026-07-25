@@ -176,6 +176,7 @@ def get_product_stats(session: Session, shop_domain: str, product_id: str) -> di
             "oosObservations": d.oosObservations,
             "currencyDrops": d.currencyDrops,
             "appliedAt": d.appliedAt.isoformat() if d.appliedAt else None,
+            "revertedAt": d.revertedAt.isoformat() if d.revertedAt else None,
             "decidedAt": d.decidedAt.isoformat(),
             "reason": d.reason,
             "applyError": d.applyError,
