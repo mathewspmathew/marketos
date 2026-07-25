@@ -2,11 +2,11 @@
 
 client_id = "a91fe74ac239d442db88d3dc79740b1c"
 name = "market-pricing"
-application_url = "https://example.com"
+application_url = "https://<YOUR_DOMAIN>"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2026-07"
@@ -40,4 +40,4 @@ api_version = "2026-07"
 scopes = "read_analytics,read_inventory,read_orders,read_product_listings,read_products,write_inventory,write_product_listings,write_products"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://<YOUR_DOMAIN>/api/auth" ]
