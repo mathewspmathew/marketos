@@ -1,0 +1,266 @@
+name: marketos
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: marketos_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  scraper-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: scraper_worker
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_API_KEY_BACKUP=${GROQ_API_KEY_BACKUP}
+      - GCS_IMAGE_BUCKET=${GCS_IMAGE_BUCKET}
+      - GCS_MARKDOWN_BUCKET=${GCS_MARKDOWN_BUCKET}
+      - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ~/.config/gcloud:/root/.config/gcloud:ro
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "scraping_queue", "-n", "scraper-worker@%h", "--concurrency=1", "--loglevel=info"]
+
+  extraction-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: extraction_worker
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_API_KEY_BACKUP=${GROQ_API_KEY_BACKUP}
+      - GROQ_API_KEY_CANDIDATE=${GROQ_API_KEY_CANDIDATE}
+      - GCS_IMAGE_BUCKET=${GCS_IMAGE_BUCKET}
+      - GCS_MARKDOWN_BUCKET=${GCS_MARKDOWN_BUCKET}
+      - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ~/.config/gcloud:/root/.config/gcloud:ro
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "extraction_queue", "-n", "extraction-worker@%h", "--concurrency=1", "--loglevel=info"]
+
+  scheduler-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: scheduler_worker
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "scheduler_queue", "--concurrency=1", "--loglevel=info"]
+
+  content-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: content_worker
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - SERPER_API_KEY=${SERPER_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_API_KEY_BACKUP=${GROQ_API_KEY_BACKUP}
+      - GROQ_API_KEY_SEMANTIC=${GROQ_API_KEY_SEMANTIC}
+      - GROQ_API_KEY_SHOPIFY=${GROQ_API_KEY_SHOPIFY}
+      - VERTEX_PROJECT=${VERTEX_PROJECT}
+      - VERTEX_LOCATION=${VERTEX_LOCATION}
+      - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ~/.config/gcloud:/root/.config/gcloud:ro
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker",
+              "-Q", "discovery_queue,semantic_queue,shopify_semantic_queue,embedding_queue",
+              "-n", "content-worker@%h", "--concurrency=2", "--loglevel=info"]
+
+  matcher-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: matcher_worker
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker", "-Q", "match_queue", "-n", "matcher-worker@%h", "--concurrency=1", "--loglevel=info"]
+
+  pricing-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: pricing_worker
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
+      - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker",
+              "-Q", "stats_queue,pricing_queue,writer_queue,shopify_sync_queue",
+              "-n", "pricing-worker@%h", "--concurrency=2", "--loglevel=info"]
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: celery_beat
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "beat", "--loglevel=info"]
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: api_gateway
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
+      - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["uv", "run", "uvicorn", "services.api_gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  web:
+    build:
+      context: ./shopify_ui
+    container_name: marketos_web
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
+      - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
+      - SHOPIFY_APP_URL=${SHOPIFY_APP_URL}
+      - SCOPES=read_analytics,read_inventory,read_orders,read_product_listings,read_products,write_inventory,write_product_listings,write_products
+      - APP_URL=http://localhost:3000
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      - CHATBOT_SVC_URL=http://chatbot-svc:8088
+      - PYTHON_API_URL=http://api-gateway:8000
+      - MARKETOS_DEMO_TENANT_ID=${MARKETOS_DEMO_TENANT_ID}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_REFINER_MODEL=${GROQ_REFINER_MODEL:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  chatbot-svc:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: chatbot_svc
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_API_KEY_CHATBOT=${GROQ_API_KEY_CHATBOT}
+      - CHATBOT_MODEL=${CHATBOT_MODEL}
+      - CHATBOT_FALLBACK_MODEL=${CHATBOT_FALLBACK_MODEL:-}
+      - CHATBOT_RR_URL=http://web:3000
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      - SERPER_API_KEY=${SERPER_API_KEY}
+      - VERTEX_PROJECT=${VERTEX_PROJECT}
+      - VERTEX_LOCATION=${VERTEX_LOCATION}
+      - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - LOGFIRE_TOKEN=${LOGFIRE_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ~/.config/gcloud:/root/.config/gcloud:ro
+    command: ["uv", "run", "uvicorn", "services.chatbot_svc.app:app", "--host", "0.0.0.0", "--port", "8088"]
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: marketos_caddy
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - web
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.2
+    container_name: marketos_cloudflared
+    restart: unless-stopped
+    logging: *default-logging
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - caddy
+
+  dozzle:
+    image: amir20/dozzle:v10
+    container_name: dozzle
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  redis_data:
