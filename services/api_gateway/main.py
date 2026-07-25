@@ -7,6 +7,7 @@ Not exposed publicly — only reachable within the Docker network.
 Run: uvicorn services.api_gateway.main:app --host 0.0.0.0 --port 8000
 """
 
+import os
 from datetime import datetime, timedelta, timezone
 
 import structlog
@@ -35,6 +36,20 @@ load_dotenv()
 logger = structlog.get_logger(__name__)
 
 app = FastAPI(title="MarketOS Internal API", docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def require_internal_token(request: Request, call_next):
+    # Every /internal/* route trusts its inputs (shop_domain, product_id, ...)
+    # with no further authorization check, so this gateway must never be
+    # reachable without the shared secret — same X-Internal-Token pattern
+    # used by services/chatbot_svc/app.py and the frontend's internal.*
+    # proxy routes. /health is intentionally exempt for container healthchecks.
+    if request.url.path.startswith("/internal/"):
+        expected = os.environ.get("INTERNAL_API_TOKEN", "")
+        if not expected or request.headers.get("x-internal-token") != expected:
+            return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    return await call_next(request)
 
 
 @app.exception_handler(RequestValidationError)

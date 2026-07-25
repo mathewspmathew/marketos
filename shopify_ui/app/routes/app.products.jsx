@@ -103,6 +103,7 @@ const FREQ_UNITS = [
 const SECTION_HELP_TEXT_STYLE = { fontSize: "0.9em", marginBottom: "8px", display: "block" };
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 export const action = async ({ request }) => {
@@ -118,7 +119,7 @@ export const action = async ({ request }) => {
     // the homepage's auto-kick can't race each other.
     void fetch(
       `${PYTHON_API_URL}/internal/shopify/sync-products?shop_domain=${encodeURIComponent(shopDomain)}`,
-      { method: "POST" },
+      { method: "POST", headers: INTERNAL_HEADERS },
     ).catch(() => {});
     return { ok: true };
   }
@@ -150,7 +151,7 @@ export const action = async ({ request }) => {
 
     const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/apply`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...INTERNAL_HEADERS },
       body: JSON.stringify({ shop_domain: shopDomain, product_id: productId, config }),
     });
     const data = await res.json();
@@ -160,7 +161,7 @@ export const action = async ({ request }) => {
   if (intent === "pauseDynamic") {
     const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/pause`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...INTERNAL_HEADERS },
       body: JSON.stringify({ shop_domain: shopDomain, product_id: productId }),
     });
     const data = await res.json();
@@ -170,7 +171,7 @@ export const action = async ({ request }) => {
   if (intent === "resumeDynamic") {
     const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/resume`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...INTERNAL_HEADERS },
       body: JSON.stringify({ shop_domain: shopDomain, product_id: productId }),
     });
     const data = await res.json();
@@ -180,7 +181,7 @@ export const action = async ({ request }) => {
   if (intent === "deleteDynamicWithData") {
     const res = await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/delete`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...INTERNAL_HEADERS },
       body: JSON.stringify({ shop_domain: shopDomain, product_id: productId, confirmed: true }),
     });
     const data = await res.json();

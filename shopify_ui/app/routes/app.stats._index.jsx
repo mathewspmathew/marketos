@@ -13,6 +13,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -20,6 +21,7 @@ export const loader = async ({ request }) => {
 
   const res = await fetch(
     `${PYTHON_API_URL}/internal/dynamic-pricing/products-stats-list?shop_domain=${encodeURIComponent(shopDomain)}`,
+    { headers: INTERNAL_HEADERS },
   );
   const data = await res.json();
   if (!data.ok) throw new Response(data.error || "Failed to load stats", { status: 500 });

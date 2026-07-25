@@ -27,7 +27,7 @@ export const loader = async ({ request }) => {
   void fetch(
     `${PYTHON_API_URL}/internal/shopify/sync-products` +
     `?shop_domain=${encodeURIComponent(shopDomain)}&only_if_never_synced=true&skip_if_error=true`,
-    { method: "POST" },
+    { method: "POST", headers: { "X-Internal-Token": process.env.INTERNAL_API_TOKEN } },
   ).catch(() => {});
 
   const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain } });

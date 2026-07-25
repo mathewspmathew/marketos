@@ -17,7 +17,7 @@ export const action = async ({ request }) => {
   try {
     await fetch(`${PYTHON_API_URL}/internal/shopify/product-update-webhook`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Internal-Token": process.env.INTERNAL_API_TOKEN },
       body: JSON.stringify({ shop_domain: shop, payload }),
     });
   } catch (err) {

@@ -8,6 +8,7 @@
 import { authenticate } from "../shopify.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -23,6 +24,7 @@ export const loader = async ({ request }) => {
   const res = await fetch(
     `${PYTHON_API_URL}/internal/dynamic-pricing/matches/product` +
       `?shop_domain=${encodeURIComponent(shopDomain)}&product_id=${encodeURIComponent(productId)}&limit=${limit}`,
+    { headers: INTERNAL_HEADERS },
   );
   const data = await res.json();
   if (!data.ok) throw new Response(data.error ?? "Failed to load matches.", { status: 502 });

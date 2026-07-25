@@ -14,6 +14,7 @@ import { authenticate } from "../shopify.server";
 import { DEFAULTS } from "../lib/shopSettingsDefaults.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
 
 // Keep in sync with services/common/frequency.py::CANONICAL_UNITS.
 const FREQ_UNITS = [
@@ -157,6 +158,7 @@ export const action = async ({ request }) => {
     });
     await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/rearm-shop?${params}`, {
       method: "POST",
+      headers: INTERNAL_HEADERS,
     }).catch(() => {});
   }
 

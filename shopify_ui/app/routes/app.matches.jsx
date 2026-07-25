@@ -14,6 +14,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
 
 // One row of a competitor-match table: shared by the top-match, expanded-top-3,
 // and all-matches sections below, which all render the exact same match shape.
@@ -74,6 +75,7 @@ export const loader = async ({ request }) => {
 
   const res = await fetch(
     `${PYTHON_API_URL}/internal/dynamic-pricing/matches?shop_domain=${encodeURIComponent(shopDomain)}`,
+    { headers: INTERNAL_HEADERS },
   );
   const data = await res.json();
   if (!data.ok) throw new Response(data.error ?? "Failed to load matches.", { status: 502 });
@@ -92,7 +94,7 @@ export const action = async ({ request }) => {
 
   const res = await fetch(`${PYTHON_API_URL}/internal/matches/review`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...INTERNAL_HEADERS },
     body: JSON.stringify({ shop_domain: shop, match_id: matchId, action: intent }),
   });
   const data = await res.json();

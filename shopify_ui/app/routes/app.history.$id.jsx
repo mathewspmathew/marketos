@@ -15,6 +15,7 @@ import { authenticate } from "../shopify.server";
 import { getCurrencySymbol } from "../lib/currencyFormatter";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
 
 // 30-day window, capped to keep the chart cheap.
 const WINDOW_DAYS = 30;
@@ -100,6 +101,7 @@ export const loader = async ({ request, params }) => {
     const resp = await fetch(
       `${PYTHON_API_URL}/internal/dynamic-pricing/match-activity` +
       `?shop_domain=${encodeURIComponent(shopDomain)}&product_id=${encodeURIComponent(productId)}&days=${WINDOW_DAYS}`,
+      { headers: INTERNAL_HEADERS },
     );
     const json = await resp.json();
     if (json.ok) matchEvents = json.events;
