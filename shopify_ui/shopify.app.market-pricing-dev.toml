@@ -1,0 +1,20 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "3ced3ded42af15f265b2eb96a8f5960b"
+application_url = "https://marketos.buzz"
+embedded = true
+name = "market-pricing-dev"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_analytics,read_inventory,read_orders,read_product_listings,read_products,write_inventory,write_product_listings,write_products"
+
+[auth]
+redirect_urls = [ "https://marketos.buzz/api/auth" ]
+
+[webhooks]
+api_version = "2026-10"
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true
