@@ -407,6 +407,8 @@ model ShopifyProduct {
   ProductUrl                    ProductUrl[]
   ShopifyUser                   ShopifyUser           @relation(fields: [shopDomain], references: [shopDomain])
   ShopifyVariant                ShopifyVariant[]
+
+  @@index([shopDomain, updatedAt])
 }
 
 model ShopifyUser {

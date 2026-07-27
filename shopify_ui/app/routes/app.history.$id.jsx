@@ -26,41 +26,49 @@ export const loader = async ({ request, params }) => {
   const shopDomain  = session.shop;
   const productId   = params.id;
 
-  const product = await db.shopifyProduct.findFirst({
-    where: { id: productId, shopDomain },
-    include: { ShopifyVariant: true },
-  });
+  const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  // First batch: none of these four depend on each other's result — only on
+  // shopDomain/productId from the route, so they run concurrently instead of
+  // as 4 sequential round-trips. Match activity is Python-owned (see comment
+  // below) and degrades to [] on failure rather than rejecting the batch.
+  const [product, shopSettings, matches, matchEvents] = await Promise.all([
+    db.shopifyProduct.findFirst({
+      where: { id: productId, shopDomain },
+      include: { ShopifyVariant: true },
+    }),
+    db.shopSettings.findUnique({ where: { shopDomain } }),
+    // Competitor-side timeline source: matched competitor products.
+    db.productLevelMatch.findMany({
+      where: { shopDomain, shopifyProductId: productId, reviewStatus: { not: "REJECTED" } },
+      include: {
+        ScrapedProduct: {
+          include: { ScrapedVariant: { select: { id: true } } },
+        },
+      },
+      take: MAX_POINTS,
+    }),
+    // Match activity events (created/confirmed/rejected) are synthesized by
+    // product_stats.get_match_activity — Python-owned so it never drifts from
+    // what app.stats.$productId.jsx's decision history considers an "event".
+    fetch(
+      `${PYTHON_API_URL}/internal/dynamic-pricing/match-activity` +
+      `?shop_domain=${encodeURIComponent(shopDomain)}&product_id=${encodeURIComponent(productId)}&days=${WINDOW_DAYS}`,
+      { headers: INTERNAL_HEADERS },
+    )
+      .then((resp) => resp.json())
+      .then((json) => (json.ok ? json.events : []))
+      .catch((err) => {
+        console.error("[history] Failed to fetch match activity:", err);
+        return [];
+      }),
+  ]);
+
   if (!product) {
     throw new Response("Product not found", { status: 404 });
   }
 
-  const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain } });
-
-  const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const variantIds = product.ShopifyVariant.map((v) => v.id);
-
-  // Merchant-side timeline: PriceDecisions across the product's variants.
-  const decisions = variantIds.length
-    ? await db.priceDecision.findMany({
-        where: {
-          shopDomain,
-          shopifyVariantId: { in: variantIds },
-          decidedAt: { gte: since },
-        },
-        orderBy: { decidedAt: "asc" },
-        take: MAX_POINTS,
-      })
-    : [];
-
-  // Competitor-side timeline: latest observations across matched competitor variants.
-  const matches = await db.productLevelMatch.findMany({
-    where: { shopDomain, shopifyProductId: productId, reviewStatus: { not: "REJECTED" } },
-    include: {
-      ScrapedProduct: {
-        include: { ScrapedVariant: { select: { id: true } } },
-      },
-    },
-  });
   const competitorVariantIds = matches.flatMap((m) => m.ScrapedProduct?.ScrapedVariant.map((v) => v.id) ?? []);
   const competitorByDomain = new Map(
     matches
@@ -70,17 +78,32 @@ export const loader = async ({ request, params }) => {
       ),
   );
 
-  const observations = competitorVariantIds.length
-    ? await db.competitorPriceObservation.findMany({
-        where: {
-          shopDomain,
-          competitorVariantId: { in: competitorVariantIds },
-          observedAt: { gte: since },
-        },
-        orderBy: { observedAt: "asc" },
-        take: MAX_POINTS,
-      })
-    : [];
+  // Second batch: decisions need variantIds (from product), observations need
+  // competitorVariantIds (from matches) — both now resolved above.
+  const [decisions, observations] = await Promise.all([
+    variantIds.length
+      ? db.priceDecision.findMany({
+          where: {
+            shopDomain,
+            shopifyVariantId: { in: variantIds },
+            decidedAt: { gte: since },
+          },
+          orderBy: { decidedAt: "asc" },
+          take: MAX_POINTS,
+        })
+      : Promise.resolve([]),
+    competitorVariantIds.length
+      ? db.competitorPriceObservation.findMany({
+          where: {
+            shopDomain,
+            competitorVariantId: { in: competitorVariantIds },
+            observedAt: { gte: since },
+          },
+          orderBy: { observedAt: "asc" },
+          take: MAX_POINTS,
+        })
+      : Promise.resolve([]),
+  ]);
 
   // Bucket competitor prices by domain so the chart legend is readable.
   const competitorSeries = new Map();
@@ -91,22 +114,6 @@ export const loader = async ({ request, params }) => {
       t: o.observedAt.toISOString(),
       price: Number(o.price),
     });
-  }
-
-  // Match activity events (created/confirmed/rejected) are synthesized by
-  // product_stats.get_match_activity — Python-owned so it never drifts from
-  // what app.stats.$productId.jsx's decision history considers an "event".
-  let matchEvents = [];
-  try {
-    const resp = await fetch(
-      `${PYTHON_API_URL}/internal/dynamic-pricing/match-activity` +
-      `?shop_domain=${encodeURIComponent(shopDomain)}&product_id=${encodeURIComponent(productId)}&days=${WINDOW_DAYS}`,
-      { headers: INTERNAL_HEADERS },
-    );
-    const json = await resp.json();
-    if (json.ok) matchEvents = json.events;
-  } catch (err) {
-    console.error("[history] Failed to fetch match activity:", err);
   }
 
   return {

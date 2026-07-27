@@ -64,23 +64,29 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, reason: "wrong_kind" }, { status: 400 });
   }
 
-  const variants = await prisma.shopifyVariant.findMany({
-    where: { id: { in: preview.variantIds } },
-    select: { id: true, productId: true, currentPrice: true },
-  });
+  // Both depend only on `preview` (already fetched above), not on each
+  // other — run concurrently instead of two sequential round-trips.
+  const [variants, adminResult] = await Promise.all([
+    prisma.shopifyVariant.findMany({
+      where: { id: { in: preview.variantIds } },
+      select: { id: true, productId: true, currentPrice: true },
+    }),
+    // unauthenticated.admin throws if the shop has no offline session row,
+    // and the library handles Token Exchange refresh internally when the
+    // stored token is past its expiry.
+    shopify.unauthenticated.admin(preview.shopDomain).then(
+      (result) => ({ ok: true, result }),
+      (err) => ({ ok: false, err }),
+    ),
+  ]);
 
-  // unauthenticated.admin throws if the shop has no offline session row,
-  // and the library handles Token Exchange refresh internally when the
-  // stored token is past its expiry.
-  let admin;
-  try {
-    ({ admin } = await shopify.unauthenticated.admin(preview.shopDomain));
-  } catch (err) {
+  if (!adminResult.ok) {
     return Response.json(
-      { ok: false, reason: "no_session_for_shop", error: String(err?.message ?? err) },
+      { ok: false, reason: "no_session_for_shop", error: String(adminResult.err?.message ?? adminResult.err) },
       { status: 401 },
     );
   }
+  const { admin } = adminResult.result;
 
   // Group variants by product (productVariantsBulkUpdate is per-product).
   // Prices come from the preview's frozen newPriceByVariant map — not

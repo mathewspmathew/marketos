@@ -37,13 +37,16 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  await db.shopifyUser.upsert({
-    where: { shopDomain },
-    update: {},
-    create: { shopDomain },
-  });
-
-  const existing = await db.shopSettings.findUnique({ where: { shopDomain } });
+  // Independent of each other (different models, both keyed only on
+  // shopDomain) — run concurrently instead of two sequential round-trips.
+  const [, existing] = await Promise.all([
+    db.shopifyUser.upsert({
+      where: { shopDomain },
+      update: {},
+      create: { shopDomain },
+    }),
+    db.shopSettings.findUnique({ where: { shopDomain } }),
+  ]);
   const s = existing ?? (await db.shopSettings.create({
     data: { shopDomain, ...DEFAULTS, updatedAt: new Date() },
   }));
@@ -156,7 +159,8 @@ export const action = async ({ request }) => {
       frequency_interval: String(data.frequencyInterval),
       frequency_unit: data.frequencyUnit,
     });
-    await fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/rearm-shop?${params}`, {
+    // Fire-and-forget — result isn't used, so don't block the response on it.
+    void fetch(`${PYTHON_API_URL}/internal/dynamic-pricing/rearm-shop?${params}`, {
       method: "POST",
       headers: INTERNAL_HEADERS,
     }).catch(() => {});

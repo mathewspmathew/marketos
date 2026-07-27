@@ -11,13 +11,6 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  // Ensure ShopifyUser row exists for this shop
-  await db.shopifyUser.upsert({
-    where: { shopDomain },
-    update: {},
-    create: { shopDomain },
-  });
-
   // Non-blocking auto-kick: ask Python to claim a sync slot if the shop was
   // never synced (fresh install / stale). Never await it — the loader is
   // read-only. Python owns the atomic claim + the ERROR exclusion (a
@@ -30,7 +23,16 @@ export const loader = async ({ request }) => {
     { method: "POST", headers: { "X-Internal-Token": process.env.INTERNAL_API_TOKEN } },
   ).catch(() => {});
 
-  const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain } });
+  // Ensure ShopifyUser row exists for this shop — independent of shopSettings
+  // (different models, both keyed only on shopDomain), so run concurrently.
+  const [, shopSettings] = await Promise.all([
+    db.shopifyUser.upsert({
+      where: { shopDomain },
+      update: {},
+      create: { shopDomain },
+    }),
+    db.shopSettings.findUnique({ where: { shopDomain } }),
+  ]);
 
   return { currency: shopSettings?.currency };
 };

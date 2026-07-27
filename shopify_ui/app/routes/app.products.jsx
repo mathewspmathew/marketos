@@ -19,21 +19,40 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  // Ensure ShopifyUser row exists for this shop
-  await db.shopifyUser.upsert({
+  // Ensure ShopifyUser row exists for this shop. update:{} is a no-op, so
+  // the returned row already reflects current state — no need to re-fetch it.
+  const freshUser = await db.shopifyUser.upsert({
     where: { shopDomain },
     update: {},
     create: { shopDomain },
   });
 
-  const products = await db.shopifyProduct.findMany({
-    where: { shopDomain },
-    include: {
-      ShopifyVariant: { take: 1 },
-      _count: { select: { CompetitorCandidate: true, ProductLevelMatch: true } },
-    },
-    orderBy: { updatedAt: "desc" },
-  });
+  const [products, shopSettings, processingCount, hasOfflineSession] = await Promise.all([
+    db.shopifyProduct.findMany({
+      where: { shopDomain },
+      include: {
+        ShopifyVariant: { take: 1 },
+        _count: { select: { CompetitorCandidate: true, ProductLevelMatch: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+    }),
+    db.shopSettings.findUnique({ where: { shopDomain } }),
+    db.shopifyProduct.count({
+      where: {
+        shopDomain,
+        updatedAt: { gte: new Date(Date.now() - 15 * 60 * 1000) },
+        ShopifyVariant: { some: { semanticText: null } },
+      },
+    }),
+    // With expiring offline tokens enabled, individual expiry is normal —
+    // the library auto-refreshes via Token Exchange on the next call. The
+    // only state worth banner-ing is "no offline session row at all", which
+    // means install never completed (or was wiped).
+    db.session.findFirst({
+      where: { shop: shopDomain, isOnline: false },
+      select: { id: true },
+    }).then(Boolean),
+  ]);
 
   const flattened = products.map((p) => ({
     id: p.id,
@@ -59,26 +78,6 @@ export const loader = async ({ request }) => {
     lastDiscoveryAt: p.lastDiscoveryAt ? p.lastDiscoveryAt.toISOString() : null,
     matchCount: p._count.ProductLevelMatch,
     candidateCount: p._count.CompetitorCandidate,
-  }));
-
-  const freshUser = await db.shopifyUser.findUnique({ where: { shopDomain } });
-  const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain } });
-
-  const processingCount = await db.shopifyProduct.count({
-    where: {
-      shopDomain,
-      updatedAt: { gte: new Date(Date.now() - 15 * 60 * 1000) },
-      ShopifyVariant: { some: { semanticText: null } },
-    },
-  });
-
-  // With expiring offline tokens enabled, individual expiry is normal —
-  // the library auto-refreshes via Token Exchange on the next call. The
-  // only state worth banner-ing is "no offline session row at all", which
-  // means install never completed (or was wiped).
-  const hasOfflineSession = !!(await db.session.findFirst({
-    where: { shop: shopDomain, isOnline: false },
-    select: { id: true },
   }));
 
   return {
