@@ -92,7 +92,8 @@ store:
 1. Install the app from `https://<your-domain>` on a Shopify dev store.
 2. Add a competitor URL via the app UI; confirm a `ScrapingConfig` row
    appears (check via `docker compose -f docker-compose.prod.yml logs
-   scraper-worker`).
+   core-worker` — this now handles scraping, extraction, scheduling, and
+   matching in one process).
 3. Wait for a scrape cycle (beat ticks every 30s); confirm a
    `ScrapedProduct` is created and a GCS object exists in
    `GCS_MARKDOWN_BUCKET`.
