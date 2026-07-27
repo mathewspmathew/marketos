@@ -86,3 +86,4 @@ services/chatbot_svc/evals/reports/
 .pytest_cache
 
 shopify_ui/prisma/dev.db
+deploy/RUNBOOK.md
