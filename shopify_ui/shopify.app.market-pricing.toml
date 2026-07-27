@@ -2,7 +2,7 @@
 
 client_id = "a91fe74ac239d442db88d3dc79740b1c"
 name = "market-pricing"
-application_url = "https://<YOUR_DOMAIN>"
+application_url = "https://marketos.buzz"
 embedded = true
 
 [build]
@@ -40,4 +40,4 @@ api_version = "2026-07"
 scopes = "read_analytics,read_inventory,read_orders,read_product_listings,read_products,write_inventory,write_product_listings,write_products"
 
 [auth]
-redirect_urls = [ "https://<YOUR_DOMAIN>/api/auth" ]
+redirect_urls = [ "https://marketos.buzz/api/auth" ]
