@@ -33,7 +33,12 @@ def test_match_coverage_returns_pair(seed_shop):
     assert isinstance(res["total"], int)
 
 
-def test_recent_decisions_limited(seed_shop):
+def test_recent_decisions_shape(seed_shop):
     res = get_stats(seed_shop, StatsMetric.recent_decisions)
-    assert "items" in res
-    assert len(res["items"]) <= 20
+    assert res["window"] == "7 days"
+    assert res["total_decisions"] == res["price_changes"] + res["no_op_reaffirmations"]
+    assert len(res["sample_changes"]) <= 5
+    if res["price_changes"] == 0:
+        assert res["changed_price_range"] is None
+    else:
+        assert res["changed_price_range"]["min"] <= res["changed_price_range"]["max"]

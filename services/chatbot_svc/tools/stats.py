@@ -20,8 +20,13 @@ class StatsMetric(str, enum.Enum):
 #   VariantCompetitorStats.shopifyVariantId  — PK (not "variantId")
 #   VariantCompetitorStats.median            — median competitor price column
 #   ProductMatch.shopifyVariantId            — FK to ShopifyVariant
-#   PriceDecision.newPrice                   — decided price column
+#   PriceDecision.oldPrice / newPrice        — a decision is a no-op reaffirmation
+#                                               when oldPrice == newPrice; only
+#                                               oldPrice != newPrice rows are a
+#                                               real price change
 #   PriceDecision.decidedAt                  — timestamp column (not "createdAt")
+
+RECENT_DECISIONS_WINDOW = "7 days"
 
 _QUERIES: dict[StatsMetric, str] = {
     StatsMetric.catalog_summary: """
@@ -60,12 +65,27 @@ _QUERIES: dict[StatsMetric, str] = {
              JOIN "ShopifyProduct" p3 ON p3.id = v3."productId"
              WHERE p3."shopDomain" = :shop) AS total
     """,
-    StatsMetric.recent_decisions: """
-        SELECT id, "shopifyVariantId", "newPrice", "decidedAt"
-        FROM "PriceDecision"
-        WHERE "shopDomain" = :shop
-        ORDER BY "decidedAt" DESC
-        LIMIT 20
+    StatsMetric.recent_decisions: f"""
+        WITH recent AS (
+            SELECT id, "shopifyVariantId", "oldPrice", "newPrice", "decidedAt"
+            FROM "PriceDecision"
+            WHERE "shopDomain" = :shop
+              AND "decidedAt" >= now() - interval '{RECENT_DECISIONS_WINDOW}'
+        ),
+        changed AS (
+            SELECT * FROM recent WHERE "oldPrice" <> "newPrice"
+        )
+        SELECT
+          (SELECT COUNT(*) FROM recent) AS total_decisions,
+          (SELECT COUNT(*) FROM changed) AS price_changes,
+          (SELECT MIN("newPrice") FROM changed) AS min_changed_price,
+          (SELECT MAX("newPrice") FROM changed) AS max_changed_price,
+          (SELECT json_agg(c) FROM (
+             SELECT "shopifyVariantId", "oldPrice", "newPrice", "decidedAt"
+             FROM changed
+             ORDER BY "decidedAt" DESC
+             LIMIT 5
+           ) c) AS sample_changes
     """,
 }
 
@@ -96,6 +116,20 @@ def get_stats(
         return {"matched": int(r["matched"]), "total": int(r["total"])}
 
     if metric == StatsMetric.recent_decisions:
-        return {"items": [dict(r) for r in rows]}
+        r = rows[0]
+        price_changes = int(r["price_changes"])
+        total = int(r["total_decisions"])
+        return {
+            "window": RECENT_DECISIONS_WINDOW,
+            "total_decisions": total,
+            "price_changes": price_changes,
+            "no_op_reaffirmations": total - price_changes,
+            "changed_price_range": (
+                {"min": float(r["min_changed_price"]), "max": float(r["max_changed_price"])}
+                if price_changes > 0
+                else None
+            ),
+            "sample_changes": r["sample_changes"] or [],
+        }
 
     return {"rows": [dict(r) for r in rows]}
