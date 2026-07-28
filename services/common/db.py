@@ -29,18 +29,21 @@ def _build_engine():
             break
 
     if os.environ.get("DB_POOL_MODE") == "queue":
-        # For a long-lived single-process service (e.g. api_gateway's uvicorn
-        # process) fielding frequent interactive requests, NullPool's
-        # per-request handshake (~470ms measured against Aiven) dwarfs the
-        # actual query cost (~40ms). A small persistent pool amortizes that
-        # handshake across requests. Capped very small (max 3 held
-        # connections) because the shared Postgres instance's max_connections
-        # (20) has limited headroom from other services/dev sessions already
-        # holding connections — checked live via pg_stat_activity before
-        # picking this size. Revisit upward only after confirming headroom.
+        # For a long-lived single-process service (e.g. api_gateway's or
+        # chatbot_svc's uvicorn process) fielding frequent interactive
+        # requests, NullPool's per-request handshake (~470ms measured
+        # against Aiven) dwarfs the actual query cost (~40ms). A small
+        # persistent pool amortizes that handshake across requests.
+        # Capped to max 2 held connections per process — this branch is now
+        # used by two separate services (api_gateway, chatbot_svc), each
+        # with its own engine/pool, so the combined ceiling contribution is
+        # additive. The shared Postgres instance's max_connections (20) has
+        # limited headroom from other services/dev sessions already holding
+        # connections — checked live via pg_stat_activity before picking
+        # this size. Revisit upward only after confirming headroom.
         return create_engine(
             url,
-            pool_size=2, max_overflow=1,
+            pool_size=1, max_overflow=1,
             pool_recycle=1800,
             pool_pre_ping=True,
         )

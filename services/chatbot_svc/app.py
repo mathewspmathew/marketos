@@ -25,6 +25,7 @@ import structlog
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from services.chatbot_svc.agent import agent
 from services.chatbot_svc.context import build_context
@@ -127,6 +128,26 @@ def _record(session_id: str, role: str, content: dict) -> None:
         )
 
 
+def _get_last_pending_preview_event(session_id: str) -> dict | None:
+    """SSE `preview` event payload for the most recent not-yet-applied
+    ChatPreview in a session, if any. Serializes to a dict *inside* the
+    get_db() block — get_db()'s session.commit() expires ORM attributes,
+    and the session closes right after, so returning the ORM object itself
+    (instead of already-read plain values) would raise DetachedInstanceError
+    on the first attribute access outside this function."""
+    with get_db() as s:
+        last_preview = (
+            s.query(ChatPreview)
+            .filter(
+                ChatPreview.sessionId == session_id,
+                ChatPreview.appliedAt.is_(None),
+            )
+            .order_by(ChatPreview.createdAt.desc())
+            .first()
+        )
+        return _preview_event_data(last_preview) if last_preview else None
+
+
 def _bind_request_context(shop_domain: str, session_id: str) -> None:
     """Bind shop_domain/session_id as structlog contextvars for the rest of
     this request. Every log line emitted anywhere during this request —
@@ -150,13 +171,18 @@ def _clear_request_context() -> None:
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    """Stream agent output as Server-Sent Events."""
-    sid = _ensure_session(req.shop_domain, req.user_id, req.session_id)
+    """Stream agent output as Server-Sent Events. The blocking DB calls in
+    here (_ensure_session, build_context, _record) are offloaded via
+    run_in_threadpool so they don't block this single-process event loop
+    while the real async work (agent.run, SSE streaming) is in flight —
+    the calls are still awaited in order, so ordering is unchanged from
+    the previous fully-synchronous version."""
+    sid = await run_in_threadpool(_ensure_session, req.shop_domain, req.user_id, req.session_id)
     _bind_request_context(req.shop_domain, sid)
     # Build history BEFORE recording the new user message so the current
     # prompt isn't double-counted (pydantic-ai also receives it as the prompt).
-    history = build_context(sid)
-    _record(sid, "user", {"text": req.message})
+    history = await run_in_threadpool(build_context, sid)
+    await run_in_threadpool(_record, sid, "user", {"text": req.message})
     deps = build_deps(req.shop_domain, req.user_id, sid)
 
     async def event_stream():
@@ -169,7 +195,7 @@ async def chat(req: ChatRequest):
             except AskUserRequested as ask:
                 # The agent raised a clarification request via the ask tool.
                 payload = {"question": ask.question, "options": ask.options}
-                _record(sid, "assistant", {"ask": payload})
+                await run_in_threadpool(_record, sid, "assistant", {"ask": payload})
                 yield {"event": "ask", "data": json.dumps(payload)}
                 yield {"event": "done", "data": "{}"}
                 return
@@ -178,7 +204,7 @@ async def chat(req: ChatRequest):
             output = result.output if hasattr(result, "output") else getattr(result, "data", "")
             text = output if isinstance(output, str) else json.dumps(output)
 
-            _record(sid, "assistant", {"text": text})
+            await run_in_threadpool(_record, sid, "assistant", {"text": text})
             # Fire-and-forget: generate a chat title from the first real
             # exchange. Skipped for refusals / already-titled sessions inside
             # maybe_set_title. Does not block the SSE response.
@@ -190,21 +216,9 @@ async def chat(req: ChatRequest):
             yield {"event": "text", "data": json.dumps({"text": text})}
 
             # Emit a preview event if the agent created a pending ChatPreview.
-            with get_db() as s:
-                last_preview = (
-                    s.query(ChatPreview)
-                    .filter(
-                        ChatPreview.sessionId == sid,
-                        ChatPreview.appliedAt.is_(None),
-                    )
-                    .order_by(ChatPreview.createdAt.desc())
-                    .first()
-                )
-                if last_preview:
-                    yield {
-                        "event": "preview",
-                        "data": json.dumps(_preview_event_data(last_preview)),
-                    }
+            preview_event = await run_in_threadpool(_get_last_pending_preview_event, sid)
+            if preview_event:
+                yield {"event": "preview", "data": json.dumps(preview_event)}
 
             yield {"event": "done", "data": "{}"}
 
@@ -221,7 +235,7 @@ async def chat(req: ChatRequest):
 
 
 @app.post("/apply-callback")
-async def apply_callback(
+def apply_callback(
     cb: ApplyCallback,
     x_internal_token: str = Header(default=""),
 ):
@@ -252,13 +266,13 @@ async def apply_callback(
 
 
 @app.get("/sessions")
-async def list_sessions(shop_domain: str):
+def list_sessions(shop_domain: str):
     """List a shop's chat sessions, newest first, with message counts."""
     return {"sessions": sessions_svc.list_sessions(shop_domain)}
 
 
 @app.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, shop_domain: str):
+def get_session_messages(session_id: str, shop_domain: str):
     """Return a chat's messages as front-end turns. 404 if not owned by shop."""
     turns = sessions_svc.get_turns(shop_domain, session_id)
     if turns is None:
@@ -267,7 +281,7 @@ async def get_session_messages(session_id: str, shop_domain: str):
 
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str, shop_domain: str):
+def delete_session(session_id: str, shop_domain: str):
     """Delete one chat owned by shop. 404 if not found / not owned."""
     if not sessions_svc.delete_session(shop_domain, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
@@ -275,6 +289,6 @@ async def delete_session(session_id: str, shop_domain: str):
 
 
 @app.delete("/sessions")
-async def delete_all_sessions(shop_domain: str):
+def delete_all_sessions(shop_domain: str):
     """Delete all chats for a shop."""
     return {"ok": True, "deleted": sessions_svc.delete_all_sessions(shop_domain)}

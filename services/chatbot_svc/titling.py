@@ -52,8 +52,23 @@ async def generate_title(first_message: str) -> str:
     return clean_title(output if isinstance(output, str) else "")
 
 
+from starlette.concurrency import run_in_threadpool
+
 from services.common.db import get_db
 from services.common.models import ChatSession
+
+
+def _needs_title(session_id: str) -> bool:
+    with get_db() as s:
+        sess = s.get(ChatSession, session_id)
+        return sess is not None and not sess.title
+
+
+def _set_title(session_id: str, title: str) -> None:
+    with get_db() as s:
+        sess = s.get(ChatSession, session_id)
+        if sess and not sess.title:
+            sess.title = title
 
 
 async def maybe_set_title(session_id: str, user_message: str, reply_text: str) -> None:
@@ -61,23 +76,20 @@ async def maybe_set_title(session_id: str, user_message: str, reply_text: str) -
     title yet and this turn was a real (non-refused) answer. No-op otherwise.
 
     Designed to be fire-and-forget: swallows its own errors so a titling
-    failure never affects the chat response.
+    failure never affects the chat response. The DB reads/writes are
+    offloaded via run_in_threadpool since this coroutine runs on the shared
+    event loop via asyncio.create_task (chat()'s fire-and-forget dispatch) —
+    without that, a blocking get_db() call here would stall every other
+    concurrent request on this process while it runs.
     """
     try:
         if is_refusal(reply_text):
             return
-        # These are synchronous DB calls running inside a fire-and-forget task
-        # (known service-wide pattern; flagged for future asyncio.to_thread migration).
-        with get_db() as s:
-            sess = s.get(ChatSession, session_id)
-            if sess is None or sess.title:
-                return
+        if not await run_in_threadpool(_needs_title, session_id):
+            return
         title = await generate_title(user_message)
         if not title:
             return
-        with get_db() as s:
-            sess = s.get(ChatSession, session_id)
-            if sess and not sess.title:
-                sess.title = title
+        await run_in_threadpool(_set_title, session_id, title)
     except Exception:  # titling is best-effort; never raise into the request
         pass
