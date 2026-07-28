@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "3ced3ded42af15f265b2eb96a8f5960b"
+client_id = "c3497bc570f028c3d7e85998dab70456"
 application_url = "https://marketos.buzz"
 embedded = true
 name = "market-pricing-dev"
