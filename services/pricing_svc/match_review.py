@@ -8,6 +8,11 @@ which wraps these two functions.
 Confirming a LIKELY match no longer needs to force-upgrade confidenceTier to
 CONFIRMED — decide.py's eligibility gate already counts a LIKELY match with
 reviewStatus=CONFIRMED on its own.
+
+Confirming also fans out stats.recompute_for_variant for the match's
+variants, since decide.py's gate only ever runs off a scrape-triggered
+recompute otherwise — without this, a merchant could confirm matches and
+never see a price decision until the next scrape happens to land.
 """
 from __future__ import annotations
 
@@ -16,6 +21,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from services.common import models
+from services.common.celery_app import app
 
 
 class MatchReviewError(ValueError):
@@ -34,6 +40,18 @@ def confirm_match(session: Session, shop_domain: str, match_id: str) -> dict:
     if match.reviewStatus != "CONFIRMED":
         match.reviewStatus = "CONFIRMED"
         match.reviewedAt = datetime.now(timezone.utc)
+        session.flush()
+        variant_ids = [
+            row[0] for row in session.query(models.ProductMatch.shopifyVariantId)
+            .filter(models.ProductMatch.productMatchId == match_id)
+            .distinct()
+        ]
+        for variant_id in variant_ids:
+            app.send_task(
+                "stats.recompute_for_variant",
+                args=[shop_domain, variant_id],
+                queue="stats_queue",
+            )
     return {"matchId": match_id, "reviewStatus": "CONFIRMED"}
 
 
