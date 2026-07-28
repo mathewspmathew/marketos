@@ -251,7 +251,7 @@ def _resolve_owned_product(session, shop_domain: str, product_id: str) -> Shopif
 
 
 @app.post("/internal/dynamic-pricing/apply")
-async def dynamic_pricing_apply(req: DynamicPricingApplyRequest):
+def dynamic_pricing_apply(req: DynamicPricingApplyRequest):
     try:
         with get_db() as s:
             product = _resolve_owned_product(s, req.shop_domain, req.product_id)
@@ -292,7 +292,7 @@ async def dynamic_pricing_apply(req: DynamicPricingApplyRequest):
 
 
 @app.post("/internal/dynamic-pricing/pause")
-async def dynamic_pricing_pause(req: DynamicPricingProductRequest):
+def dynamic_pricing_pause(req: DynamicPricingProductRequest):
     try:
         with get_db() as s:
             product = _resolve_owned_product(s, req.shop_domain, req.product_id)
@@ -307,7 +307,7 @@ async def dynamic_pricing_pause(req: DynamicPricingProductRequest):
 
 
 @app.post("/internal/dynamic-pricing/resume")
-async def dynamic_pricing_resume(req: DynamicPricingProductRequest):
+def dynamic_pricing_resume(req: DynamicPricingProductRequest):
     try:
         with get_db() as s:
             product = _resolve_owned_product(s, req.shop_domain, req.product_id)
@@ -322,7 +322,7 @@ async def dynamic_pricing_resume(req: DynamicPricingProductRequest):
 
 
 @app.get("/internal/dynamic-pricing/delete-preview")
-async def dynamic_pricing_delete_preview(shop_domain: str, product_id: str):
+def dynamic_pricing_delete_preview(shop_domain: str, product_id: str):
     try:
         with get_db() as s:
             _resolve_owned_product(s, shop_domain, product_id)
@@ -338,7 +338,7 @@ async def dynamic_pricing_delete_preview(shop_domain: str, product_id: str):
 
 
 @app.get("/internal/dynamic-pricing/product-stats")
-async def dynamic_pricing_product_stats(shop_domain: str, product_id: str):
+def dynamic_pricing_product_stats(shop_domain: str, product_id: str):
     try:
         with get_db() as s:
             return {"ok": True, **product_stats.get_product_stats(s, shop_domain, product_id)}
@@ -353,7 +353,7 @@ async def dynamic_pricing_product_stats(shop_domain: str, product_id: str):
 
 
 @app.get("/internal/dynamic-pricing/products-stats-list")
-async def dynamic_pricing_products_stats_list(shop_domain: str):
+def dynamic_pricing_products_stats_list(shop_domain: str):
     try:
         with get_db() as s:
             return {"ok": True, "products": product_stats.list_product_stats(s, shop_domain)}
@@ -363,7 +363,7 @@ async def dynamic_pricing_products_stats_list(shop_domain: str):
 
 
 @app.get("/internal/dynamic-pricing/match-activity")
-async def dynamic_pricing_match_activity(shop_domain: str, product_id: str, days: int = 30):
+def dynamic_pricing_match_activity(shop_domain: str, product_id: str, days: int = 30):
     try:
         since = datetime.now(timezone.utc) - timedelta(days=days)
         with get_db() as s:
@@ -377,7 +377,7 @@ async def dynamic_pricing_match_activity(shop_domain: str, product_id: str, days
 
 
 @app.get("/internal/dynamic-pricing/matches")
-async def dynamic_pricing_matches(shop_domain: str):
+def dynamic_pricing_matches(shop_domain: str):
     try:
         with get_db() as s:
             return {"ok": True, **product_stats.list_matches_for_review(s, shop_domain)}
@@ -387,7 +387,7 @@ async def dynamic_pricing_matches(shop_domain: str):
 
 
 @app.get("/internal/dynamic-pricing/matches/product")
-async def dynamic_pricing_matches_for_product(shop_domain: str, product_id: str, limit: int = 3):
+def dynamic_pricing_matches_for_product(shop_domain: str, product_id: str, limit: int = 3):
     try:
         with get_db() as s:
             return {"ok": True, **product_stats.list_matches_for_product(s, shop_domain, product_id, limit)}
@@ -409,7 +409,7 @@ async def dynamic_pricing_skip_reasons():
 
 
 @app.post("/internal/dynamic-pricing/delete")
-async def dynamic_pricing_delete(req: DynamicPricingDeleteRequest):
+def dynamic_pricing_delete(req: DynamicPricingDeleteRequest):
     if not req.confirmed:
         return {"ok": False, "error": "Deletion must be confirmed."}
     try:
@@ -463,7 +463,7 @@ def rearm_shop_product_urls(shop_domain: str, frequency_interval: int, frequency
 
 
 @app.post("/internal/pricing/revert")
-async def price_revert(req: PriceRevertRequest):
+def price_revert(req: PriceRevertRequest):
     try:
         with get_db() as s:
             result = revert_price_decision(s, req.shop_domain, req.variant_id, req.decision_id)
@@ -487,7 +487,7 @@ async def price_revert(req: PriceRevertRequest):
 
 
 @app.post("/internal/matches/review")
-async def matches_review(req: MatchReviewRequest):
+def matches_review(req: MatchReviewRequest):
     if req.action not in ("confirm", "reject"):
         return {"ok": False, "error": f"Unknown action: {req.action!r}. Must be 'confirm' or 'reject'."}
     try:

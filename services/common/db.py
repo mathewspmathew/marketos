@@ -27,6 +27,24 @@ def _build_engine():
         if url.startswith(prefix):
             url = "postgresql+psycopg" + url[len(prefix) - 3:]
             break
+
+    if os.environ.get("DB_POOL_MODE") == "queue":
+        # For a long-lived single-process service (e.g. api_gateway's uvicorn
+        # process) fielding frequent interactive requests, NullPool's
+        # per-request handshake (~470ms measured against Aiven) dwarfs the
+        # actual query cost (~40ms). A small persistent pool amortizes that
+        # handshake across requests. Capped very small (max 3 held
+        # connections) because the shared Postgres instance's max_connections
+        # (20) has limited headroom from other services/dev sessions already
+        # holding connections — checked live via pg_stat_activity before
+        # picking this size. Revisit upward only after confirming headroom.
+        return create_engine(
+            url,
+            pool_size=2, max_overflow=1,
+            pool_recycle=1800,
+            pool_pre_ping=True,
+        )
+
     # NullPool: open a connection on checkout, close it for real on session.close().
     # QueuePool with pool_size=1 held one connection open per process for its
     # entire lifetime — with a dozen mostly-idle worker processes and no pooler

@@ -147,6 +147,7 @@ services:
     container_name: api_gateway
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      - DB_POOL_MODE=queue
       - REDIS_URL=redis://redis:6379/0
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
       - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
