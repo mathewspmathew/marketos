@@ -95,39 +95,44 @@ def get_product_stats(session: Session, shop_domain: str, product_id: str) -> di
     settings = session.get(ShopSettings, shop_domain)
     min_competitors = settings.minCompetitorsToPrice if settings else 4
 
-    strong_match_count = session.execute(
+    # Combines what used to be 3 separate round-trips (usable-match count,
+    # top-8 matches for the chart, and a follow-up variant-ids-per-match
+    # lookup) into one query: fetch every usable match already joined to its
+    # competitor variants, then derive the count/top-8/variant-map in Python.
+    # The gate count (`strong_match_count`) covers ALL usable matches, not
+    # just the chart's top 8 — kept correct by counting distinct matches
+    # from the full result before truncating to 8 for display.
+    match_rows = session.execute(
         text(f"""
-            SELECT COUNT(*) FROM "ProductLevelMatch" plm
-            WHERE plm."shopifyProductId" = :pid AND plm."shopDomain" = :sd
-            {_USABLE_MATCH_SQL}
-        """),
-        {"pid": product_id, "sd": shop_domain},
-    ).scalar()
-
-    matches = session.execute(
-        text(f"""
-            SELECT plm.id, plm."scrapedProductId", plm.confidence,
-                   sp.title, sp.domain
+            SELECT plm.id AS "matchId", plm."scrapedProductId", plm.confidence,
+                   sp.title, sp.domain, sv.id AS "competitorVariantId"
             FROM "ProductLevelMatch" plm
             JOIN "ScrapedProduct" sp ON sp.id = plm."scrapedProductId"
+            LEFT JOIN "ScrapedVariant" sv ON sv."productId" = sp.id
             WHERE plm."shopifyProductId" = :pid AND plm."shopDomain" = :sd
             {_USABLE_MATCH_SQL}
-            ORDER BY plm.confidence DESC
-            LIMIT 8
+            ORDER BY plm.confidence DESC, plm.id
         """),
         {"pid": product_id, "sd": shop_domain},
     ).all()
-    match_by_scraped_product = {m.scrapedProductId: m for m in matches}
 
-    scraped_product_ids = list(match_by_scraped_product.keys())
-    competitor_variant_rows = (
-        session.execute(
-            text('SELECT id, "productId" FROM "ScrapedVariant" WHERE "productId" = ANY(:pids)'),
-            {"pids": scraped_product_ids},
-        ).all()
-        if scraped_product_ids else []
-    )
-    variant_to_match = {r.id: match_by_scraped_product[r.productId] for r in competitor_variant_rows}
+    match_by_scraped_product = {}
+    variant_ids_by_scraped_product = {}
+    for r in match_rows:
+        if r.scrapedProductId not in match_by_scraped_product:
+            match_by_scraped_product[r.scrapedProductId] = r
+            variant_ids_by_scraped_product[r.scrapedProductId] = []
+        if r.competitorVariantId is not None:
+            variant_ids_by_scraped_product[r.scrapedProductId].append(r.competitorVariantId)
+
+    strong_match_count = len(match_by_scraped_product)
+
+    top8_scraped_ids = list(match_by_scraped_product.keys())[:8]
+    variant_to_match = {
+        vid: match_by_scraped_product[spid]
+        for spid in top8_scraped_ids
+        for vid in variant_ids_by_scraped_product[spid]
+    }
 
     since = datetime.now(timezone.utc) - timedelta(days=DAYS)
     observations = (
