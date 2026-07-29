@@ -7,7 +7,10 @@ Not exposed publicly — only reachable within the Docker network.
 Run: uvicorn services.api_gateway.main:app --host 0.0.0.0 --port 8000
 """
 
+import asyncio
+import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import structlog
@@ -17,7 +20,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import or_, text
+from sse_starlette.sse import EventSourceResponse
 
+from services.api_gateway import live_updates
 from services.chatbot_svc.schemas import PaneConfigInput
 from services.chatbot_svc.tools.toggle_settings import compute_disable_counts
 from services.common import pane_config
@@ -35,7 +40,19 @@ load_dotenv()
 
 logger = structlog.get_logger(__name__)
 
-app = FastAPI(title="MarketOS Internal API", docs_url=None, redoc_url=None)
+_live_updates_stop = asyncio.Event()
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    dsn = os.environ["DATABASE_URL"]
+    listener_task = asyncio.create_task(live_updates.run_listener(dsn, stop_event=_live_updates_stop))
+    yield
+    _live_updates_stop.set()
+    await listener_task
+
+
+app = FastAPI(title="MarketOS Internal API", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 
 @app.middleware("http")
@@ -397,6 +414,47 @@ def dynamic_pricing_matches_for_product(shop_domain: str, product_id: str, limit
             shop_domain=shop_domain, product_id=product_id,
         )
         return {"ok": False, "error": "Something went wrong loading matches for this product."}
+
+
+@app.get("/internal/dynamic-pricing/matches/stream")
+async def matches_stream(shop_domain: str):
+    """SSE stream: emits one 'matches_updated' event whenever live_updates
+    dispatches matches_channel for this shop (matcher_svc wrote a new match).
+    Consumed by shopify_ui's app.matches.stream.jsx proxy, never by the
+    browser directly (EventSource can't set X-Internal-Token)."""
+    queue = live_updates.subscribe("matches_channel", shop_domain)
+
+    async def event_gen():
+        try:
+            yield {"event": "open", "data": "{}"}
+            while True:
+                await queue.get()
+                yield {"event": "matches_updated", "data": "{}"}
+        finally:
+            live_updates.unsubscribe("matches_channel", shop_domain, queue)
+
+    return EventSourceResponse(event_gen(), ping=15)
+
+
+@app.get("/internal/dynamic-pricing/stats/stream")
+async def stats_stream(shop_domain: str):
+    """SSE stream: emits one 'stats_updated' event (data: {"product_id": ...})
+    whenever live_updates dispatches stats_channel for this shop (decide.py
+    wrote a decision for one of its products). Consumed by shopify_ui's
+    app.stats.stream.jsx proxy — app.stats._index.jsx reacts to any event,
+    app.stats.$productId.jsx filters on product_id client-side."""
+    queue = live_updates.subscribe("stats_channel", shop_domain)
+
+    async def event_gen():
+        try:
+            yield {"event": "open", "data": "{}"}
+            while True:
+                product_id = await queue.get()
+                yield {"event": "stats_updated", "data": json.dumps({"product_id": product_id})}
+        finally:
+            live_updates.unsubscribe("stats_channel", shop_domain, queue)
+
+    return EventSourceResponse(event_gen(), ping=15)
 
 
 @app.get("/internal/dynamic-pricing/skip-reasons")
