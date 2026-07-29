@@ -322,24 +322,15 @@ def apply_dynamic_pricing_config(
     product_id: str,
     config: PaneConfigInput,
 ) -> ApplyPaneConfigResult:
-    """Turn on / update / resume dynamic pricing for ONE product using the
-    configuration values the user actually specified in their message
-    (search query, pricing tier, min/max price, rescrape frequency,
-    discovery settings). Call this for ANY turn-on/enable/update/resume
-    request, with or without concrete values — this applies the change
-    directly, with no card or confirmation click. Only include fields the
-    user mentioned; omitted fields keep the product's existing value, they
-    are not reset. A plain resume ("resume dynamic pricing on X") is just
-    this tool called with every field omitted. On a product that has NEVER
-    been configured before, pricing_tier and both frequency fields are
-    required — if the merchant's message doesn't include them, ask for the
-    missing value(s) with ask_user before calling this tool, don't guess or
-    omit them (a previously-paused product with existing config does not
-    need pricing_tier or frequency re-asked). If pricing tier is missing,
-    ask_user's options MUST be ["BUDGET", "COMPETITIVE", "PREMIUM"]. Call
-    resolve_product first to get product_id.
-    Raises an error if product_id is not in this shop, or if the config is
-    invalid (e.g. min price >= max price)."""
+    """Turn on / update / resume dynamic pricing for ONE product. Applies
+    directly, no card. Include only the fields the merchant actually
+    mentioned -- omitted fields keep the product's existing value, they are
+    NOT reset. Call resolve_product first for product_id. See the system
+    prompt's Hard rule decision procedure for when to ask_user first versus
+    calling this directly. On a never-configured product missing
+    pricing_tier, ask_user's options MUST be ["BUDGET", "COMPETITIVE", "PREMIUM"]
+    -- never an open-ended tier question. Raises an error if product_id is
+    not in this shop, or if the config is invalid (e.g. min price >= max price)."""
     return t_apply_config.apply_dynamic_pricing_config(
         ctx.deps.shop_domain, product_id, ctx.deps.session_id, config
     )
