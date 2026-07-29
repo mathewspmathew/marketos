@@ -44,10 +44,24 @@ def extract_prices(text: str) -> list[float]:
     return prices
 
 
+def _format_prompt_for_judge(user_prompt: str | list[str]) -> str:
+    """Multi-turn cases pass Case.inputs as a list of turns (see
+    cases_multiturn.py) -- only the LAST turn is the one being scored, earlier
+    turns are just context that built up real message history. Label that
+    explicitly so the judge doesn't mark a reply wrong for not re-answering
+    an already-answered prior turn."""
+    if isinstance(user_prompt, list):
+        *prior, probe = user_prompt
+        lines = [f"[earlier turn, already answered — context only] {t}" for t in prior]
+        lines.append(f"[THIS TURN — evaluate only this one] {probe}")
+        return "\n".join(lines)
+    return user_prompt
+
+
 async def check_output_correctness(
     out: ChatRunOutput,
     meta: dict,
-    user_prompt: str = "",
+    user_prompt: str | list[str] = "",
 ) -> tuple[float, str]:
     """LLM-as-judge: score 0.0–1.0 for how well the reply satisfies the case criteria.
 
@@ -56,7 +70,7 @@ async def check_output_correctness(
     """
     criteria = meta.get("expected_facts", [])
     reply = out.reply or out.ask or ""
-    return await llm_judge(user_prompt, reply, criteria)
+    return await llm_judge(_format_prompt_for_judge(user_prompt), reply, criteria)
 
 
 def check_structured_output(out: ChatRunOutput, meta: dict) -> tuple[bool, str]:

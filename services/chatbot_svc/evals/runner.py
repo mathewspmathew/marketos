@@ -9,7 +9,7 @@ from typing import Any
 from pydantic_ai import capture_run_messages
 from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart, ToolReturnPart
 
-from services.chatbot_svc.agent import agent
+from services.chatbot_svc.agent import CHAT_USAGE_LIMITS, agent
 from services.chatbot_svc.deps import build_deps
 from services.chatbot_svc.tools.ask import AskUserRequested
 
@@ -91,6 +91,55 @@ async def run_chat_case(prompt: str, shop_domain: str, session_id: str) -> ChatR
         out.retries = count_retries(messages)
         out.input_tokens = usage.input_tokens or 0
         out.output_tokens = usage.output_tokens or 0
+    except Exception as exc:  # noqa: BLE001 — eval must survive any case crash
+        out.error = type(exc).__name__
+    finally:
+        if deps is not None:
+            await deps.http.aclose()
+    return out
+
+
+async def run_multiturn_case(turns: list[str], shop_domain: str, session_id: str) -> ChatRunOutput:
+    """Run `turns` through the real agent in order, feeding each reply's real
+    message history into the next call, and score only the LAST turn.
+
+    Earlier turns build up genuine conversational context (mirrors what the
+    production /chat endpoint does turn-to-turn via context.py) -- this is
+    what a single-prompt eval case can't exercise: a probe turn answered
+    using facts that leaked in from an earlier, unrelated turn.
+    """
+    out = ChatRunOutput()
+    deps = None
+    try:
+        deps = build_deps(shop_domain=shop_domain, user_id=None, session_id=session_id)
+        history: list = []
+        with capture_run_messages() as messages:
+            for i, prompt in enumerate(turns):
+                is_probe = i == len(turns) - 1
+                try:
+                    result = await agent.run(
+                        prompt, deps=deps, message_history=history, usage_limits=CHAT_USAGE_LIMITS
+                    )
+                except AskUserRequested as ask:
+                    if not is_probe:
+                        raise RuntimeError(f"setup turn {i} ({prompt!r}) unexpectedly asked: {ask.question}")
+                    out.ask = ask.question
+                    out.tool_calls = extract_tool_calls(messages)
+                    out.tool_errors = extract_tool_errors(messages)
+                    out.retries = count_retries(messages)
+                    return out
+                if is_probe:
+                    # Only this turn's own messages -- extract_tool_calls etc.
+                    # must reflect the probe, not tool calls from setup turns.
+                    probe_messages = result.new_messages()
+                    usage = result.usage()
+                    out.reply = result.output
+                    out.tool_calls = extract_tool_calls(probe_messages)
+                    out.tool_errors = extract_tool_errors(probe_messages)
+                    out.retries = count_retries(probe_messages)
+                    out.input_tokens = usage.input_tokens or 0
+                    out.output_tokens = usage.output_tokens or 0
+                history = result.all_messages()
     except Exception as exc:  # noqa: BLE001 — eval must survive any case crash
         out.error = type(exc).__name__
     finally:
