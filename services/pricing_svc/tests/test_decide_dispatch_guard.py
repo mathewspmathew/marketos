@@ -27,7 +27,7 @@ _PRODUCT = SimpleNamespace(
 _SETTINGS = SimpleNamespace(
     markupPct=0.1, currency="INR", minCompetitorsToPrice=1, topKCompetitors=3,
     maxAutoApplyChangePct=0.1, lifetimeCapPct=0.2, budgetUndercut=0.05,
-    premiumUplift=0.05, includeOosInPricing=False,
+    premiumUplift=0.05, includeOosInPricing=False, autoUpdatePriceEnabled=True,
     frequencyUnit=None, frequencyInterval=None,
     minChangePctThreshold=0.001, minFreshnessHours=24,
 )

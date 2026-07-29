@@ -84,6 +84,11 @@ SKIP_REASON_TAXONOMY = {
         "label": "Capped at price bounds",
         "hint": "Price moved, but limited by your min/max price band.",
     },
+    "auto_update_off": {
+        "blocked": False,
+        "label": "Auto update price is off",
+        "hint": "Turn on Auto update price in Settings to resume pushing prices to Shopify.",
+    },
 }
 
 
@@ -195,7 +200,7 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                        "minCompetitorsToPrice", "topKCompetitors",
                        "maxAutoApplyChangePct", "lifetimeCapPct",
                        "budgetUndercut", "premiumUplift",
-                       "includeOosInPricing",
+                       "includeOosInPricing", "autoUpdatePriceEnabled",
                        "frequencyUnit", "frequencyInterval",
                        "minChangePctThreshold", "minFreshnessHours"
                 FROM "ShopSettings" WHERE "shopDomain" = :sd
@@ -451,6 +456,9 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
             top_matches = [{"matchId": c["match_id"], "scrapedProductId": c["scraped_product_id"],
                               "domain": c["domain"], "confidence": c["confidence"],
                               "median": str(c["median"])} for c in top]
+            auto_applied = bool(settings.autoUpdatePriceEnabled)
+            if not auto_applied and skip_reason is None:
+                skip_reason = "auto_update_off"
             decision_id = _write_decision(
                 session, shop_domain=shop_domain, variant_id=v.id,
                 old_price=cur, new_price=new_price,
@@ -459,8 +467,11 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
                 change_pct=change_pct, ref_price=ref_price, formula_target=formula_target,
                 competitors_used=len(top), oos_observations=oos_count, currency_drops=currency_drops,
                 top_matches=top_matches,
-                tier=tier, skip_reason=skip_reason, auto_applied=True, now=now,
+                tier=tier, skip_reason=skip_reason, auto_applied=auto_applied, now=now,
             )
+            if not auto_applied:
+                written += 1
+                continue
             if first_decision_id is None:
                 first_decision_id = decision_id
             applied_any = True
