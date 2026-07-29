@@ -498,6 +498,7 @@ class ShopSettings(Base):
     budgetUndercut           = Column("budgetUndercut", Float, nullable=False, default=0.05)
     premiumUplift            = Column("premiumUplift", Float, nullable=False, default=0.05)
     includeOosInPricing      = Column("includeOosInPricing", Boolean, nullable=False, default=False)
+    autoUpdatePriceEnabled   = Column("autoUpdatePriceEnabled", Boolean, nullable=False, default=True)
     discoveryNumResults      = Column("discoveryNumResults", Integer, nullable=False, default=10)
     minChangePctThreshold    = Column("minChangePctThreshold", Float, nullable=False, default=0.005)
     minFreshnessHours        = Column("minFreshnessHours", Integer, nullable=False, default=24)

@@ -67,13 +67,13 @@ _QUERIES: dict[StatsMetric, str] = {
     """,
     StatsMetric.recent_decisions: f"""
         WITH recent AS (
-            SELECT id, "shopifyVariantId", "oldPrice", "newPrice", "decidedAt"
+            SELECT id, "shopifyVariantId", "oldPrice", "newPrice", "decidedAt", "autoApplied"
             FROM "PriceDecision"
             WHERE "shopDomain" = :shop
               AND "decidedAt" >= now() - interval '{RECENT_DECISIONS_WINDOW}'
         ),
         changed AS (
-            SELECT * FROM recent WHERE "oldPrice" <> "newPrice"
+            SELECT * FROM recent WHERE "oldPrice" <> "newPrice" AND "autoApplied" = TRUE
         )
         SELECT
           (SELECT COUNT(*) FROM recent) AS total_decisions,

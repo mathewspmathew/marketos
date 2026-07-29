@@ -343,6 +343,7 @@ model ShopSettings {
   budgetUndercut           Float       @default(0.05)
   premiumUplift            Float       @default(0.05)
   includeOosInPricing      Boolean     @default(false)
+  autoUpdatePriceEnabled   Boolean     @default(true)
   discoveryNumResults      Int         @default(10)
   minChangePctThreshold    Float       @default(0.005)
   minFreshnessHours        Int         @default(24)
