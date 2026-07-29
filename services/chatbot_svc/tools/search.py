@@ -4,9 +4,17 @@ from sqlalchemy import func, select, text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from services.common.db import get_db
-from services.common.models import ShopifyProduct, ShopifyVariant
+from services.common.models import ShopifyProduct, ShopifyVariant, ShopSettings
 from services.chatbot_svc.schemas import ScopeFilter, VariantSummary, ResolvedProduct
 from services.common.vertex_embed import embed_text as _embed_text
+
+DEFAULT_CURRENCY = "INR"
+
+
+def _shop_currency(s, shop_domain: str) -> str:
+    """Shop's configured currency, falling back to INR (this deployment's default)."""
+    settings = s.get(ShopSettings, shop_domain)
+    return (settings.currency if settings and settings.currency else DEFAULT_CURRENCY)
 
 
 def structured_search(
@@ -50,10 +58,9 @@ def structured_search(
 
         stmt = stmt.limit(limit).offset(offset)
 
+        currency = _shop_currency(s, shop_domain)
         out: list[VariantSummary] = []
-        for v, p in s.execute(stmt).all(
-            
-        ):
+        for v, p in s.execute(stmt).all():
             out.append(
                 VariantSummary(
                     variant_id=v.id,
@@ -61,6 +68,7 @@ def structured_search(
                     title=p.title,
                     vendor=p.vendor,
                     current_price=float(v.currentPrice or 0),
+                    currency=currency,
                     dynamic_pricing_enabled=bool(p.dynamicPricingEnabled),
                 )
             )
@@ -93,6 +101,7 @@ def semantic_search(shop_domain: str, query: str, top_k: int = 20) -> list[Varia
     """)
     with get_db() as s:
         rows = s.execute(sql, {"shop": shop_domain, "vec": vec_lit, "k": top_k}).mappings().all()
+        currency = _shop_currency(s, shop_domain)
     return [
         VariantSummary(
             variant_id=r["variant_id"],
@@ -100,6 +109,7 @@ def semantic_search(shop_domain: str, query: str, top_k: int = 20) -> list[Varia
             title=r["title"],
             vendor=r["vendor"],
             current_price=float(r["price"]),
+            currency=currency,
             dynamic_pricing_enabled=bool(r["dpe"]),
         )
         for r in rows
@@ -127,6 +137,7 @@ def get_variant(shop_domain: str, variant_id: str) -> VariantSummary | None:
             title=p.title,
             vendor=p.vendor,
             current_price=float(v.currentPrice or 0),
+            currency=_shop_currency(s, shop_domain),
             dynamic_pricing_enabled=bool(p.dynamicPricingEnabled),
         )
 
