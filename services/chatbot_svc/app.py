@@ -27,7 +27,9 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import run_in_threadpool
 
-from services.chatbot_svc.agent import agent
+from pydantic_ai.exceptions import UsageLimitExceeded
+
+from services.chatbot_svc.agent import CHAT_USAGE_LIMITS, agent
 from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps
 from services.chatbot_svc.titling import maybe_set_title
@@ -191,12 +193,23 @@ async def chat(req: ChatRequest):
 
         try:
             try:
-                result = await agent.run(req.message, deps=deps, message_history=history)
+                result = await agent.run(
+                    req.message, deps=deps, message_history=history, usage_limits=CHAT_USAGE_LIMITS
+                )
             except AskUserRequested as ask:
                 # The agent raised a clarification request via the ask tool.
                 payload = {"question": ask.question, "options": ask.options}
                 await run_in_threadpool(_record, sid, "assistant", {"ask": payload})
                 yield {"event": "ask", "data": json.dumps(payload)}
+                yield {"event": "done", "data": "{}"}
+                return
+            except UsageLimitExceeded:
+                # Stuck tool-call loop (e.g. re-querying for a product that
+                # doesn't exist) or a runaway conversation -- fail fast
+                # instead of retrying in place for a minute-plus.
+                text = "I'm having trouble finding that — could you rephrase or name the exact product?"
+                await run_in_threadpool(_record, sid, "assistant", {"text": text})
+                yield {"event": "text", "data": json.dumps({"text": text})}
                 yield {"event": "done", "data": "{}"}
                 return
 
