@@ -472,6 +472,15 @@ def decide_price_for_product(shop_domain: str, shopify_product_id: str) -> dict:
             {"now": now, "pid": shopify_product_id},
         )
 
+        # Wake any live-updates SSE listener for this shop (services/api_gateway
+        # /live_updates.py) so app.stats._index.jsx and app.stats.$productId.jsx
+        # update without a manual refresh. Fired on every call — including
+        # skips — since those still change lastDecisionAt/decision history.
+        session.execute(
+            text("SELECT pg_notify('stats_channel', :payload)"),
+            {"payload": f"{shop_domain}:{shopify_product_id}"},
+        )
+
     # Enqueue the Shopify push outside the DB session. One per product, not per
     # variant — apply_price fans out to all variants of the product internally.
     if applied_any and first_decision_id:
