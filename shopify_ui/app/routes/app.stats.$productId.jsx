@@ -151,6 +151,23 @@ export default function ProductStatsPage() {
     }
   }, [revertFetcher.state, revertFetcher.data, revalidator]);
 
+  // Live updates: a pricing decision for THIS product refreshes the chart +
+  // decision history without a manual reload. Ignores stats_updated events
+  // for other products in the same shop (checked via the event's product_id).
+  useEffect(() => {
+    const es = new EventSource("/app/stats/stream");
+    es.addEventListener("stats_updated", (e) => {
+      const { product_id } = JSON.parse(e.data);
+      if (product_id === product.id) revalidator.revalidate();
+    });
+    return () => es.close();
+  }, [revalidator, product.id]);
+
+  useEffect(() => {
+    const t = setInterval(() => revalidator.revalidate(), 60_000);
+    return () => clearInterval(t);
+  }, [revalidator]);
+
   const revert = (variantId, decisionId) => {
     revertFetcher.submit({ variantId, decisionId }, { method: "POST" });
   };

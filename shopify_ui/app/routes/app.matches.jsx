@@ -8,7 +8,7 @@
  * services/pricing_svc/match_review.py via /internal/matches/review.
  */
 import React from "react";
-import { useFetcher, useLoaderData, useRouteError } from "react-router";
+import { useFetcher, useLoaderData, useRevalidator, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
@@ -105,9 +105,27 @@ export const action = async ({ request }) => {
 export default function MatchesPage() {
   const { metrics, groups } = useLoaderData();
   const fetcher = useFetcher();
+  const revalidator = useRevalidator();
   const [expandedProducts, setExpandedProducts] = React.useState({});
   const [matchesCache, setMatchesCache] = React.useState({});
   const [pendingLoad, setPendingLoad] = React.useState(null);
+
+  // Live updates: matcher-worker writes trigger a Postgres NOTIFY that
+  // reaches this page via SSE (services/api_gateway/live_updates.py), so a
+  // new match shows up without a manual refresh while this tab is open.
+  React.useEffect(() => {
+    const es = new EventSource("/app/matches/stream");
+    es.addEventListener("matches_updated", () => revalidator.revalidate());
+    return () => es.close();
+  }, [revalidator]);
+
+  // Backup poll: SSE delivery isn't guaranteed (a dropped connection between
+  // reconnect attempts can miss a NOTIFY), so this page is never more than
+  // ~60s stale even if the live stream above silently misses something.
+  React.useEffect(() => {
+    const t = setInterval(() => revalidator.revalidate(), 60_000);
+    return () => clearInterval(t);
+  }, [revalidator]);
 
   const act = (matchId, intent) => fetcher.submit({ intent, matchId }, { method: "POST" });
 

@@ -7,7 +7,8 @@
  * list and its computed lastStatus come from
  * services/pricing_svc/product_stats.py::list_product_stats.
  */
-import { Link, useLoaderData } from "react-router";
+import React from "react";
+import { Link, useLoaderData, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
@@ -31,6 +32,20 @@ export const loader = async ({ request }) => {
 
 export default function StatsIndex() {
   const { products } = useLoaderData();
+  const revalidator = useRevalidator();
+
+  // Live updates: any pricing decision written for this shop (decide.py)
+  // refreshes this list's lastDecisionAt/lastStatus without a manual reload.
+  React.useEffect(() => {
+    const es = new EventSource("/app/stats/stream");
+    es.addEventListener("stats_updated", () => revalidator.revalidate());
+    return () => es.close();
+  }, [revalidator]);
+
+  React.useEffect(() => {
+    const t = setInterval(() => revalidator.revalidate(), 60_000);
+    return () => clearInterval(t);
+  }, [revalidator]);
 
   return (
     <s-page heading="Stats">
