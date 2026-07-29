@@ -9,7 +9,7 @@ from typing import Any
 from pydantic_ai import capture_run_messages
 from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart, ToolReturnPart
 
-from services.chatbot_svc.agent import CHAT_USAGE_LIMITS, agent
+from services.chatbot_svc.agent import CHAT_USAGE_LIMITS, agent, ordered_fallback_model
 from services.chatbot_svc.deps import build_deps
 from services.chatbot_svc.tools.ask import AskUserRequested
 
@@ -76,7 +76,7 @@ async def run_chat_case(prompt: str, shop_domain: str, session_id: str) -> ChatR
         # so tool calls made before an ask_user are not lost
         with capture_run_messages() as messages:
             try:
-                result = await agent.run(prompt, deps=deps)
+                result = await agent.run(prompt, deps=deps, model=ordered_fallback_model())
             except AskUserRequested as ask:
                 out.ask = ask.question
                 out.tool_calls = extract_tool_calls(messages)
@@ -118,7 +118,11 @@ async def run_multiturn_case(turns: list[str], shop_domain: str, session_id: str
                 is_probe = i == len(turns) - 1
                 try:
                     result = await agent.run(
-                        prompt, deps=deps, message_history=history, usage_limits=CHAT_USAGE_LIMITS
+                        prompt,
+                        deps=deps,
+                        message_history=history,
+                        usage_limits=CHAT_USAGE_LIMITS,
+                        model=ordered_fallback_model(),
                     )
                 except AskUserRequested as ask:
                     if not is_probe:

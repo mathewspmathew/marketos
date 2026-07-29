@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 import sys
+import httpx
 import logfire
 from dotenv import load_dotenv
 from groq import AsyncGroq
@@ -73,6 +74,7 @@ from services.chatbot_svc.tools import debug as t_debug
 from services.chatbot_svc.tools import price_explanation as t_price_explanation
 from services.chatbot_svc.tools import match_explanation as t_match_explanation
 from services.chatbot_svc.tools import resolution_guard as t_resolution_guard
+from services.chatbot_svc import model_cooldown as t_model_cooldown
 from services.chatbot_svc.tools.ask import ask_user as _ask_user_raw
 
 
@@ -108,6 +110,10 @@ _CHATBOT_GROQ_PROVIDER = GroqProvider(
     groq_client=AsyncGroq(
         api_key=os.environ.get("GROQ_API_KEY_CHATBOT") or os.environ.get("GROQ_API_KEY"),
         max_retries=1,
+        # Cools down a model for a short window after a 429 instead of
+        # letting FallbackModel retry it fresh on every single call (see
+        # model_cooldown.py's docstring for the incident this fixes).
+        http_client=httpx.AsyncClient(event_hooks={"response": [t_model_cooldown.response_hook]}),
     )
 )
 
@@ -125,6 +131,20 @@ _model = (
     if _FALLBACK_MODELS
     else _as_model(_MODEL)
 )
+
+_ALL_MODEL_SPECS = [_MODEL, *_FALLBACK_MODELS]
+
+
+def ordered_fallback_model() -> GroqModel | FallbackModel:
+    """Build a fresh FallbackModel each call, with any model that recently
+    429'd pushed to the back of the chain (see model_cooldown.py). Pass as
+    agent.run(..., model=ordered_fallback_model()) at real call sites --
+    the module-level `_model`/`agent` above are left as the static default
+    for anything that doesn't opt in (e.g. existing tests introspecting
+    `agent` directly are unaffected)."""
+    ordered = t_model_cooldown.order_by_health(_ALL_MODEL_SPECS)
+    models = [_as_model(m) for m in ordered]
+    return FallbackModel(*models) if len(models) > 1 else models[0]
 
 agent: Agent[AgentDeps, str] = Agent(
     _model,

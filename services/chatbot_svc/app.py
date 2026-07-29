@@ -29,7 +29,7 @@ from starlette.concurrency import run_in_threadpool
 
 from pydantic_ai.exceptions import UsageLimitExceeded
 
-from services.chatbot_svc.agent import CHAT_USAGE_LIMITS, agent
+from services.chatbot_svc.agent import CHAT_USAGE_LIMITS, agent, ordered_fallback_model
 from services.chatbot_svc.context import build_context
 from services.chatbot_svc.deps import build_deps
 from services.chatbot_svc.titling import maybe_set_title
@@ -194,7 +194,11 @@ async def chat(req: ChatRequest):
         try:
             try:
                 result = await agent.run(
-                    req.message, deps=deps, message_history=history, usage_limits=CHAT_USAGE_LIMITS
+                    req.message,
+                    deps=deps,
+                    message_history=history,
+                    usage_limits=CHAT_USAGE_LIMITS,
+                    model=ordered_fallback_model(),
                 )
             except AskUserRequested as ask:
                 # The agent raised a clarification request via the ask tool.

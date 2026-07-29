@@ -54,7 +54,7 @@ class _FakeDeps:
 
 
 async def test_run_chat_case_records_ask_as_outcome_not_error(monkeypatch):
-    async def fake_run(prompt, deps=None):
+    async def fake_run(prompt, deps=None, **kwargs):
         raise AskUserRequested(question="Which pack did you mean?", options=["A", "B"])
 
     monkeypatch.setattr(runner_module.agent, "run", fake_run)
@@ -67,7 +67,7 @@ async def test_run_chat_case_records_ask_as_outcome_not_error(monkeypatch):
 
 
 async def test_run_chat_case_still_records_real_crashes(monkeypatch):
-    async def fake_run(prompt, deps=None):
+    async def fake_run(prompt, deps=None, **kwargs):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(runner_module.agent, "run", fake_run)
