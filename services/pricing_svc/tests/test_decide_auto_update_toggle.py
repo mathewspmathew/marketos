@@ -138,3 +138,56 @@ def test_toggle_off_does_not_override_an_existing_clamp_reason(monkeypatch):
     assert insert_params["skip"] == "clamped_per_round"
     assert insert_params["auto"] is False
     send.assert_not_called()
+
+
+def _run_no_op_case(monkeypatch, auto_update_price_enabled: bool):
+    # Competitor price equals the current price and markupPct=0, so
+    # ref_price = formula_target = 100 = current price -> step = 0, which is
+    # well under the 0.1% minChangePctThreshold. This must hit the no-op
+    # branch (skip_reason="no_change") before the toggle gate ever runs.
+    settings = SimpleNamespace(
+        markupPct=0.0, currency="INR", minCompetitorsToPrice=1, topKCompetitors=3,
+        maxAutoApplyChangePct=0.1, lifetimeCapPct=0.2, budgetUndercut=0.05,
+        premiumUplift=0.05, includeOosInPricing=False,
+        autoUpdatePriceEnabled=auto_update_price_enabled,
+        frequencyUnit=None, frequencyInterval=None,
+        minChangePctThreshold=0.001, minFreshnessHours=24,
+    )
+    comp_rows = [SimpleNamespace(
+        scraped_product_id="sp1", price=100, currency="INR", in_stock=True,
+        observed_at=datetime.now(timezone.utc), match_id="m1", confidence=1.0,
+        title="Comp1", domain="comp.com",
+    )]
+    send = MagicMock()
+
+    class _NoOpSession(_FakeSession):
+        def execute(self, stmt, params=None):
+            sql = str(stmt)
+            self.executed.append((sql, params))
+            if "SELECT" in sql and 'FROM "ShopifyProduct"' in sql:
+                return _Result(_PRODUCT)
+            if 'FROM "ShopSettings"' in sql:
+                return _Result(self.settings)
+            if 'FROM "ShopifyVariant"' in sql:
+                return _Result(_VARIANTS)
+            if "WITH latest AS" in sql:
+                return _Result(comp_rows)
+            if 'INSERT INTO "PriceDecision"' in sql:
+                return _Result((_DECISION_ID,))
+            return _Result(None)
+
+    session = _NoOpSession(settings)
+    monkeypatch.setattr(decide_mod, "get_db", lambda: _fake_get_db(session))
+    monkeypatch.setattr(decide_mod, "logger", MagicMock())
+    monkeypatch.setattr(decide_mod.app, "send_task", send)
+    decide_mod.decide_price_for_product("demo.myshopify.com", "prod1")
+
+    insert_params = next(p for sql, p in session.executed if 'INSERT INTO "PriceDecision"' in sql)
+    assert insert_params["skip"] == "no_change"
+    assert insert_params["auto"] is False
+    send.assert_not_called()
+
+
+def test_no_op_case_is_unaffected_by_toggle(monkeypatch):
+    _run_no_op_case(monkeypatch, auto_update_price_enabled=True)
+    _run_no_op_case(monkeypatch, auto_update_price_enabled=False)
