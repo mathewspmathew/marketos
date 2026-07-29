@@ -12,6 +12,7 @@ import { useFetcher, useLoaderData, useRevalidator, useRouteError } from "react-
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
+import { subscribeToEventStream } from "../lib/eventStream";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
@@ -114,9 +115,9 @@ export default function MatchesPage() {
   // reaches this page via SSE (services/api_gateway/live_updates.py), so a
   // new match shows up without a manual refresh while this tab is open.
   React.useEffect(() => {
-    const es = new EventSource("/app/matches/stream");
-    es.addEventListener("matches_updated", () => revalidator.revalidate());
-    return () => es.close();
+    return subscribeToEventStream("/app/matches/stream", "matches_updated", () => {
+      revalidator.revalidate();
+    });
   }, [revalidator]);
 
   // Backup poll: SSE delivery isn't guaranteed (a dropped connection between

@@ -12,6 +12,7 @@ import { Link, useLoaderData, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
+import { subscribeToEventStream } from "../lib/eventStream";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
@@ -37,9 +38,9 @@ export default function StatsIndex() {
   // Live updates: any pricing decision written for this shop (decide.py)
   // refreshes this list's lastDecisionAt/lastStatus without a manual reload.
   React.useEffect(() => {
-    const es = new EventSource("/app/stats/stream");
-    es.addEventListener("stats_updated", () => revalidator.revalidate());
-    return () => es.close();
+    return subscribeToEventStream("/app/stats/stream", "stats_updated", () => {
+      revalidator.revalidate();
+    });
   }, [revalidator]);
 
   React.useEffect(() => {

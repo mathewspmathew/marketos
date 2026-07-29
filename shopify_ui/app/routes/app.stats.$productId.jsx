@@ -19,6 +19,7 @@ import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
+import { subscribeToEventStream } from "../lib/eventStream";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 const INTERNAL_HEADERS = { "X-Internal-Token": process.env.INTERNAL_API_TOKEN };
@@ -155,12 +156,10 @@ export default function ProductStatsPage() {
   // decision history without a manual reload. Ignores stats_updated events
   // for other products in the same shop (checked via the event's product_id).
   useEffect(() => {
-    const es = new EventSource("/app/stats/stream");
-    es.addEventListener("stats_updated", (e) => {
-      const { product_id } = JSON.parse(e.data);
+    return subscribeToEventStream("/app/stats/stream", "stats_updated", (data) => {
+      const { product_id } = JSON.parse(data);
       if (product_id === product.id) revalidator.revalidate();
     });
-    return () => es.close();
   }, [revalidator, product.id]);
 
   useEffect(() => {
