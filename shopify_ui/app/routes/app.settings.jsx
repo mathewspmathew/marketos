@@ -61,6 +61,7 @@ export const loader = async ({ request }) => {
       discoveryNumResults:      s.discoveryNumResults, // "Competitor products per run"
       marketplaceBlocklist:     s.marketplaceBlocklist, // "Exclude these marketplaces"
       autoRescrapeEnabled:      s.autoRescrapeEnabled, // "Auto rescrape" (master switch)
+      autoUpdatePriceEnabled:   s.autoUpdatePriceEnabled, // "Auto update price" (master switch)
       includeOosInPricing:      s.includeOosInPricing, // "Include out-of-stock"
       minCompetitorsToPrice:    s.minCompetitorsToPrice, // "Number of minimum competitors to calculate price"
       topKCompetitors:          s.topKCompetitors, // "Focus on top N most-similar"
@@ -118,6 +119,7 @@ export const action = async ({ request }) => {
     discoveryNumResults:      parsePositiveInt(formData.get("discoveryNumResults"),      DEFAULTS.discoveryNumResults),
     marketplaceBlocklist:     { set: blocklist },
     autoRescrapeEnabled:      formData.get("autoRescrapeEnabled") === "true",
+    autoUpdatePriceEnabled:   formData.get("autoUpdatePriceEnabled") === "true",
     includeOosInPricing:      formData.get("includeOosInPricing") === "true",
     minCompetitorsToPrice:    parsePositiveInt(formData.get("minCompetitorsToPrice"), DEFAULTS.minCompetitorsToPrice),
     topKCompetitors:          parsePositiveInt(formData.get("topKCompetitors"),       DEFAULTS.topKCompetitors),
@@ -213,6 +215,7 @@ export default function SettingsPage() {
     frequencyUnit: settings.frequencyUnit,
     defaultPricingTier: settings.defaultPricingTier,
     autoRescrapeEnabled: settings.autoRescrapeEnabled,
+    autoUpdatePriceEnabled: settings.autoUpdatePriceEnabled,
     includeOosInPricing: settings.includeOosInPricing,
     currency: settings.currency,
   };
@@ -261,6 +264,7 @@ export default function SettingsPage() {
         discoveryNumResults: form.discoveryNumResults,
         marketplaceBlocklist: form.marketplaceBlocklist.join("\n"),
         autoRescrapeEnabled: String(form.autoRescrapeEnabled),
+        autoUpdatePriceEnabled: String(form.autoUpdatePriceEnabled),
         includeOosInPricing: String(form.includeOosInPricing),
         minCompetitorsToPrice: form.minCompetitorsToPrice,
         topKCompetitors: form.topKCompetitors,
@@ -281,6 +285,27 @@ export default function SettingsPage() {
 
   return (
     <s-page heading="Shop settings">
+      {/* 0. Automatic Price Updates */}
+      <s-section heading="🏷️ Automatic Price Updates">
+        <s-stack direction="block" gap="base">
+          <div>
+            <FieldLabel
+              id="tip-auto-update-price"
+              text="Auto update price"
+              tooltip="When on, calculated prices are pushed to your store automatically. When off, prices are still calculated on schedule and shown on each product's Stats page — nothing changes in your store until you turn this back on."
+            />
+            <s-checkbox
+              id="auto-update-price"
+              label="Auto update price"
+              labelAccessibilityVisibility="exclusive"
+              checked={form.autoUpdatePriceEnabled || undefined}
+              onChange={() => setField("autoUpdatePriceEnabled", !form.autoUpdatePriceEnabled)}
+              details="Master switch for pushing calculated prices to Shopify."
+            />
+          </div>
+        </s-stack>
+      </s-section>
+
       {/* 1. How to Find Competitors */}
       <s-section heading="🔍 How to Find Competitors">
         <s-stack direction="block" gap="base">
