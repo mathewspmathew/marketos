@@ -366,6 +366,17 @@ def match_for_scraped_product(self, scraped_product_id: str):
                 ),
                 {"pid": scraped_product_id},
             )
+
+            # Wake any live-updates SSE listener for this shop (services/api_gateway
+            # /live_updates.py) so app.matches.jsx updates without a manual refresh.
+            # Riding this same transaction means the NOTIFY is only ever delivered
+            # after the writes above actually commit (Postgres semantics), so a
+            # listener can never see the notification before the row it's about.
+            if total_written > 0:
+                session.execute(
+                    text("SELECT pg_notify('matches_channel', :shop)"),
+                    {"shop": shop_domain},
+                )
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             logger.exception("match_permanently_failed", scraped_product_id=scraped_product_id)
