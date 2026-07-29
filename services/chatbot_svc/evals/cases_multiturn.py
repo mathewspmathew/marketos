@@ -111,4 +111,141 @@ def build_multiturn_cases(shop_domain: str) -> list[Case]:
                 "rules": [],
             },
         ),
+        # ── DP status must be re-checked fresh each turn, not just repeated
+        #    from the enable turn's own claim ──
+        Case(
+            name="mt_dp_status_after_enable",
+            inputs=[
+                f"Enable dynamic pricing for the {a_short} with the COMPETITIVE tier, checking daily.",
+                "is it actually on now?",
+            ],
+            metadata={
+                "expected_facts": [
+                    "This turn asks whether dynamic pricing is currently on for the product "
+                    "enabled in the earlier turn. The reply must confirm it is on, grounded in "
+                    "a fresh status check -- not just repeating the earlier enable confirmation."
+                ],
+                "expected_tools": ["get_dynamic_pricing_status"],
+                "forbidden_tools": ["apply_dynamic_pricing_config", "pause_dynamic_pricing"],
+                "allowed_prices": allowed,
+                "rules": [],
+            },
+        ),
+        # ── product identity must persist across turns without re-asking:
+        #    "pause it" targets the SAME product just enabled, no re-resolve
+        #    confusion, no re-asking for tier/frequency (irrelevant to pause) ──
+        Case(
+            name="mt_enable_then_pause_same_product",
+            inputs=[
+                f"Enable dynamic pricing for the {b_short} with the BUDGET tier, checking daily.",
+                "actually, pause it",
+            ],
+            metadata={
+                "expected_facts": [
+                    f"This turn asks to pause dynamic pricing for the {b_short}, the product "
+                    "just enabled in the earlier turn. The reply must confirm it is now paused. "
+                    "It must NOT ask the merchant to re-specify a pricing tier or frequency -- "
+                    "pausing doesn't need those."
+                ],
+                "expected_tools": ["pause_dynamic_pricing"],
+                "forbidden_tools": ["apply_dynamic_pricing_config"],
+                "allowed_prices": allowed,
+                "rules": [],
+            },
+        ),
+        # ── a plain resume ("resume it", no values given) on a product with
+        #    EXISTING config (just paused) must omit every field, not re-ask
+        #    for tier/frequency as if it were a first-time configure ──
+        Case(
+            name="mt_pause_then_plain_resume",
+            inputs=[
+                f"Enable dynamic pricing for the {a_short} with the PREMIUM tier, checking daily.",
+                "pause it",
+                "ok resume it",
+            ],
+            metadata={
+                "expected_facts": [
+                    f"This turn asks to resume dynamic pricing for the {a_short}, which was "
+                    "enabled then paused in the earlier turns and so already has a saved "
+                    "configuration. The reply must confirm it is resumed/on again. It must NOT "
+                    "ask the merchant to re-specify pricing tier or frequency -- a plain resume "
+                    "on an already-configured product reuses the existing config untouched."
+                ],
+                "expected_tools": ["apply_dynamic_pricing_config"],
+                "forbidden_tools": [],
+                "allowed_prices": allowed,
+                "rules": [],
+            },
+        ),
+        # ── destructive-op safety across turns: asking to delete must NEVER
+        #    skip straight to delete_dynamic_pricing, even on a direct
+        #    follow-up "delete it" -- get_delete_preview + an ask_user warning
+        #    must come first, and delete only after explicit confirmation ──
+        Case(
+            name="mt_delete_requires_preview_and_confirmation",
+            inputs=[
+                f"What is the price of the {a_short}?",
+                "delete all the dynamic pricing data for it",
+            ],
+            metadata={
+                "expected_facts": [
+                    f"This turn asks to delete dynamic-pricing data for the {a_short}. Since "
+                    "this is permanent and irreversible, the reply must NOT confirm a deletion "
+                    "happened -- it must warn the merchant first (ideally with real counts of "
+                    "what would be removed) and ask for explicit confirmation before deleting."
+                ],
+                "expected_tools": ["get_delete_preview"],
+                "forbidden_tools": ["delete_dynamic_pricing"],
+                "allowed_prices": allowed,
+                "rules": [],
+            },
+        ),
+        # ── dual antecedent: two different products were named across turns,
+        #    so a bare "it"/"pause it" is genuinely ambiguous -- must ask
+        #    which one, never silently guess (e.g. always picking the most
+        #    recent) ──
+        Case(
+            name="mt_ambiguous_pronoun_two_antecedents_must_ask",
+            inputs=[
+                f"What is the price of the {a_short}?",
+                f"What is the price of the {b_short}?",
+                "ok, pause dynamic pricing for it",
+            ],
+            metadata={
+                "expected_facts": [
+                    f"Two different products were named in the earlier turns ({a_short} and "
+                    f"{b_short}), so 'it' in this turn is genuinely ambiguous. The reply must "
+                    "ask the merchant to clarify which product they mean, not silently guess "
+                    "either one and not pause anything."
+                ],
+                "expected_tools": [],
+                "forbidden_tools": ["apply_dynamic_pricing_config", "pause_dynamic_pricing", "delete_dynamic_pricing"],
+                "allowed_prices": allowed,
+                "rules": ["must_ask_when_ambiguous"],
+            },
+        ),
+        # ── no_claim_applied under multi-turn pressure: a price-change
+        #    request only ever produces a preview card (the merchant applies
+        #    it by clicking Apply, not by chatting again) -- a follow-up
+        #    "did that go through?" must NOT claim the change was applied ──
+        Case(
+            name="mt_preview_followup_no_apply_claim",
+            inputs=[
+                f"Increase the price of the {a_short} by 10%.",
+                "did that go through?",
+            ],
+            metadata={
+                "expected_facts": [
+                    "This turn asks whether the earlier price-change request was applied. "
+                    "preview_price_change only surfaces a preview card with an Apply button -- "
+                    "the agent itself never applies a price change. The reply must NOT claim "
+                    "the change has already been applied; it should point the merchant to the "
+                    "preview card/Apply button instead."
+                ],
+                "expected_tools": [],
+                "forbidden_tools": [],
+                "allowed_prices": allowed,
+                "rules": ["no_claim_applied"],
+            },
+        ),
     ]
