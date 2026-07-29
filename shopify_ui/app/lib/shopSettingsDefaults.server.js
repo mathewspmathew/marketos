@@ -12,7 +12,6 @@ export const DEFAULTS = {
   marketplaceBlocklist: [], // domains to exclude from competitor discovery
   autoRescrapeEnabled: true, // shop-wide master switch for scheduled rescraping
   includeOosInPricing: false, // whether out-of-stock competitor observations count toward pricing
-  autoUpdatePriceEnabled: true, // shop-wide master switch: push calculated prices to Shopify automatically
   // Auto-pricing knobs (per-product overrides live on ShopifyProduct).
   minCompetitorsToPrice: 4, // minimum matched competitor products required before auto-pricing runs
   topKCompetitors: 4, // only the N highest-confidence competitor matches feed the reference price
