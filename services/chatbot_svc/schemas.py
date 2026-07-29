@@ -87,6 +87,7 @@ class VariantSummary(BaseModel):
     title: str
     vendor: Optional[str]
     current_price: float
+    currency: str
     dynamic_pricing_enabled: bool
 
 
