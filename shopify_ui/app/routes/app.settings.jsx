@@ -413,7 +413,24 @@ export default function SettingsPage() {
         </s-stack>
       </s-section>
 
-      {/* 2. Pricing Strategy */}
+      {/* 2. Default Pricing Tier */}
+      <s-section heading="🏷️ Default Pricing Tier">
+        <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            Used for new products when the chatbot isn't told a tier explicitly.
+          </s-text>
+          <s-select
+            value={form.defaultPricingTier}
+            onChange={(e) => setField("defaultPricingTier", e.currentTarget.value)}
+          >
+            {PRICING_TIERS.map((t) => (
+              <s-option key={t.value} value={t.value}>{t.label}</s-option>
+            ))}
+          </s-select>
+        </s-stack>
+      </s-section>
+
+      {/* 3. Pricing Strategy */}
       <s-section heading="💰 Pricing Strategy">
         <s-stack direction="block" gap="base">
           <s-text tone="subdued">
@@ -463,7 +480,39 @@ export default function SettingsPage() {
         </s-stack>
       </s-section>
 
-      {/* 3. Price Change Rules */}
+      {/* 4. Update Frequency */}
+      <s-section heading="⏱️ Update Frequency">
+        <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            How often to check for competitor price changes.
+          </s-text>
+          <s-stack direction="inline" gap="base">
+            <div>
+              <FieldLabel id="tip-frequency" text="Every" tooltip="Default rescrape interval. More frequent = better accuracy but higher cost. Never = one-time discovery only." />
+              <s-text-field
+                label="Every"
+                labelAccessibilityVisibility="exclusive"
+                type="number"
+                value={form.frequencyInterval}
+                onInput={(e) => setField("frequencyInterval", e.currentTarget.value)}
+              />
+            </div>
+            <div>
+              <s-select
+                label="Unit"
+                value={form.frequencyUnit}
+                onChange={(e) => setField("frequencyUnit", e.currentTarget.value)}
+              >
+                {FREQ_UNITS.map((u) => (
+                  <s-option key={u.value} value={u.value}>{u.label}</s-option>
+                ))}
+              </s-select>
+            </div>
+          </s-stack>
+        </s-stack>
+      </s-section>
+
+      {/* 5. Price Change Rules */}
       <s-section heading="🛡️ Price Change Rules">
         <s-stack direction="block" gap="base">
           <s-text tone="subdued">
@@ -549,55 +598,7 @@ export default function SettingsPage() {
         </s-stack>
       </s-section>
 
-      {/* 4. Update Frequency */}
-      <s-section heading="⏱️ Update Frequency">
-        <s-stack direction="block" gap="base">
-          <s-text tone="subdued">
-            How often to check for competitor price changes.
-          </s-text>
-          <s-stack direction="inline" gap="base">
-            <div>
-              <FieldLabel id="tip-frequency" text="Every" tooltip="Default rescrape interval. More frequent = better accuracy but higher cost. Never = one-time discovery only." />
-              <s-text-field
-                label="Every"
-                labelAccessibilityVisibility="exclusive"
-                type="number"
-                value={form.frequencyInterval}
-                onInput={(e) => setField("frequencyInterval", e.currentTarget.value)}
-              />
-            </div>
-            <div>
-              <s-select
-                label="Unit"
-                value={form.frequencyUnit}
-                onChange={(e) => setField("frequencyUnit", e.currentTarget.value)}
-              >
-                {FREQ_UNITS.map((u) => (
-                  <s-option key={u.value} value={u.value}>{u.label}</s-option>
-                ))}
-              </s-select>
-            </div>
-          </s-stack>
-        </s-stack>
-      </s-section>
-
-      <s-section heading="🏷️ Default Pricing Tier">
-        <s-stack direction="block" gap="base">
-          <s-text tone="subdued">
-            Used for new products when the chatbot isn't told a tier explicitly.
-          </s-text>
-          <s-select
-            value={form.defaultPricingTier}
-            onChange={(e) => setField("defaultPricingTier", e.currentTarget.value)}
-          >
-            {PRICING_TIERS.map((t) => (
-              <s-option key={t.value} value={t.value}>{t.label}</s-option>
-            ))}
-          </s-select>
-        </s-stack>
-      </s-section>
-
-      {/* 5. Controls */}
+      {/* 6. Controls */}
       <s-section heading="⚙️ Controls">
         <s-stack direction="block" gap="base">
           <s-text tone="subdued">
