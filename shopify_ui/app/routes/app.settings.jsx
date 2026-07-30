@@ -75,6 +75,8 @@ export const loader = async ({ request }) => {
       serperHl:                 s.serperHl, // "Language"
       serperLocation:           s.serperLocation, // "Search location"
       currency:                 s.currency ?? DEFAULTS.currency, // "Shop currency code"
+      notifyEmail:               s.notifyEmail ?? DEFAULTS.notifyEmail, // "Notification email"
+      priceChangeNotificationsEnabled: s.priceChangeNotificationsEnabled, // "Price change notifications" toggle
     },
   };
 };
@@ -83,6 +85,39 @@ export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
   const formData = await request.formData();
+
+  const intent = formData.get("intent");
+  if (intent === "enable-notifications") {
+    const email = (formData.get("notifyEmail") || "").toString().trim();
+    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    if (!emailValid) {
+      return { ok: false, error: "Enter a valid email address." };
+    }
+
+    await db.shopSettings.upsert({
+      where: { shopDomain },
+      update: { notifyEmail: email },
+      create: { shopDomain, ...DEFAULTS, notifyEmail: email, updatedAt: new Date() },
+    });
+
+    const confirmResp = await fetch(`${process.env.APP_URL ?? ""}/internal.notify-confirm`, {
+      method: "POST",
+      headers: { ...INTERNAL_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({ shopDomain, email }),
+    }).catch(() => null);
+    const confirmResult = confirmResp ? await confirmResp.json().catch(() => ({ ok: false })) : { ok: false };
+
+    if (!confirmResult.ok) {
+      return { ok: false, error: confirmResult.error || "Couldn't send to that address — check it and try again." };
+    }
+
+    await db.shopSettings.update({
+      where: { shopDomain },
+      data: { priceChangeNotificationsEnabled: true },
+    });
+
+    return { ok: true, notificationsEnabled: true };
+  }
 
   const parsePctish = (v) => {
     // Accepts "2", "2%", or "0.02" — normalizes to fraction.
@@ -133,6 +168,7 @@ export const action = async ({ request }) => {
     serperHl:       ((formData.get("serperHl")       || "").toString().trim().toLowerCase()) || DEFAULTS.serperHl,
     serperLocation: ((formData.get("serperLocation") || "").toString().trim())               || DEFAULTS.serperLocation,
     currency:       ((formData.get("currency")       || "").toString().trim().toUpperCase()) || DEFAULTS.currency,
+    priceChangeNotificationsEnabled: formData.get("priceChangeNotificationsEnabled") === "true",
   };
 
   // Detect OFF → ON transition on the global auto-rescrape switch so we can
@@ -218,11 +254,33 @@ export default function SettingsPage() {
     autoUpdatePriceEnabled: settings.autoUpdatePriceEnabled,
     includeOosInPricing: settings.includeOosInPricing,
     currency: settings.currency,
+    notifyEmail: settings.notifyEmail ?? "",
+    priceChangeNotificationsEnabled: settings.priceChangeNotificationsEnabled,
   };
 
   const [form, setForm] = useState(initialFormState);
   const [showSavedMessage, setShowSavedMessage] = useState(false);
   const [newBlockedDomain, setNewBlockedDomain] = useState("");
+  const notifyFetcher = useFetcher();
+  const [notifyError, setNotifyError] = useState("");
+
+  useEffect(() => {
+    if (notifyFetcher.data && notifyFetcher.state === "idle") {
+      if (notifyFetcher.data.ok) {
+        setNotifyError("");
+        setForm((prev) => ({ ...prev, priceChangeNotificationsEnabled: true }));
+      } else {
+        setNotifyError(notifyFetcher.data.error || "Something went wrong.");
+      }
+    }
+  }, [notifyFetcher.data, notifyFetcher.state]);
+
+  const clickNotify = () => {
+    notifyFetcher.submit(
+      { intent: "enable-notifications", notifyEmail: form.notifyEmail },
+      { method: "POST" },
+    );
+  };
 
   const addBlockedDomain = () => {
     const domain = newBlockedDomain.trim().toLowerCase();
@@ -278,6 +336,7 @@ export default function SettingsPage() {
         serperHl: form.serperHl,
         serperLocation: form.serperLocation,
         currency: form.currency,
+        priceChangeNotificationsEnabled: String(form.priceChangeNotificationsEnabled),
       },
       { method: "POST" },
     );
@@ -303,6 +362,49 @@ export default function SettingsPage() {
               details="Master switch for pushing calculated prices to Shopify."
             />
           </div>
+        </s-stack>
+      </s-section>
+
+      {/* 0.5. Price Change Notifications */}
+      <s-section heading="📧 Price Change Notifications">
+        <s-stack direction="block" gap="base">
+          <s-text tone="subdued">
+            Get an email whenever this app automatically updates a product&apos;s price in your store.
+          </s-text>
+          <div>
+            <FieldLabel
+              id="tip-notify-email"
+              text="Notification email"
+              tooltip="Where price-change emails are sent. Click Notify to save this address and enable the feature — we'll send a one-time confirmation email first."
+            />
+            <s-text-field
+              label="Notification email"
+              labelAccessibilityVisibility="exclusive"
+              type="email"
+              value={form.notifyEmail}
+              onInput={(e) => setField("notifyEmail", e.currentTarget.value)}
+              placeholder="you@example.com"
+            />
+          </div>
+          <s-stack direction="inline" gap="base" alignItems="center">
+            <s-button onClick={clickNotify} disabled={notifyFetcher.state !== "idle" || !form.notifyEmail}>
+              {form.priceChangeNotificationsEnabled ? "Re-confirm this address" : "Notify"}
+            </s-button>
+            {notifyFetcher.state !== "idle" && <s-text tone="subdued">Sending confirmation email…</s-text>}
+            {notifyError && <s-text tone="critical">{notifyError}</s-text>}
+          </s-stack>
+          {form.priceChangeNotificationsEnabled && (
+            <div>
+              <s-checkbox
+                id="price-change-notifications-enabled"
+                label="Price change notifications enabled"
+                labelAccessibilityVisibility="exclusive"
+                checked={form.priceChangeNotificationsEnabled || undefined}
+                onChange={() => setField("priceChangeNotificationsEnabled", !form.priceChangeNotificationsEnabled)}
+                details="Turn off to pause emails without losing the saved address. Save settings to apply."
+              />
+            </div>
+          )}
         </s-stack>
       </s-section>
 
