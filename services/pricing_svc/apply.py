@@ -14,6 +14,8 @@ Per-product advisory lock prevents concurrent apply for the same product.
 from __future__ import annotations
 
 import json
+import os
+import httpx
 import structlog
 
 from sqlalchemy import text
@@ -38,6 +40,33 @@ def _stamp_error(session, decision_ids: list[str], err: str) -> None:
     )
 
 
+def _notify_price_change(shop_domain: str, product_title: str, currency: str, variants: list[dict]) -> None:
+    """Fire-and-forget POST to the JS app's internal notify-price-change route.
+
+    Must never raise into the caller — a failed/timed-out notification should
+    never block or fail the price-apply path that triggers it.
+    """
+    app_url = os.environ.get("APP_URL")
+    token = os.environ.get("INTERNAL_API_TOKEN")
+    if not app_url or not token:
+        logger.warning("notify_price_change_skipped", reason="APP_URL/INTERNAL_API_TOKEN unset")
+        return
+    try:
+        httpx.post(
+            f"{app_url}/internal.notify-price-change",
+            headers={"X-Internal-Token": token},
+            json={
+                "shopDomain": shop_domain,
+                "productTitle": product_title,
+                "currency": currency,
+                "variants": variants,
+            },
+            timeout=5.0,
+        )
+    except Exception:
+        logger.warning("notify_price_change_failed", shop_domain=shop_domain, product_title=product_title)
+
+
 def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) -> dict:
     with get_db() as session:
         # Per-product advisory lock — held for the transaction. If a parallel
@@ -53,7 +82,8 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
         sibling_rows = session.execute(
             text("""
                 SELECT DISTINCT ON (pd."shopifyVariantId")
-                       pd.id, pd."shopifyVariantId", pd."newPrice", pd."appliedAt"
+                       pd.id, pd."shopifyVariantId", pd."oldPrice", pd."newPrice", pd."appliedAt",
+                       v."title" AS "variantTitle"
                 FROM "PriceDecision" pd
                 JOIN "ShopifyVariant" v ON v.id = pd."shopifyVariantId"
                 WHERE v."productId"   = :pid
@@ -64,13 +94,16 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
             {"pid": shopify_product_id, "sd": shop_domain},
         ).all()
 
-        pending = [(r.id, r.shopifyVariantId, r.newPrice) for r in sibling_rows if r.appliedAt is None]
+        pending = [
+            (r.id, r.shopifyVariantId, r.newPrice, r.oldPrice, r.variantTitle)
+            for r in sibling_rows if r.appliedAt is None
+        ]
         if not pending:
             return {"ok": True, "noop": "all_already_applied"}
 
         variants_input = [
             {"id": vid, "price": f"{float(price):.2f}"}
-            for (_, vid, price) in pending
+            for (_, vid, price, _old, _title) in pending
         ]
 
         # GraphQL mutation for updating variant prices
@@ -93,11 +126,11 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
             )
         except ShopifyAuthError as exc:
             msg = f"auth_error: {str(exc)}"
-            _stamp_error(session, [d for d, _, _ in pending], msg)
+            _stamp_error(session, [d for d, _, _, _, _ in pending], msg)
             return {"ok": False, "reason": "unauthorized", "error": msg}
         except ShopifyAPIError as exc:
             msg = f"api_error: {str(exc)}"
-            _stamp_error(session, [d for d, _, _ in pending], msg)
+            _stamp_error(session, [d for d, _, _, _, _ in pending], msg)
             return {"ok": False, "reason": "api_error", "error": msg}
 
         # Extract response data (GraphQL response format)
@@ -106,12 +139,12 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
         if user_errors:
             _stamp_error(
                 session,
-                [d for d, _, _ in pending],
+                [d for d, _, _, _, _ in pending],
                 f"user_errors: {json.dumps(user_errors)[:400]}",
             )
             return {"ok": False, "reason": "user_errors", "userErrors": user_errors}
 
-        decision_ids = [d for d, _, _ in pending]
+        decision_ids = [d for d, _, _, _, _ in pending]
         session.execute(
             text("""
                 UPDATE "PriceDecision"
@@ -121,11 +154,33 @@ def _apply(shop_domain: str, shopify_product_id: str, trigger_decision_id: str) 
             """),
             {"ids": decision_ids, "r": json.dumps(bulk, default=str)},
         )
-        for _did, vid, price in pending:
+        for _did, vid, price, _old, _title in pending:
             session.execute(
                 text('UPDATE "ShopifyVariant" SET "currentPrice" = :p WHERE id = :v'),
                 {"p": float(price), "v": vid},
             )
+
+        notify_row = session.execute(
+            text("""
+                SELECT sp."title" AS "productTitle", ss."currency",
+                       ss."priceChangeNotificationsEnabled", ss."notifyEmail"
+                FROM "ShopifyProduct" sp
+                JOIN "ShopSettings" ss ON ss."shopDomain" = sp."shopDomain"
+                WHERE sp.id = :pid
+            """),
+            {"pid": shopify_product_id},
+        ).first()
+
+    if notify_row and notify_row.priceChangeNotificationsEnabled and notify_row.notifyEmail:
+        _notify_price_change(
+            shop_domain,
+            notify_row.productTitle,
+            notify_row.currency,
+            [
+                {"variantTitle": title, "oldPrice": str(old), "newPrice": str(price)}
+                for (_, _, price, old, title) in pending
+            ],
+        )
 
     return {"ok": True, "applied": len(pending), "decisionIds": decision_ids}
 
