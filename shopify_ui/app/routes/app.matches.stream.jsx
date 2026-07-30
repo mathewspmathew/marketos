@@ -16,17 +16,27 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  const upstream = await fetch(
-    `${PYTHON_API_URL}/internal/dynamic-pricing/matches/stream?shop_domain=${encodeURIComponent(shopDomain)}`,
-    { headers: INTERNAL_HEADERS, signal: request.signal },
-  );
+  try {
+    const upstream = await fetch(
+      `${PYTHON_API_URL}/internal/dynamic-pricing/matches/stream?shop_domain=${encodeURIComponent(shopDomain)}`,
+      { headers: INTERNAL_HEADERS, signal: request.signal },
+    );
 
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  } catch (err) {
+    // The client tearing down its connection (tab closed, page navigated
+    // away, eventStream.js reconnecting) aborts this same request.signal we
+    // forwarded above — that's the intended cleanup path (see live_updates.py
+    // unsubscribe), not an application error, so it must not propagate as an
+    // unhandled exception.
+    if (err.name === "AbortError") return new Response(null, { status: 204 });
+    throw err;
+  }
 };

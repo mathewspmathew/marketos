@@ -110,6 +110,7 @@ export default function MatchesPage() {
   const [expandedProducts, setExpandedProducts] = React.useState({});
   const [matchesCache, setMatchesCache] = React.useState({});
   const [pendingLoad, setPendingLoad] = React.useState(null);
+  const [pendingAction, setPendingAction] = React.useState(null);
 
   // Live updates: matcher-worker writes trigger a Postgres NOTIFY that
   // reaches this page via SSE (services/api_gateway/live_updates.py), so a
@@ -128,7 +129,10 @@ export default function MatchesPage() {
     return () => clearInterval(t);
   }, [revalidator]);
 
-  const act = (matchId, intent) => fetcher.submit({ intent, matchId }, { method: "POST" });
+  const act = (matchId, intent, productId) => {
+    setPendingAction({ productId, hadAll: Boolean(matchesCache[`${productId}-all`]) });
+    fetcher.submit({ intent, matchId }, { method: "POST" });
+  };
 
   const toggleExpand = (productId) => {
     setExpandedProducts((prev) => ({ ...prev, [productId]: !prev[productId] }));
@@ -156,6 +160,30 @@ export default function MatchesPage() {
       setPendingLoad(null);
     }
   }, [fetcher.data, fetcher.state, pendingLoad]);
+
+  // A confirm/reject only updates the server + the main loader's groups/metrics
+  // (via revalidation) — the expanded-row list below is separately cached in
+  // matchesCache from a one-time lazy load (app.matches.lazy.jsx) that is
+  // never otherwise invalidated. Without this, a confirmed row keeps showing
+  // its stale PENDING state (Confirm/Reject buttons still visible) until a
+  // full page reload. Drop the affected product's cached rows and reload
+  // them fresh once the action settles.
+  React.useEffect(() => {
+    if (fetcher.state !== "idle" || !pendingAction) return;
+    const { productId, hadAll } = pendingAction;
+    setPendingAction(null);
+    if (!fetcher.data?.ok) return;
+
+    setMatchesCache((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      delete next[`${productId}-all`];
+      return next;
+    });
+    const limit = hadAll ? 999 : 3;
+    setPendingLoad({ productId, limit });
+    fetcher.load(`/app/matches/lazy?productId=${productId}&limit=${limit}`);
+  }, [fetcher.data, fetcher.state, pendingAction]);
 
   return (
     <s-page heading="Matched competitors" subheading={`${metrics.totalProducts} product${metrics.totalProducts === 1 ? "" : "s"}`}>
@@ -239,7 +267,7 @@ export default function MatchesPage() {
                 <MatchTableHeader />
                 <s-table-body>
                   {matchesCache[product.id].slice(0, 3).map((m) => (
-                    <CompetitorRow key={m.id} m={m} onConfirm={(id) => act(id, "confirm")} onReject={(id) => act(id, "reject")} />
+                    <CompetitorRow key={m.id} m={m} onConfirm={(id) => act(id, "confirm", product.id)} onReject={(id) => act(id, "reject", product.id)} />
                   ))}
                 </s-table-body>
               </s-table>
@@ -258,7 +286,7 @@ export default function MatchesPage() {
                 <MatchTableHeader />
                 <s-table-body>
                   {matchesCache[`${product.id}-all`].map((m) => (
-                    <CompetitorRow key={m.id} m={m} onConfirm={(id) => act(id, "confirm")} onReject={(id) => act(id, "reject")} />
+                    <CompetitorRow key={m.id} m={m} onConfirm={(id) => act(id, "confirm", product.id)} onReject={(id) => act(id, "reject", product.id)} />
                   ))}
                 </s-table-body>
               </s-table>

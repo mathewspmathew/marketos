@@ -24,6 +24,16 @@ function parseEventBlock(rawEvent) {
   return { event, data };
 }
 
+// Per the WHATWG SSE spec, a line may end in CRLF, a lone LF, or a lone CR —
+// sse-starlette (services/api_gateway/main.py's EventSourceResponse) emits
+// CRLF, confirmed byte-for-byte, not the bare "\n\n" a naive parser assumes.
+// Collapsing all three forms to LF here keeps the rest of this file's
+// buffer/event-splitting logic correct regardless of which line-ending
+// convention the server (this one, or any future one) actually emits.
+function normalizeLineEndings(text) {
+  return text.replace(/\r\n|\r/g, "\n");
+}
+
 /**
  * Subscribes to an SSE endpoint via fetch(), invoking onMessage(data) for
  * every event whose name matches eventName. Reconnects with capped
@@ -51,7 +61,7 @@ export function subscribeToEventStream(url, eventName, onMessage) {
       const chunk = await reader.read();
       done = chunk.done;
       if (done) break;
-      buffer += decoder.decode(chunk.value, { stream: true });
+      buffer += normalizeLineEndings(decoder.decode(chunk.value, { stream: true }));
 
       let sepIndex;
       while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {

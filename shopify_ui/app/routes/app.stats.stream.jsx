@@ -13,17 +13,25 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  const upstream = await fetch(
-    `${PYTHON_API_URL}/internal/dynamic-pricing/stats/stream?shop_domain=${encodeURIComponent(shopDomain)}`,
-    { headers: INTERNAL_HEADERS, signal: request.signal },
-  );
+  try {
+    const upstream = await fetch(
+      `${PYTHON_API_URL}/internal/dynamic-pricing/stats/stream?shop_domain=${encodeURIComponent(shopDomain)}`,
+      { headers: INTERNAL_HEADERS, signal: request.signal },
+    );
 
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  } catch (err) {
+    // See app.matches.stream.jsx: the client tearing down its connection
+    // aborts this same request.signal we forwarded — expected cleanup, not
+    // an application error.
+    if (err.name === "AbortError") return new Response(null, { status: 204 });
+    throw err;
+  }
 };
