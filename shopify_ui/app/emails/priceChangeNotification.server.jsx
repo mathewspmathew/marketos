@@ -17,8 +17,8 @@ function PriceChangeEmail({ storeName, productTitle, currency, variants }) {
               <Column>Old price ({currency})</Column>
               <Column>New price ({currency})</Column>
             </Row>
-            {variants.map((v) => (
-              <Row key={v.variantTitle} style={{ borderBottom: "1px solid #eee" }}>
+            {variants.map((v, idx) => (
+              <Row key={`${v.variantTitle}-${idx}`} style={{ borderBottom: "1px solid #eee" }}>
                 <Column>{v.variantTitle}</Column>
                 <Column>{v.oldPrice}</Column>
                 <Column>{v.newPrice}</Column>

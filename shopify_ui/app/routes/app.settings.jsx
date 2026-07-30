@@ -100,7 +100,7 @@ export const action = async ({ request }) => {
       create: { shopDomain, ...DEFAULTS, notifyEmail: email, updatedAt: new Date() },
     });
 
-    const confirmResp = await fetch(`${process.env.APP_URL ?? ""}/internal.notify-confirm`, {
+    const confirmResp = await fetch(`${process.env.APP_URL ?? ""}/internal/notify-confirm`, {
       method: "POST",
       headers: { ...INTERNAL_HEADERS, "content-type": "application/json" },
       body: JSON.stringify({ shopDomain, email }),

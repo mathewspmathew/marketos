@@ -75,7 +75,8 @@ def test_apply_posts_notification_when_enabled(seeded_apply_scenario, monkeypatc
 
     assert result["ok"] is True
     mock_post.assert_called_once()
-    _, kwargs = mock_post.call_args
+    args, kwargs = mock_post.call_args
+    assert args[0].endswith("/internal/notify-price-change")
     payload = kwargs["json"]
     assert payload["shopDomain"] == shop
     assert payload["productTitle"] == "Notify Apply Test Product"

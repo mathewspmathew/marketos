@@ -52,8 +52,8 @@ def _notify_price_change(shop_domain: str, product_title: str, currency: str, va
         logger.warning("notify_price_change_skipped", reason="APP_URL/INTERNAL_API_TOKEN unset")
         return
     try:
-        httpx.post(
-            f"{app_url}/internal.notify-price-change",
+        resp = httpx.post(
+            f"{app_url}/internal/notify-price-change",
             headers={"X-Internal-Token": token},
             json={
                 "shopDomain": shop_domain,
@@ -63,6 +63,20 @@ def _notify_price_change(shop_domain: str, product_title: str, currency: str, va
             },
             timeout=5.0,
         )
+        if resp.status_code >= 300:
+            logger.warning(
+                "notify_price_change_non_2xx",
+                status_code=resp.status_code,
+                shop_domain=shop_domain,
+                product_title=product_title,
+            )
+        else:
+            logger.info(
+                "notify_price_change_sent",
+                status_code=resp.status_code,
+                shop_domain=shop_domain,
+                product_title=product_title,
+            )
     except Exception:
         logger.warning("notify_price_change_failed", shop_domain=shop_domain, product_title=product_title)
 
