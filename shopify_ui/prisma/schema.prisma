@@ -347,6 +347,8 @@ model ShopSettings {
   discoveryNumResults      Int         @default(10)
   minChangePctThreshold    Float       @default(0.005)
   minFreshnessHours        Int         @default(24)
+  notifyEmail                     String?
+  priceChangeNotificationsEnabled Boolean     @default(false)
   ShopifyUser              ShopifyUser @relation(fields: [shopDomain], references: [shopDomain])
 }
 

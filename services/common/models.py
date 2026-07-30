@@ -502,6 +502,8 @@ class ShopSettings(Base):
     discoveryNumResults      = Column("discoveryNumResults", Integer, nullable=False, default=10)
     minChangePctThreshold    = Column("minChangePctThreshold", Float, nullable=False, default=0.005)
     minFreshnessHours        = Column("minFreshnessHours", Integer, nullable=False, default=24)
+    notifyEmail               = Column("notifyEmail", String, nullable=True)
+    priceChangeNotificationsEnabled = Column("priceChangeNotificationsEnabled", Boolean, nullable=False, default=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

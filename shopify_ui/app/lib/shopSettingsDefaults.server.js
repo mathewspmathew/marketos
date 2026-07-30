@@ -7,8 +7,8 @@ export const DEFAULTS = {
   frequencyInterval: 1, // "every N" — paired with frequencyUnit for the default rescrape cadence
   frequencyUnit: "day", // rescrape cadence unit: never | minute | hour | day
   defaultPricingTier: "COMPETITIVE", // tier a new product starts on until the merchant picks one
-  listingExpansionCap: 5, // when a discovered URL is a listing page, expand up to this many products
-  discoveryNumResults: 10, // competitor products fetched per discovery run
+  listingExpansionCap: 3, // when a discovered URL is a listing page, expand up to this many products
+  discoveryNumResults: 5, // competitor products fetched per discovery run
   marketplaceBlocklist: [], // domains to exclude from competitor discovery
   autoRescrapeEnabled: true, // shop-wide master switch for scheduled rescraping
   includeOosInPricing: false, // whether out-of-stock competitor observations count toward pricing
@@ -26,4 +26,6 @@ export const DEFAULTS = {
   serperHl: "en", // Serper language code for discovery searches
   serperLocation: "Kochi, Kerala", // Serper geolocation bias for discovery searches
   currency: "INR", // shop's pricing currency, used for display and cross-currency observation filtering
+  notifyEmail: null, // per-shop notification address, unset until the merchant enables it in Settings
+  priceChangeNotificationsEnabled: false, // off by default for fresh installs — see app.settings.jsx "Notify" flow
 };
