@@ -2,6 +2,19 @@ import React from "react";
 import { Body, Container, Head, Heading, Html, Preview, Row, Column, Section, Text } from "@react-email/components";
 import { render } from "@react-email/render";
 
+// oldPrice/newPrice arrive as strings (Python formats Decimals as str()).
+// Guards against non-numeric/zero oldPrice rather than emitting NaN/Infinity%.
+function formatChangePct(oldPrice, newPrice) {
+  const oldNum = Number(oldPrice);
+  const newNum = Number(newPrice);
+  if (!Number.isFinite(oldNum) || !Number.isFinite(newNum) || oldNum === 0) {
+    return "—";
+  }
+  const pct = ((newNum - oldNum) / oldNum) * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
+
 function PriceChangeEmail({ storeName, productTitle, currency, variants }) {
   return (
     <Html>
@@ -16,12 +29,14 @@ function PriceChangeEmail({ storeName, productTitle, currency, variants }) {
               <Column>Variant</Column>
               <Column>Old price ({currency})</Column>
               <Column>New price ({currency})</Column>
+              <Column>Change</Column>
             </Row>
             {variants.map((v, idx) => (
               <Row key={`${v.variantTitle}-${idx}`} style={{ borderBottom: "1px solid #eee" }}>
                 <Column>{v.variantTitle}</Column>
                 <Column>{v.oldPrice}</Column>
                 <Column>{v.newPrice}</Column>
+                <Column>{formatChangePct(v.oldPrice, v.newPrice)}</Column>
               </Row>
             ))}
           </Section>
