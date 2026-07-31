@@ -8,7 +8,7 @@
  * services/pricing_svc/product_stats.py::list_product_stats.
  */
 import React from "react";
-import { Link, useLoaderData, useNavigation, useRevalidator } from "react-router";
+import { Link, useLoaderData, useNavigate, useNavigation, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
@@ -35,6 +35,7 @@ export default function StatsIndex() {
   const { products } = useLoaderData();
   const revalidator = useRevalidator();
   const navigation = useNavigation();
+  const navigate = useNavigate();
 
   // Which product (if any) is being navigated to right now — drives the
   // pending-row spinner below so a click gives instant feedback even when
@@ -80,7 +81,11 @@ export default function StatsIndex() {
               {products.map((p) => {
                 const isPending = p.id === pendingProductId;
                 return (
-                <s-table-row key={p.id} clickDelegate={`stats-row-link-${p.id}`}>
+                <s-table-row
+                  key={p.id}
+                  onClick={() => navigate(`/app/stats/${encodeURIComponent(p.id)}`)}
+                  style={{ cursor: "pointer" }}
+                >
                   <s-table-cell>
                     <s-stack direction="inline" gap="base" alignItems="center">
                       {p.imageUrl && (
@@ -88,9 +93,9 @@ export default function StatsIndex() {
                              style={{ objectFit: "cover", borderRadius: 4, opacity: isPending ? 0.5 : 1 }} />
                       )}
                       <Link
-                        id={`stats-row-link-${p.id}`}
                         to={`/app/stats/${encodeURIComponent(p.id)}`}
                         prefetch="intent"
+                        onClick={(e) => e.stopPropagation()}
                         style={{ textDecoration: "none", color: "inherit" }}
                       >
                         <s-text emphasis="bold">{p.title}</s-text>
