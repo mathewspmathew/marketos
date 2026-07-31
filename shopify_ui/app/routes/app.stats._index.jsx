@@ -8,7 +8,7 @@
  * services/pricing_svc/product_stats.py::list_product_stats.
  */
 import React from "react";
-import { Link, useLoaderData, useRevalidator } from "react-router";
+import { Link, useLoaderData, useNavigation, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
@@ -34,6 +34,13 @@ export const loader = async ({ request }) => {
 export default function StatsIndex() {
   const { products } = useLoaderData();
   const revalidator = useRevalidator();
+  const navigation = useNavigation();
+
+  // Which product (if any) is being navigated to right now — drives the
+  // pending-row spinner below so a click gives instant feedback even when
+  // prefetch="intent" didn't get a chance to run (keyboard nav, fast click).
+  const pendingMatch = navigation.location?.pathname.match(/^\/app\/stats\/([^/]+)$/);
+  const pendingProductId = pendingMatch ? decodeURIComponent(pendingMatch[1]) : null;
 
   // Live updates: any pricing decision written for this shop (decide.py)
   // refreshes this list's lastDecisionAt/lastStatus without a manual reload.
@@ -70,21 +77,25 @@ export default function StatsIndex() {
               <s-table-header listSlot="secondary">Last decision</s-table-header>
             </s-table-header-row>
             <s-table-body>
-              {products.map((p) => (
+              {products.map((p) => {
+                const isPending = p.id === pendingProductId;
+                return (
                 <s-table-row key={p.id} clickDelegate={`stats-row-link-${p.id}`}>
                   <s-table-cell>
                     <s-stack direction="inline" gap="base" alignItems="center">
                       {p.imageUrl && (
                         <img src={p.imageUrl} alt="" width="32" height="32"
-                             style={{ objectFit: "cover", borderRadius: 4 }} />
+                             style={{ objectFit: "cover", borderRadius: 4, opacity: isPending ? 0.5 : 1 }} />
                       )}
                       <Link
                         id={`stats-row-link-${p.id}`}
                         to={`/app/stats/${encodeURIComponent(p.id)}`}
+                        prefetch="intent"
                         style={{ textDecoration: "none", color: "inherit" }}
                       >
                         <s-text emphasis="bold">{p.title}</s-text>
                       </Link>
+                      {isPending && <s-spinner size="small" accessibilityLabel="Loading" />}
                     </s-stack>
                   </s-table-cell>
                   <s-table-cell>{p.tier}</s-table-cell>
@@ -119,7 +130,8 @@ export default function StatsIndex() {
                     )}
                   </s-table-cell>
                 </s-table-row>
-              ))}
+                );
+              })}
             </s-table-body>
           </s-table>
         </s-section>

@@ -15,7 +15,7 @@
  *     pending / skipped status — distinct from "intent to apply"
  */
 import { useEffect } from "react";
-import { useFetcher, useLoaderData, useRevalidator } from "react-router";
+import { data as routerData, useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
@@ -38,7 +38,16 @@ export const loader = async ({ request, params }) => {
   const data = await res.json();
   if (!data.ok) throw new Response(data.error || "Product not found", { status: 404 });
 
-  return { product: data.product, decisions: data.decisions, competitorSeries: data.competitorSeries, waiting: data.waiting };
+  // Short private cache so a click that lands while the hover-triggered
+  // prefetch (app.stats._index.jsx's <Link prefetch="intent">) is still
+  // in flight reuses that same request instead of the browser firing a
+  // second one and aborting the first — see
+  // https://github.com/remix-run/react-router/issues/13255. Safe to be
+  // briefly stale: the page live-updates via SSE + a 60s poll once mounted.
+  return routerData(
+    { product: data.product, decisions: data.decisions, competitorSeries: data.competitorSeries, waiting: data.waiting },
+    { headers: { "Cache-Control": "private, max-age=10" } },
+  );
 };
 
 export const action = async ({ request }) => {

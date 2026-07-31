@@ -2,4 +2,6 @@
 // routes/ is auto-discovered as a route by filename, no manual route table.
 import { flatRoutes } from "@react-router/fs-routes";
 
-export default flatRoutes();
+export default flatRoutes({
+  ignoredRouteFiles: ["**/*.test.{js,jsx,ts,tsx}"],
+});
