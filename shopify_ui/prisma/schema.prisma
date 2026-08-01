@@ -39,6 +39,7 @@ model ChatPreview {
   ChatSession ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([shopDomain, expiresAt])
+  @@index([sessionId])
 }
 
 model ChatSession {
@@ -84,6 +85,7 @@ model CompetitorCandidate {
 
   @@unique([shopifyProductId, url])
   @@index([shopDomain, status])
+  @@index([scrapedProductId])
 }
 
 model CompetitorPriceObservation {
@@ -161,6 +163,8 @@ model ProductEmbedding {
   ScrapedProduct ScrapedProduct         @relation(fields: [prodId], references: [id], onDelete: Cascade)
   ShopifyUser    ShopifyUser            @relation(fields: [shopDomain], references: [shopDomain])
   ScrapedVariant ScrapedVariant?        @relation(fields: [variantId], references: [id])
+
+  @@index([prodId])
 }
 
 model ProductLevelMatch {
@@ -183,6 +187,7 @@ model ProductLevelMatch {
   @@unique([shopifyProductId, scrapedProductId])
   @@index([shopDomain, confidenceTier])
   @@index([shopDomain, reviewedAt])
+  @@index([scrapedProductId])
 }
 
 model ProductMatch {
@@ -215,6 +220,8 @@ model ProductMatch {
   @@index([shopDomain, dismissedAt], map: "idx_pm_shop_dismissed")
   @@index([shopDomain, matchScore(sort: Desc)], map: "idx_pm_shop_domain")
   @@index([shopifyVariantId, matchScore(sort: Desc)], map: "idx_pm_shopify")
+  @@index([competitorProdId])
+  @@index([productMatchId])
 }
 
 model ProductUrl {
@@ -237,6 +244,7 @@ model ProductUrl {
   @@unique([shopifyProductId, url])
   @@index([shopDomain, status, nextRunAt])
   @@index([shopifyProductId])
+  @@index([prodId])
 }
 
 model ScrapedProduct {
@@ -282,6 +290,8 @@ model ScrapedVariant {
   ProductEmbedding           ProductEmbedding[]
   ProductMatch               ProductMatch[]
   ScrapedProduct             ScrapedProduct               @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
 }
 
 model ScrapingConfig {
