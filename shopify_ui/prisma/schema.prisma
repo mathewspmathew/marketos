@@ -461,6 +461,8 @@ model ShopifyVariant {
   ShopifyEmbedding       ShopifyEmbedding?
   ShopifyProduct         ShopifyProduct          @relation(fields: [productId], references: [id], onDelete: Cascade)
   VariantCompetitorStats VariantCompetitorStats?
+
+  @@index([productId])
 }
 
 model VariantCompetitorStats {
