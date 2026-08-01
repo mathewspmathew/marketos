@@ -307,7 +307,10 @@ export default function SettingsPage() {
       const timer = setTimeout(() => setShowSavedMessage(false), 3000);
       return () => clearTimeout(timer);
     }
-  }, [fetcher.data?.ok, fetcher.state, initialFormState]);
+    // initialFormState is intentionally excluded — it's a fresh object every
+    // render, so including it here would re-trigger this effect on every
+    // render once fetcher.data?.ok is true, causing an infinite setState loop.
+  }, [fetcher.data?.ok, fetcher.state]);
 
   const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
 
