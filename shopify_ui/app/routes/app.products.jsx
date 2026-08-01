@@ -986,7 +986,7 @@ export default function HomePage() {
           <s-button slot="secondary-actions" commandFor="delete-dp-modal" command="--hide" onClick={() => setDeleteConfirmId(null)}>
             Cancel
           </s-button>
-          <s-button slot="primary-action" tone="critical" commandFor="delete-dp-modal" command="--hide" onClick={() => confirmDelete(deleteConfirmId)}>
+          <s-button slot="primary-action" variant="primary" tone="critical" commandFor="delete-dp-modal" command="--hide" onClick={() => confirmDelete(deleteConfirmId)}>
             Delete with Data
           </s-button>
         </s-modal>
