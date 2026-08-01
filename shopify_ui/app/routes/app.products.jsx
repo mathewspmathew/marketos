@@ -576,9 +576,9 @@ export default function HomePage() {
 
                     <s-text emphasis="bold">{getCurrencySymbol(shopDefaults?.currency)}{product.price}</s-text>
 
-                    {isOn ? (
+                    {(isOn || isPausedConfigured) ? (
                       <s-stack direction="inline" gap="small" alignItems="center">
-                        <s-badge tone="success">ON</s-badge>
+                        <s-badge tone={isOn ? "success" : "warning"}>{isOn ? "ON" : "Paused"}</s-badge>
                         <div style={{ position: "relative" }}>
                           <s-button
                             variant="plain"
@@ -599,7 +599,7 @@ export default function HomePage() {
                               zIndex: 100,
                               minWidth: "140px",
                             }}>
-                              {local.frequencyUnit && local.frequencyUnit !== "never" && (
+                              {isOn && local.frequencyUnit && local.frequencyUnit !== "never" && (
                                 <>
                                   <button
                                     onClick={() => {
@@ -620,6 +620,31 @@ export default function HomePage() {
                                     onMouseLeave={(e) => e.target.style.background = "none"}
                                   >
                                     Pause
+                                  </button>
+                                  <div style={{ borderTop: "1px solid #f0f0f0" }} />
+                                </>
+                              )}
+                              {!isOn && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      handleResume(product.id);
+                                      setOpenMenuId(null);
+                                    }}
+                                    style={{
+                                      display: "block",
+                                      width: "100%",
+                                      padding: "8px 12px",
+                                      border: "none",
+                                      background: "none",
+                                      cursor: "pointer",
+                                      fontSize: "12px",
+                                      textAlign: "left",
+                                    }}
+                                    onMouseEnter={(e) => e.target.style.background = "#f5f5f5"}
+                                    onMouseLeave={(e) => e.target.style.background = "none"}
+                                  >
+                                    Resume
                                   </button>
                                   <div style={{ borderTop: "1px solid #f0f0f0" }} />
                                 </>
@@ -649,20 +674,6 @@ export default function HomePage() {
                             </div>
                           )}
                         </div>
-                      </s-stack>
-                    ) : isPausedConfigured ? (
-                      <s-stack direction="inline" gap="small" alignItems="center">
-                        <s-badge tone="warning">Paused</s-badge>
-                        <s-button
-                          size="slim"
-                          variant="secondary"
-                          onClick={() => {
-                            handleResume(product.id);
-                            setOpenMenuId(null);
-                          }}
-                        >
-                          Resume
-                        </s-button>
                       </s-stack>
                     ) : (
                       <s-badge tone="subdued">OFF</s-badge>
