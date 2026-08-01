@@ -2,10 +2,13 @@
 const EFFECTIVE_DATE = "July 13, 2026";
 const CONTACT_EMAIL = "mathewsmathewsp@gmail.com";
 
+const h1Style = { fontSize: "32px", fontWeight: 700, margin: "0 0 8px" };
+const h2Style = { fontSize: "20px", fontWeight: 700, margin: "32px 0 8px" };
+
 export default function PrivacyPolicy() {
   return (
     <div style={{ maxWidth: "720px", margin: "0 auto", padding: "48px 24px", lineHeight: 1.6, fontFamily: "system-ui, sans-serif" }}>
-      <h1>Privacy Policy</h1>
+      <h1 style={h1Style}>Privacy Policy</h1>
       <p>Effective date: {EFFECTIVE_DATE}</p>
 
       <p>
@@ -15,7 +18,7 @@ export default function PrivacyPolicy() {
         the app, how we use it, and how it is retained and deleted.
       </p>
 
-      <h2>Information We Collect</h2>
+      <h2 style={h2Style}>Information We Collect</h2>
       <p>When a merchant installs MarketOS, we collect and store:</p>
       <ul>
         <li>
@@ -45,7 +48,7 @@ export default function PrivacyPolicy() {
         personal information belonging to the people who shop at your store.
       </p>
 
-      <h2>How We Use Information</h2>
+      <h2 style={h2Style}>How We Use Information</h2>
       <p>We use the data described above to:</p>
       <ul>
         <li>Operate core app features: competitor discovery, price matching, and dynamic pricing suggestions/automation.</li>
@@ -55,7 +58,7 @@ export default function PrivacyPolicy() {
       </ul>
       <p>We do not sell your data, and we do not use it for advertising.</p>
 
-      <h2>Third-Party Service Providers</h2>
+      <h2 style={h2Style}>Third-Party Service Providers</h2>
       <p>
         To provide the app&apos;s functionality, we share the minimum necessary
         data with the following service providers, each processing data on
@@ -69,7 +72,7 @@ export default function PrivacyPolicy() {
         <li><strong>Serper</strong> — powers competitor product discovery search.</li>
       </ul>
 
-      <h2>Data Retention and Deletion</h2>
+      <h2 style={h2Style}>Data Retention and Deletion</h2>
       <p>
         We retain your shop&apos;s data for as long as the app remains installed
         on your store. When you uninstall MarketOS, Shopify notifies us
@@ -84,7 +87,7 @@ export default function PrivacyPolicy() {
         honored automatically and promptly.
       </p>
 
-      <h2>Your Rights</h2>
+      <h2 style={h2Style}>Your Rights</h2>
       <p>
         Depending on your location, you may have rights under data protection
         laws (such as GDPR or CCPA) to access, correct, or request deletion of
@@ -94,7 +97,7 @@ export default function PrivacyPolicy() {
         us at <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
       </p>
 
-      <h2>Security</h2>
+      <h2 style={h2Style}>Security</h2>
       <p>
         We use industry-standard measures to protect your data, including
         encrypted connections (HTTPS) for all data in transit and access
@@ -103,19 +106,19 @@ export default function PrivacyPolicy() {
         information using commercially reasonable safeguards.
       </p>
 
-      <h2>Children&apos;s Privacy</h2>
+      <h2 style={h2Style}>Children&apos;s Privacy</h2>
       <p>
         MarketOS is a business tool intended for use by merchants and is not
         directed at, nor knowingly used to collect data from, children.
       </p>
 
-      <h2>Changes to This Policy</h2>
+      <h2 style={h2Style}>Changes to This Policy</h2>
       <p>
         We may update this policy from time to time. Changes will be posted
         on this page with an updated effective date.
       </p>
 
-      <h2>Contact Us</h2>
+      <h2 style={h2Style}>Contact Us</h2>
       <p>
         Questions about this policy or your data can be sent to{" "}
         <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
