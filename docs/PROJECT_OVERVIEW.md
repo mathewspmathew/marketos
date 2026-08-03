@@ -6,8 +6,7 @@ What it is
 MarketOS is an intelligence platform that lives inside a merchant's Shopify
 admin. It watches competitor websites, understands what products are being
 sold and at what prices, compares those products against the merchant's own
-catalog, and then recommends smarter prices the merchant can apply with one
-click.
+catalog, and then adjusts or recommends smarter prices.
 
 In short: it helps online stores stay competitive automatically, instead of
 the owner manually checking rival sites every day.
@@ -34,28 +33,31 @@ How a merchant uses it (the journey)
 3. It then matches each competitor product to the closest product in the
    merchant's own store. For example, "our Blue Running Shoe Size 9" is
    recognised as the same item as a rival's listing, even when the titles
-   and photos are different.
+   and photos are different. Strong matches are accepted automatically;
+   uncertain matches wait for the merchant to confirm them.
 
-4. For each matched product, MarketOS suggests a new price. The suggestion
-   takes into account what competitors are charging and how sensitive the
-   product is to price changes (price elasticity). In this version the price
-   is only applied once the merchant approves it.
+4. For each matched product, MarketOS works out a new price from what
+   competitors are charging. When a match is solid and the price move is
+   within the guardrails the merchant has set, the new price is pushed to
+   Shopify automatically. The merchant can see exactly why a price changed
+   and revert it back with one click if they disagree.
 
-5. The merchant reviews suggestions on a clean dashboard, approves the ones
-   they like, and the new prices are pushed straight back into Shopify.
+5. The merchant reviews the competitive picture on a clean dashboard —
+   which products moved, what the market looks like, what changed and why.
 
 
 The main pages the merchant sees
 --------------------------------
-- Products : browse the catalog and switch competitive pricing on or
-                    off per product.
-- Matches         : merchant products paired with their competitor, per-product list of auto-found competitor candidates to
-                    accept or reject. merchant also has option to accept competitors which are not  perfectly matched.
-                    equivalents, with a review screen for uncertain matches.
-- Stats           : the competitor price picture per product, plus history.
-- Pricing         : per-product price history and controls.
-
-- Assistant       : in-app chat to ask questions and take quick actions.
+- Products   : browse the catalog and switch competitive pricing on or
+               off per product.
+- Matches    : merchant products paired with their competitor equivalents —
+               accept or reject the auto-found candidates, and review the
+               ones that aren't a confident match yet.
+- Stats      : the competitor price picture per product, price history, and
+               the option to revert a price MarketOS changed.
+- Assistant  : in-app chat to ask questions about the store and competitors,
+               and to take quick actions (toggle dynamic pricing, apply or
+               revert a price) with a preview before anything is confirmed.
 
 
 What happens behind the scenes
@@ -69,10 +71,11 @@ The system runs as a set of small background workers, each doing one job:
   fingerprint so similar products can be compared.
 - A matcher uses those fingerprints to pair competitor products with the
   merchant's own products.
-- A pricing engine looks at the matches and produces price suggestions.
-- An elasticity engine estimates how customers will react to a price
-  change.
-- A writer pushes approved prices back to Shopify.
+- A pricing engine looks at the matches and decides on a price, applying it
+  automatically when the match is confident and the change is within the
+  merchant's guardrails.
+- A writer pushes the new price back to Shopify, and can revert it on
+  request.
 
 All of these workers talk to a shared database so the dashboard always
 shows the latest picture.
@@ -82,7 +85,7 @@ The value in one line
 ---------------------
 MarketOS replaces the slow, manual work of watching competitors and
 adjusting prices with an automated loop: watch the market, understand it,
-recommend a move, and apply it — all from inside Shopify.
+and apply the right move — all from inside Shopify.
 
 
 Features
@@ -113,10 +116,9 @@ Finding competitors automatically
 Once a product is marked for dynamic pricing, MarketOS goes out and finds
 competitor listings for it on the wider web, without the merchant having
 to paste links manually. Each suggested competitor product appears as a
-"candidate" the merchant can review on a discovery screen for that
-product — accept the ones that are genuinely the same thing, reject the
-ones that are not. Accepted candidates become live competitor sources
-that the system keeps watching.
+candidate the merchant can review — accept the ones that are genuinely the
+same thing, reject the ones that are not. Accepted candidates become live
+competitor sources that the system keeps watching.
 
 Watching competitor pages
 -------------------------
@@ -131,9 +133,9 @@ Matching competitor products to the merchant's own
 The system understands products by their meaning, not just by their
 titles, so it can recognize that "Acme Blue Runner, size 9" on a rival's
 site is the same item as the merchant's own "Blue Running Shoe (9)".
-These pairings show up on a Matches screen, where uncertain pairings are
-flagged for the merchant to confirm or reject. Confident pairings flow
-straight through.
+These pairings show up on a Matches screen. Confident pairings are used
+right away; uncertain pairings are flagged for the merchant to confirm or
+reject before they count toward pricing.
 
 Understanding the market for each product
 -----------------------------------------
@@ -143,32 +145,29 @@ the typical price, and how the merchant's own price sits inside that
 range. A stats screen surfaces this per product, and a history view
 shows how competitor prices have moved over time.
 
-Suggesting new prices
----------------------
-Based on the competitor picture and the product's own sales behaviour,
-MarketOS produces a recommended price for each watched product. The
-merchant sees these as a list of suggestions, each with a clear
-explanation of why this price was chosen and what it is expected to do.
-The merchant can accept a suggestion, in which case MarketOS pushes the
-new price to Shopify on their behalf, or reject it.
+Deciding and applying prices
+-----------------------------
+Based on the competitor picture, MarketOS works out a recommended price
+for each watched product. When the underlying match is confident enough
+and the move stays inside the merchant's configured guardrails, the price
+is applied straight to Shopify — no extra click needed. Every applied
+price comes with a clear reason on the Stats page, and the merchant can
+revert it back to the previous price at any time.
 
-Rules, approvals and safety
----------------------------
-The merchant is not forced to trust the system blindly. They can set
+Rules, guardrails and safety
+-----------------------------
+The merchant is not left guessing what the system will do. They can set
 rules — for example, "never go below this floor", "don't change a price
-by more than this much in one step" — and decide whether suggestions
-should apply automatically or always wait for human approval. An
-approval screen collects anything that needs a human decision in one
-place. Pricing thresholds are configured per shop and control the bounds
-on any price decision.
+by more than this much in one step" — and these guardrails bound every
+price decision the system makes. Matches that aren't confident enough
+never reach pricing until the merchant confirms them by hand.
 
-Chat assistant (in progress)
-----------------------------
+Chat assistant
+--------------
 MarketOS includes an in-app chat assistant that lets merchants ask
 questions about their store and competitors in plain language
 ("what are my five most undercut products this week?", "show me how this
 product's price has moved"). The assistant answers using live data from
-the system. Future versions will support quick actions like flipping
-dynamic pricing on or off for a product or applying a suggested price
-with merchant confirmation.
-
+the system, and can take quick actions — like flipping dynamic pricing on
+or off for a product, or applying/reverting a price — showing the merchant
+a preview to confirm before anything changes.
