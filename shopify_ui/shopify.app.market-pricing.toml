@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "a91fe74ac239d442db88d3dc79740b1c"
-name = "market-pricing"
+name = "Market Pulse"
 application_url = "https://marketos.buzz"
 embedded = true
 
