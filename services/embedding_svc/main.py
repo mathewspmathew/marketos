@@ -131,6 +131,7 @@ def _vec(values: list[float]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _generate(product_id: str) -> None:
+    # READ PHASE (short txn)
     with get_db() as session:
         product = (
             session.query(ScrapedProduct)
@@ -142,34 +143,46 @@ def _generate(product_id: str) -> None:
             logger.warning("product_not_found", product_id=product_id)
             return
 
-        logger.info("embedding_started", title=product.title[:50], variant_count=len(product.variants))
+        shop_domain = product.shopDomain
+        image_url   = product.imageUrl or ""
+        title       = product.title
+        variants_payload = [(v.id, v.semanticText) for v in product.variants]
 
-        # Image embedding is shared across all variants (same product image)
-        image_vec = get_image_embedding(product.imageUrl or "")
+    logger.info("embedding_started", title=title[:50], variant_count=len(variants_payload))
 
-        # Clear stale embeddings before writing fresh ones
+    # GENERATE PHASE (no DB held) — Vertex AI calls, one per variant plus one shared image call.
+    image_vec = get_image_embedding(image_url)
+
+    eligible = 0
+    text_vecs: list[tuple[str, list[float]]] = []
+    for variant_id, semantic_text in variants_payload:
+        if not semantic_text:
+            logger.info("variant_missing_semantic_text", variant_id=variant_id)
+            continue
+        eligible += 1
+        text_vec = get_text_embedding(semantic_text)
+        if not text_vec:
+            logger.warning("variant_text_embedding_failed", variant_id=variant_id)
+            continue
+        text_vecs.append((variant_id, text_vec))
+
+    # WRITE PHASE (short txn) — delete + insert atomically, so a crash before
+    # this point leaves the previous embeddings intact instead of stranding
+    # the product with zero rows.
+    with get_db() as session:
         session.execute(
             text('DELETE FROM "ProductEmbedding" WHERE "prodId" = :pid'),
             {"pid": product_id},
         )
 
         written = 0
-        for v in product.variants:
-            if not v.semanticText:
-                logger.info("variant_missing_semantic_text", variant_id=v.id)
-                continue
-
-            text_vec = get_text_embedding(v.semanticText)
-            if not text_vec:
-                logger.warning("variant_text_embedding_failed", variant_id=v.id)
-                continue
-
+        for variant_id, text_vec in text_vecs:
             row_id = str(uuid.uuid4())
             base_params = {
                 "id":         row_id,
-                "shopDomain": product.shopDomain,
+                "shopDomain": shop_domain,
                 "prodId":     product_id,
-                "variantId":  v.id,
+                "variantId":  variant_id,
                 "text_vec":   _vec(text_vec),
             }
 
@@ -197,8 +210,7 @@ def _generate(product_id: str) -> None:
                 )
             written += 1
 
-        eligible = sum(1 for v in product.variants if v.semanticText)
-        logger.info("product_embedding_written", written=written, eligible=eligible, title=product.title[:50])
+        logger.info("product_embedding_written", written=written, eligible=eligible, title=title[:50])
         if eligible > 0 and written == 0:
             raise RuntimeError(f"All {eligible} embedding(s) failed for product {product_id} — check Vertex AI credentials")
 
@@ -236,6 +248,7 @@ def generate_embeddings(self, product_id: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _generate_shopify(variant_id: str) -> None:
+    # READ PHASE (short txn)
     with get_db() as session:
         variant = (
             session.query(ShopifyVariant)
@@ -251,20 +264,27 @@ def _generate_shopify(variant_id: str) -> None:
             logger.info("shopify_variant_missing_semantic_text", variant_id=variant_id)
             return
 
-        logger.info("shopify_embedding_started", variant_id=variant_id)
+        semantic_text = variant.semanticText
+        image_url     = variant.product.imageUrl or "" if variant.product else ""
+        shop_domain   = variant.product.shopDomain
 
-        text_vec = get_text_embedding(variant.semanticText)
-        if not text_vec:
-            logger.warning("shopify_variant_text_embedding_failed", variant_id=variant_id)
-            return
+    logger.info("shopify_embedding_started", variant_id=variant_id)
 
-        image_vec = get_image_embedding(variant.product.imageUrl or "") if variant.product else None
+    # GENERATE PHASE (no DB held)
+    text_vec = get_text_embedding(semantic_text)
+    if not text_vec:
+        logger.warning("shopify_variant_text_embedding_failed", variant_id=variant_id)
+        return
 
+    image_vec = get_image_embedding(image_url)
+
+    # WRITE PHASE (short txn)
+    with get_db() as session:
         row_id = str(uuid.uuid4())
         base_params = {
             "id":         row_id,
             "variantId":  variant_id,
-            "shopDomain": variant.product.shopDomain,
+            "shopDomain": shop_domain,
             "text_vec":   _vec(text_vec),
         }
 
