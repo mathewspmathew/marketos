@@ -1,12 +1,14 @@
 /**
  * _index/route.jsx — unauthenticated landing page, shown only when there's
- * no ?shop= param (otherwise redirects straight to /app). NOTE: still has
- * unedited Shopify CLI scaffold placeholder copy ("[your app]", generic
- * "Product feature" bullets) — needs real marketing copy before this is
- * shown to anyone for real, or reconsider whether it's needed at all.
+ * no ?shop= param (otherwise redirects straight to /app). No shop-domain
+ * entry form here — App Store rule 2.3.1 requires installs to start only
+ * from a Shopify-owned surface, not a manually-typed domain on this page.
+ * NOTE: still has unedited Shopify CLI scaffold placeholder copy
+ * ("[your app]", generic "Product feature" bullets) — needs real marketing
+ * copy before this is shown to anyone for real, or reconsider whether it's
+ * needed at all.
  */
-import { redirect, Form, useLoaderData } from "react-router";
-import { login } from "../../shopify.server";
+import { redirect } from "react-router";
 import styles from "./styles.module.css";
 
 export const loader = async ({ request }) => {
@@ -16,12 +18,10 @@ export const loader = async ({ request }) => {
     throw redirect(`/app?${url.searchParams.toString()}`);
   }
 
-  return { showForm: Boolean(login) };
+  return null;
 };
 
 export default function App() {
-  const { showForm } = useLoaderData();
-
   return (
     <div className={styles.index}>
       <div className={styles.content}>
@@ -29,18 +29,6 @@ export default function App() {
         <p className={styles.text}>
           A tagline about [your app] that describes your value proposition.
         </p>
-        {showForm && (
-          <Form className={styles.form} method="post" action="/auth/login">
-            <label className={styles.label}>
-              <span>Shop domain</span>
-              <input className={styles.input} type="text" name="shop" />
-              <span>e.g: my-shop-domain.myshopify.com</span>
-            </label>
-            <button className={styles.button} type="submit">
-              Log in
-            </button>
-          </Form>
-        )}
         <ul className={styles.list}>
           <li>
             <strong>Product feature</strong>. Some detail about your feature and
