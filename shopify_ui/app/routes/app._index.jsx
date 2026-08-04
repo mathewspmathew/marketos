@@ -14,6 +14,7 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { getCurrencySymbol } from "../lib/currencyFormatter";
+import { subscribeToEventStream } from "../lib/eventStream";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
@@ -241,6 +242,22 @@ export default function HomePage() {
     const t = setInterval(() => revalidator.revalidate(), 2000);
     return () => clearInterval(t);
   }, [isBusy, revalidator]);
+
+  // Live updates: matcher-worker writes trigger a Postgres NOTIFY that reaches
+  // this page via SSE (same shop-scoped stream app.matches.jsx uses), so a
+  // newly-found match's count shows up here without a manual refresh.
+  useEffect(() => {
+    return subscribeToEventStream("/app/matches/stream", "matches_updated", () => {
+      revalidator.revalidate();
+    });
+  }, [revalidator]);
+
+  // Backup poll: SSE delivery isn't guaranteed, so this page is never more
+  // than ~60s stale even if the live stream silently misses a notification.
+  useEffect(() => {
+    const t = setInterval(() => revalidator.revalidate(), 60_000);
+    return () => clearInterval(t);
+  }, [revalidator]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
