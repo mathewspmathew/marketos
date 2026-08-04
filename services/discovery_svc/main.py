@@ -219,19 +219,21 @@ def search_products(
         )
         if self.request.retries >= self.max_retries:
             return {"status": "failed", "job_id": job_id_local, "error": error}
-        # Pass job_id forward explicitly so the retry reuses this same
-        # DiscoveryJob row instead of creating a new one (job_id is None
-        # on a fresh job's original call — a plain self.retry() would
-        # resend the original args and hit the "create new job" branch
-        # above again on every attempt).
+        # Pass job_id forward explicitly (positionally) so the retry reuses
+        # this same DiscoveryJob row instead of creating a new one (job_id is
+        # None on a fresh job's original call — a plain self.retry() would
+        # resend the original args and hit the "create new job" branch above
+        # again on every attempt). Must be `args=`, not `kwargs=`: the beat
+        # scheduler dispatches this task with positional args
+        # ([product_id, query, num_results]), and self.retry() resends those
+        # original positional args by default — passing `kwargs=` on top of
+        # that duplicates shopify_product_id/query/num_results as both a
+        # positional and keyword argument, raising "got multiple values for
+        # argument" and permanently killing the task instead of retrying it.
         raise self.retry(
             exc=exc,
-            kwargs={
-                "shopify_product_id": shopify_product_id,
-                "query": query,
-                "num_results": num_results,
-                "job_id": job_id_local,
-            },
+            args=[shopify_product_id, query, num_results, job_id_local],
+            kwargs={},
         )
 
     # WRITE PHASE — success (short txn)

@@ -176,7 +176,11 @@ def _groq_search_query(
             return None
         attributes = [a for a in (_clean(a) for a in (data.get("attributes") or [])) if a]
 
-        parts = [f'"{exact_phrase}"', *attributes, _QUERY_EXCLUSIONS]
+        # No exact-phrase quoting — Serper's free plan (what this project runs
+        # on) rejects quoted queries outright with "Query pattern not allowed
+        # for free accounts", which was silently killing every discovery
+        # search. Revisit if/when the Serper plan is upgraded.
+        parts = [exact_phrase, *attributes, _QUERY_EXCLUSIONS]
         return " ".join(parts)
     except Exception:
         logger.exception("search_query_generation_failed", title=title)
