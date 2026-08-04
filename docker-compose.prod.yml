@@ -98,6 +98,10 @@ services:
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
       - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
       - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
+      # This container must reach `web` over the Docker network by service
+      # name, on its internal port 3000 — not localhost, not the published port.
+      # (Resend itself is only called from inside `web`, not here.)
+      - APP_URL=http://web:3000
     depends_on:
       redis:
         condition: service_healthy
