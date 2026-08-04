@@ -17,6 +17,11 @@ services:
   # connection (session-scoped, incompatible with transaction pooling) and
   # Prisma Migrate (its schema engine doesn't support running through a
   # pooler).
+  # DEFAULT_POOL_SIZE=8, not higher: production (docker-compose.prod.yml) runs
+  # its own separate PgBouncer against this same Aiven instance (see
+  # deploy/RUNBOOK.md — dev and prod share one database), so the two
+  # PgBouncers' pools are additive against the 20-connection cap. 8+8=16
+  # leaves headroom for both sides' direct-bypass connections.
   pgbouncer:
     image: edoburu/pgbouncer:latest
     container_name: marketos_pgbouncer
@@ -27,7 +32,7 @@ services:
       - AUTH_TYPE=scram-sha-256
       - SERVER_TLS_SSLMODE=require
       - MAX_CLIENT_CONN=100
-      - DEFAULT_POOL_SIZE=15
+      - DEFAULT_POOL_SIZE=8
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
       interval: 5s
