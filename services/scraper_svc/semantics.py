@@ -102,20 +102,32 @@ def _groq_semantic_call(prompt: str, *, shopify: bool = False) -> dict[str, str]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# searchQuery generation — a compact 5-7 keyword phrase used to retrieve this
-# product on Google. Separate Groq call from the semantic fingerprint so the
-# two have independent prompts and one can fail without taking the other down.
+# searchQuery generation — a Google search query used to retrieve this product
+# on the web. Separate Groq call from the semantic fingerprint so the two have
+# independent prompts and one can fail without taking the other down.
+#
+# The query is built as `"<exact_phrase>" <attr1> <attr2> ... -review -blog -forum`:
+# the identifying core (brand + model, or category + key attribute if generic)
+# is quoted so Serper/Google requires it to match as one exact phrase instead of
+# loosely matching scattered keywords anywhere on the page; a few extra
+# attributes are appended unquoted to narrow further; a fixed exclusion list
+# drops non-product-page noise (review sites, blogs, forums) at query time
+# instead of relying only on post-hoc domain/path filtering.
 # ─────────────────────────────────────────────────────────────────────────────
-GROQ_SEARCH_QUERY_PROMPT = """Produce a Google search query that will retrieve product-detail pages
-selling the same product. Output 4–7 plain lowercase keywords, no quotes, no punctuation.
+GROQ_SEARCH_QUERY_PROMPT = """Produce the components of a Google search query that will retrieve
+product-detail pages selling the same product.
+
+Return two things:
+- exact_phrase: 2-5 lowercase words that, together and in this order, uniquely identify the
+  product — lead with brand + product model/family if known. If the product has no clear
+  brand/model, use category + the single strongest disambiguating attribute instead.
+- attributes: 0-3 extra lowercase disambiguating attributes not already in exact_phrase
+  (color, size, capacity, edition, material, etc.) as separate words/short terms.
 
 Rules:
-- Lead with brand + product model/family if known.
-- Include the most disambiguating attribute (color, size, capacity, edition, etc.).
-- Do NOT include marketing words, adjectives like "best", "premium", or descriptors of intent
-  like "online" or "buy".
+- No punctuation, no quotes, no marketing words, no adjectives like "best" or "premium",
+  no intent words like "online" or "buy".
 - Do NOT include the merchant's own store domain or city/country names.
-- If the product is generic (no brand/model), use category + 1–2 strong attributes.
 
 Product:
   title: {title}
@@ -123,7 +135,9 @@ Product:
   category: {category}
   description: {description}
 
-Return STRICT JSON: {{"query": "your keywords here"}}"""
+Return STRICT JSON: {{"exact_phrase": "...", "attributes": ["...", "..."]}}"""
+
+_QUERY_EXCLUSIONS = "-review -blog -forum"
 
 
 def _groq_search_query(
@@ -153,12 +167,17 @@ def _groq_search_query(
             temperature=0.0,
         )
         data = json.loads(response.choices[0].message.content)
-        q = (data.get("query") or "").strip().lower()
         # Keep keywords-only: strip punctuation noise an LLM sometimes adds.
-        q = " ".join(
-            tok for tok in q.replace(",", " ").replace('"', " ").split() if tok
-        )
-        return q or None
+        def _clean(s: str) -> str:
+            return " ".join((s or "").strip().lower().replace(",", " ").replace('"', " ").split())
+
+        exact_phrase = _clean(data.get("exact_phrase", ""))
+        if not exact_phrase:
+            return None
+        attributes = [a for a in (_clean(a) for a in (data.get("attributes") or [])) if a]
+
+        parts = [f'"{exact_phrase}"', *attributes, _QUERY_EXCLUSIONS]
+        return " ".join(parts)
     except Exception:
         logger.exception("search_query_generation_failed", title=title)
         return None
