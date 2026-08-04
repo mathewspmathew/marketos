@@ -6,6 +6,10 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
+  // Prisma Migrate's schema engine doesn't support running through a
+  // connection pooler — this is what `npx prisma migrate ...` uses instead
+  // of the pooled `url` above. Bypasses PgBouncer, hits Aiven directly.
+  directUrl  = env("DIRECT_DATABASE_URL")
   extensions = [pg_trgm, timescaledb, vector]
 }
 

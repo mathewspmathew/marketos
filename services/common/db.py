@@ -28,34 +28,17 @@ def _build_engine():
             url = "postgresql+psycopg" + url[len(prefix) - 3:]
             break
 
-    if os.environ.get("DB_POOL_MODE") == "queue":
-        # For a long-lived single-process service (e.g. api_gateway's or
-        # chatbot_svc's uvicorn process) fielding frequent interactive
-        # requests, NullPool's per-request handshake (~470ms measured
-        # against Aiven) dwarfs the actual query cost (~40ms). A small
-        # persistent pool amortizes that handshake across requests.
-        # Capped to max 2 held connections per process — this branch is now
-        # used by two separate services (api_gateway, chatbot_svc), each
-        # with its own engine/pool, so the combined ceiling contribution is
-        # additive. The shared Postgres instance's max_connections (20) has
-        # limited headroom from other services/dev sessions already holding
-        # connections — checked live via pg_stat_activity before picking
-        # this size. Revisit upward only after confirming headroom.
-        return create_engine(
-            url,
-            pool_size=1, max_overflow=1,
-            pool_recycle=1800,
-            pool_pre_ping=True,
-        )
-
     # NullPool: open a connection on checkout, close it for real on session.close().
     # QueuePool with pool_size=1 held one connection open per process for its
     # entire lifetime — with a dozen mostly-idle worker processes and no pooler
     # in front, idle connections alone exhausted the shared Postgres instance's
-    # connection ceiling. NullPool trades a ~20-50ms handshake per task (noise
-    # next to the multi-second Groq/Firecrawl/Serper calls each task makes) for
-    # not holding a slot open while idle. Revisit with a pooler (PgBouncer/Aiven
-    # managed pool) if task throughput grows enough for that handshake to matter.
+    # connection ceiling. A long-lived pooled connection is also the wrong shape
+    # once behind PgBouncer's transaction-pooling mode: psycopg3 auto-prepares
+    # statements on a connection it reuses repeatedly, and a prepared statement
+    # can go stale if PgBouncer swaps the backend under it between transactions.
+    # NullPool never reuses a connection object, so that failure mode can't
+    # happen, and PgBouncer (not this pool) now absorbs the handshake cost that
+    # used to justify holding a connection open.
     return create_engine(url, poolclass=NullPool)
 
 

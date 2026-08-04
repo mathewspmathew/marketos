@@ -45,7 +45,9 @@ _live_updates_stop = asyncio.Event()
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    dsn = os.environ["DATABASE_URL"]
+    # Bypasses PgBouncer deliberately — LISTEN/NOTIFY needs a session-stable
+    # connection, which transaction pooling can't provide (see docker-compose.yml).
+    dsn = os.environ["DIRECT_DATABASE_URL"]
     listener_task = asyncio.create_task(live_updates.run_listener(dsn, stop_event=_live_updates_stop))
     yield
     _live_updates_stop.set()

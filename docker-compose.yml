@@ -7,6 +7,33 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
+  # Self-hosted PgBouncer in front of Aiven Postgres — Aiven's Free plan is
+  # capped at 20 connections and doesn't include managed pooling (that's
+  # gated to paid plans). Transaction-pooling mode here means every
+  # worker/service below shares a small number of real Aiven connections
+  # instead of each holding its own, without which this stack's worker count
+  # alone can exhaust the cap. Two paths deliberately bypass this and talk to
+  # Aiven directly via DIRECT_DATABASE_URL: live_updates.py's LISTEN/NOTIFY
+  # connection (session-scoped, incompatible with transaction pooling) and
+  # Prisma Migrate (its schema engine doesn't support running through a
+  # pooler).
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: marketos_pgbouncer
+    environment:
+      - DATABASE_URL=${PGBOUNCER_UPSTREAM_URL}
+      - LISTEN_PORT=6432
+      - POOL_MODE=transaction
+      - AUTH_TYPE=scram-sha-256
+      - SERVER_TLS_SSLMODE=require
+      - MAX_CLIENT_CONN=100
+      - DEFAULT_POOL_SIZE=15
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   redis:
     image: redis:7-alpine
     container_name: marketos_redis
@@ -38,7 +65,7 @@ services:
     container_name: core_worker
     logging: *default-logging
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
@@ -50,6 +77,8 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
     depends_on:
       redis:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
     volumes:
       - ./services:/app/services
@@ -74,7 +103,7 @@ services:
     container_name: content_worker
     logging: *default-logging
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - SERPER_API_KEY=${SERPER_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
@@ -87,6 +116,8 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
     depends_on:
       redis:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
     volumes:
       - ./services:/app/services
@@ -108,7 +139,7 @@ services:
     logging: *default-logging
     env_file: .env
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
       - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
@@ -121,6 +152,8 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       redis:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
     volumes:
       - ./services:/app/services
@@ -135,10 +168,12 @@ services:
     container_name: celery_beat
     logging: *default-logging
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       redis:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
     volumes:
       - ./services:/app/services
@@ -150,8 +185,11 @@ services:
       dockerfile: Dockerfile.python
     container_name: api_gateway
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - DB_POOL_MODE=queue
+      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
+      # Bypasses PgBouncer — live_updates.py holds one dedicated LISTEN
+      # connection, which requires a session-stable connection, incompatible
+      # with transaction pooling.
+      - DIRECT_DATABASE_URL=${DIRECT_DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
       - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
@@ -160,6 +198,8 @@ services:
       - "8000:8000"
     depends_on:
       redis:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
     volumes:
       - ./services:/app/services
@@ -174,7 +214,10 @@ services:
       context: ./shopify_ui
     container_name: marketos_web
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
+      # Prisma Migrate's schema engine doesn't support running through a
+      # pooler — schema.prisma's datasource uses this as its directUrl.
+      - DIRECT_DATABASE_URL=${DIRECT_DATABASE_URL}
       - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
       - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
       # Must be a valid URL for shopifyApp(); OAuth through this instance is
@@ -196,6 +239,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
 
   chatbot-svc:
     build:
@@ -203,8 +248,7 @@ services:
       dockerfile: Dockerfile.python
     container_name: chatbot_svc
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - DB_POOL_MODE=queue
+      - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_API_KEY_CHATBOT=${GROQ_API_KEY_CHATBOT}
@@ -231,6 +275,8 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       redis:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
     volumes:
       - ./services:/app/services

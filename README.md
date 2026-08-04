@@ -78,7 +78,7 @@ uv sync --frozen
 docker-compose up    # Redis + all workers + beat + api-gateway
 ```
 
-Required `.env`: `DATABASE_URL`, `REDIS_URL`, `FIRECRAWL_API_KEY`, `GROQ_API_KEY`, `GCS_IMAGE_BUCKET`, `GCS_MARKDOWN_BUCKET`, `VERTEX_PROJECT`, `VERTEX_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS`.
+Required `.env`: `DATABASE_URL`, `REDIS_URL`, `FIRECRAWL_API_KEY`, `GROQ_API_KEY`, `GCS_IMAGE_BUCKET`, `GCS_MARKDOWN_BUCKET`, `VERTEX_PROJECT`, `VERTEX_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS`. `docker-compose up` also needs `DIRECT_DATABASE_URL`, `PGBOUNCER_UPSTREAM_URL`, `PGBOUNCER_DATABASE_URL` (see `.env.example`) for the PgBouncer connection pooler in front of Postgres.
 
 ---
 
