@@ -220,7 +220,17 @@ def apply_pane_config(session: Session, product: "models.ShopifyProduct", config
             product.avgBasePrice = sum(bases) / len(bases)
 
         discovery_query = product.searchQueryOverride or product.searchQuery
-        if product.lastDiscoveryAt is None and discovery_query:
+        # is_first_configure alone is the authoritative signal here:
+        # dynamicPricingConfiguredAt (what is_first_configure is derived from)
+        # is only ever reset to None by delete_dynamic_pricing, which also
+        # resets lastDiscoveryAt in the same call — so in every real
+        # application code path the two are already in sync. Gating on
+        # `lastDiscoveryAt is None` too was redundant and fragile: any
+        # out-of-band write to lastDiscoveryAt (a manual task dispatch, a
+        # script, a data fix) that doesn't go through delete_dynamic_pricing
+        # would silently skip auto-triggering discovery on a genuine first
+        # enable, with no error or indication anything was wrong.
+        if discovery_query:
             session.add(models.DiscoveryJob(
                 shopDomain=product.shopDomain,
                 shopifyProductId=product.id,
