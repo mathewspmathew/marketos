@@ -324,6 +324,7 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
     logger.info("generating_variant_semantics", product_id=product_id)
 
     try:
+        # READ PHASE (short txn)
         with get_db() as session:
             product  = session.query(ScrapedProduct).filter(ScrapedProduct.id == product_id).first()
             variants = session.query(ScrapedVariant).filter(ScrapedVariant.productId == product_id).all()
@@ -346,32 +347,38 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
                 }
                 for v in variants
             ]
+            variant_ids = [v.id for v in variants]
+            p_title, p_vendor, p_type = product.title, product.vendor, product.productType
+            p_desc, p_tags, p_specs = product.description, product.tags, product.specifications
 
-            try:
-                semantic_map = _groq_semantic_call(
-                    _build_semantic_prompt(
-                        product.title, product.vendor, product.productType,
-                        product.description, product.tags, product.specifications,
-                        variants_payload,
-                    )
+        # GENERATE PHASE (no DB held) — Groq call has unbounded latency, so the
+        # DB session above is closed before we make it, matching Task 4 below.
+        try:
+            semantic_map = _groq_semantic_call(
+                _build_semantic_prompt(
+                    p_title, p_vendor, p_type, p_desc, p_tags, p_specs,
+                    variants_payload,
                 )
-            except GroqRateLimitError:
-                raise self.retry(countdown=65)
-            except Exception as e:
-                if self.request.retries >= self.max_retries:
-                    log_error(shop_domain, config_id, product_url, "SEMANTIC_FAILED", 'scraper.generate_variant_semantics', detail=str(e))
-                    return
-                raise self.retry(exc=e)
+            )
+        except GroqRateLimitError:
+            raise self.retry(countdown=65)
+        except Exception as e:
+            if self.request.retries >= self.max_retries:
+                log_error(shop_domain, config_id, product_url, "SEMANTIC_FAILED", 'scraper.generate_variant_semantics', detail=str(e))
+                return
+            raise self.retry(exc=e)
 
-            now     = datetime.now(timezone.utc)
-            updated = 0
-            parsed_per_variant: list[dict] = []
-            for v in variants:
-                text = semantic_map.get(v.id, "")
+        # WRITE PHASE (short txn)
+        now     = datetime.now(timezone.utc)
+        updated = 0
+        parsed_per_variant: list[dict] = []
+        with get_db() as session:
+            for vid in variant_ids:
+                text = semantic_map.get(vid, "")
                 if text:
                     session.execute(
                         sa_update(ScrapedVariant)
-                        .where(ScrapedVariant.id == v.id)
+                        .where(ScrapedVariant.id == vid)
                         .values(semanticText=text, updatedAt=now)
                     )
                     updated += 1
@@ -393,8 +400,8 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
             logger.info(
                 "semantic_text_written",
                 updated_count=updated,
-                total_count=len(variants),
-                product_title=product.title,
+                total_count=len(variant_ids),
+                product_title=p_title,
             )
 
             if updated == 0:

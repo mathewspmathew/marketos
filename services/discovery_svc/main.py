@@ -148,6 +148,7 @@ def search_products(
         return {"status": "missing_query"}
     num_results = max(1, min(int(num_results or 10), 50))
 
+    # READ PHASE (short txn)
     with get_db() as db:
         product = db.get(models.ShopifyProduct, shopify_product_id)
         if not product:
@@ -173,90 +174,104 @@ def search_products(
         else:
             job.status     = "RUNNING"
             job.query      = query
+        db.flush()
 
-        try:
-            raw_hits = serper.search_web(
-                query,
-                num=num_results,
-                gl=serper_gl,
-                hl=serper_hl,
-                location=serper_location,
-            )
-            filtered = _filter_candidates(
-                raw_hits,
-                shop_domain=product.shopDomain,
-                marketplace_blocklist=blocklist,
-                limit=num_results,
-            )
-            logger.info(
-                "search_products_query_results",
-                product_id=product.id,
-                query=query,
-                raw_hits=len(raw_hits),
-                kept_hits=len(filtered),
-            )
+        product_id  = product.id
+        shop_domain = product.shopDomain
+        job_id_local    = job.id
 
-            now = datetime.now(timezone.utc)
-            for hit in filtered:
-                stmt = pg_insert(models.CompetitorCandidate.__table__).values(
-                    shopDomain       = product.shopDomain,
-                    shopifyProductId = product.id,
-                    discoveryJobId   = job.id,
-                    url              = hit.url,
-                    domain           = hit.domain,
-                    source           = hit.source,
-                    serpTitle        = hit.title,
-                    serpSnippet      = hit.snippet,
-                    serpPrice        = hit.price,
-                    status           = "PENDING",
-                    discoveredAt     = now,
-                ).on_conflict_do_update(
-                    index_elements=["shopifyProductId", "url"],
-                    set_={
-                        "discoveryJobId": job.id,
-                        "serpTitle":      hit.title,
-                        "serpSnippet":    hit.snippet,
-                        "serpPrice":      hit.price,
-                    },
-                ).returning(models.CompetitorCandidate.id)
-                saved_ids.append(db.execute(stmt).scalar_one())
-
-            job.status         = "COMPLETED"
-            job.completedAt    = now
+    # SEARCH PHASE (no DB held) — Serper HTTP call has unbounded latency, so the
+    # DB session above is closed before we make it.
+    try:
+        raw_hits = serper.search_web(
+            query,
+            num=num_results,
+            gl=serper_gl,
+            hl=serper_hl,
+            location=serper_location,
+        )
+        filtered = _filter_candidates(
+            raw_hits,
+            shop_domain=shop_domain,
+            marketplace_blocklist=blocklist,
+            limit=num_results,
+        )
+        logger.info(
+            "search_products_query_results",
+            product_id=product_id,
+            query=query,
+            raw_hits=len(raw_hits),
+            kept_hits=len(filtered),
+        )
+    except Exception as exc:
+        # WRITE PHASE — failure (short txn)
+        error = str(exc)[:1000]
+        with get_db() as db:
             db.execute(
-                update(models.ShopifyProduct)
-                .where(models.ShopifyProduct.id == product.id)
-                .values(lastDiscoveryAt=now)
+                update(models.DiscoveryJob)
+                .where(models.DiscoveryJob.id == job_id_local)
+                .values(status="FAILED", error=error, completedAt=datetime.now(timezone.utc))
             )
-            db.flush()
-            job_id_out = job.id
+        logger.exception(
+            "search_products_failed",
+            shopify_product_id=shopify_product_id,
+            job_id=job_id_local,
+        )
+        if self.request.retries >= self.max_retries:
+            return {"status": "failed", "job_id": job_id_local, "error": error}
+        # Pass job_id forward explicitly so the retry reuses this same
+        # DiscoveryJob row instead of creating a new one (job_id is None
+        # on a fresh job's original call — a plain self.retry() would
+        # resend the original args and hit the "create new job" branch
+        # above again on every attempt).
+        raise self.retry(
+            exc=exc,
+            kwargs={
+                "shopify_product_id": shopify_product_id,
+                "query": query,
+                "num_results": num_results,
+                "job_id": job_id_local,
+            },
+        )
 
-        except Exception as exc:
-            job.status      = "FAILED"
-            job.error       = str(exc)[:1000]
-            job.completedAt = datetime.now(timezone.utc)
-            db.flush()
-            logger.exception(
-                "search_products_failed",
-                shopify_product_id=shopify_product_id,
-                job_id=job.id,
-            )
-            if self.request.retries >= self.max_retries:
-                return {"status": "failed", "job_id": job.id, "error": job.error}
-            # Pass job.id forward explicitly so the retry reuses this same
-            # DiscoveryJob row instead of creating a new one (job_id is None
-            # on a fresh job's original call — a plain self.retry() would
-            # resend the original args and hit the "create new job" branch
-            # above again on every attempt).
-            raise self.retry(
-                exc=exc,
-                kwargs={
-                    "shopify_product_id": shopify_product_id,
-                    "query": query,
-                    "num_results": num_results,
-                    "job_id": job.id,
+    # WRITE PHASE — success (short txn)
+    now = datetime.now(timezone.utc)
+    with get_db() as db:
+        for hit in filtered:
+            stmt = pg_insert(models.CompetitorCandidate.__table__).values(
+                shopDomain       = shop_domain,
+                shopifyProductId = product_id,
+                discoveryJobId   = job_id_local,
+                url              = hit.url,
+                domain           = hit.domain,
+                source           = hit.source,
+                serpTitle        = hit.title,
+                serpSnippet      = hit.snippet,
+                serpPrice        = hit.price,
+                status           = "PENDING",
+                discoveredAt     = now,
+            ).on_conflict_do_update(
+                index_elements=["shopifyProductId", "url"],
+                set_={
+                    "discoveryJobId": job_id_local,
+                    "serpTitle":      hit.title,
+                    "serpSnippet":    hit.snippet,
+                    "serpPrice":      hit.price,
                 },
-            )
+            ).returning(models.CompetitorCandidate.id)
+            saved_ids.append(db.execute(stmt).scalar_one())
+
+        db.execute(
+            update(models.DiscoveryJob)
+            .where(models.DiscoveryJob.id == job_id_local)
+            .values(status="COMPLETED", completedAt=now)
+        )
+        db.execute(
+            update(models.ShopifyProduct)
+            .where(models.ShopifyProduct.id == product_id)
+            .values(lastDiscoveryAt=now)
+        )
+        job_id_out = job_id_local
 
     for cid in saved_ids:
         try:
