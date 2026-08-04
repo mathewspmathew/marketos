@@ -133,10 +133,11 @@ def test_task_incomplete_groq_not_marked_done(shop, monkeypatch):
 def test_product_updated_claims(shop):
     from fastapi.testclient import TestClient
     import services.api_gateway.main as gw
+    from services.conftest import INTERNAL_TOKEN_HEADERS
     with get_db() as s:
         pid = _mk_product(s, shop, "PENDING"); s.commit()
     with patch.object(sem.app, "send_task") as send:
-        r = TestClient(gw.app).post(f"/internal/shopify/product-updated?product_id={pid}")
+        r = TestClient(gw.app, headers=INTERNAL_TOKEN_HEADERS).post(f"/internal/shopify/product-updated?product_id={pid}")
     assert r.status_code == 200
     send.assert_called_once()
     with get_db() as s:
@@ -147,9 +148,10 @@ def test_product_updated_claims(shop):
 def test_retry_failed_resets_to_pending(shop):
     from fastapi.testclient import TestClient
     import services.api_gateway.main as gw
+    from services.conftest import INTERNAL_TOKEN_HEADERS
     with get_db() as s:
         pid = _mk_product(s, shop, "FAILED", version=2); s.commit()
-    r = TestClient(gw.app).post(f"/internal/shopify/retry-failed-semantics?shop_domain={shop}")
+    r = TestClient(gw.app, headers=INTERNAL_TOKEN_HEADERS).post(f"/internal/shopify/retry-failed-semantics?shop_domain={shop}")
     assert r.status_code == 200 and r.json()["reset"] == 1
     with get_db() as s:
         st, v = s.execute(text('SELECT "semanticStatus","semanticVersion" FROM "ShopifyProduct" WHERE id=:i'), {"i": pid}).first()

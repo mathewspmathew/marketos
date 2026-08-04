@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 from services.api_gateway.main import app
 from services.common.db import get_db
 from services.common import models
+from services.conftest import INTERNAL_TOKEN_HEADERS
 
-_client = TestClient(app)
+_client = TestClient(app, headers=INTERNAL_TOKEN_HEADERS)
 
 _FAKE_SUCCESS = {
     "data": {"productVariantsBulkUpdate": {

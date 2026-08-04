@@ -3,8 +3,9 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from services.api_gateway.main import app
+from services.conftest import INTERNAL_TOKEN_HEADERS
 
-client = TestClient(app)
+client = TestClient(app, headers=INTERNAL_TOKEN_HEADERS)
 
 
 def test_sync_products_enqueues_task():

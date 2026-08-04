@@ -43,4 +43,12 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]
+# Real tests only live under services/*/tests/. Without this, pytest's default
+# test_*.py discovery also picks up one-off manual debug scripts (test_db.py
+# at repo root, scripts/test_hybrid_match.py, scripts/test_pricing_pipeline.py)
+# that are meant to be run directly (e.g. `uv run python -m
+# scripts.test_pricing_pipeline`) — collecting them executes their
+# module-level code as an import side effect, including one that mutates
+# real dev DB data.
+testpaths = ["services"]
 

@@ -4,8 +4,9 @@ JS callers rely on (data.ok ? ... : data.error)."""
 from fastapi.testclient import TestClient
 
 from services.api_gateway.main import app
+from services.conftest import INTERNAL_TOKEN_HEADERS
 
-_client = TestClient(app, raise_server_exceptions=False)
+_client = TestClient(app, raise_server_exceptions=False, headers=INTERNAL_TOKEN_HEADERS)
 
 
 def test_malformed_body_returns_ok_false_not_blank_error():

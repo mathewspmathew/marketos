@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 from services.api_gateway.main import app
 from services.common.db import get_db
 from services.common import models
+from services.conftest import INTERNAL_TOKEN_HEADERS
 
-client = TestClient(app)
+client = TestClient(app, headers=INTERNAL_TOKEN_HEADERS)
 
 
 class _FakeSession:
