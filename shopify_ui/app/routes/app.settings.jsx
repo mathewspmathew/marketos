@@ -6,7 +6,7 @@
  * this stays frontend-only input parsing, not duplicated business logic.
  */
 import { useState, useEffect } from "react";
-import { useFetcher, useLoaderData } from "react-router";
+import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import db from "../db.server";
@@ -261,6 +261,7 @@ export default function SettingsPage() {
   const [form, setForm] = useState(initialFormState);
   const [showSavedMessage, setShowSavedMessage] = useState(false);
   const [newBlockedDomain, setNewBlockedDomain] = useState("");
+  const revalidator = useRevalidator();
   const notifyFetcher = useFetcher();
   const [notifyError, setNotifyError] = useState("");
 
@@ -304,13 +305,17 @@ export default function SettingsPage() {
     if (fetcher.data?.ok && fetcher.state === "idle") {
       setForm(initialFormState);
       setShowSavedMessage(true);
+      // Loader-sourced `settings` (hence initialFormState) is stale until the
+      // loader re-runs — without this, the form snaps back to the pre-save
+      // values instead of the ones that were just saved.
+      revalidator.revalidate();
       const timer = setTimeout(() => setShowSavedMessage(false), 3000);
       return () => clearTimeout(timer);
     }
     // initialFormState is intentionally excluded — it's a fresh object every
     // render, so including it here would re-trigger this effect on every
     // render once fetcher.data?.ok is true, causing an infinite setState loop.
-  }, [fetcher.data?.ok, fetcher.state]);
+  }, [fetcher.data?.ok, fetcher.state, revalidator]);
 
   const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
 

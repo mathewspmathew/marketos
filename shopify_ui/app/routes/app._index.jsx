@@ -228,8 +228,12 @@ export default function HomePage() {
         ...prev,
         [productId]: { ...prev[productId], saveError: null },
       }));
+      // matchCount/candidateCount come from loader data, not localState — a
+      // successful delete-with-data changes those server-side counts, so the
+      // loader must re-run or the stale count lingers until a manual refresh.
+      revalidator.revalidate();
     }
-  }, [fetcher.data, fetcher.state]);
+  }, [fetcher.data, fetcher.state, revalidator]);
 
   const isBusy = productSyncState === "SYNCING" || processingCount > 0;
   useEffect(() => {
