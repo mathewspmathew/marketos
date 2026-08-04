@@ -474,5 +474,14 @@ def delete_dynamic_pricing(session: Session, product: "models.ShopifyProduct") -
     product.discoveryNumResults   = None
     product.lastDiscoveryNumResults = None
     product.avgBasePrice          = None
+    # Pipeline watermarks — written by discovery_svc/main.py and
+    # pricing_svc/decide.py respectively as the dynamic-pricing pipeline
+    # runs. All the DiscoveryJob/PriceDecision rows they refer to were just
+    # deleted above, so leaving these set would make a future re-enable look
+    # like discovery/pricing already ran and silently skip re-triggering it
+    # (apply_pane_config's first-configure branch gates on lastDiscoveryAt
+    # being NULL).
+    product.lastDiscoveryAt       = None
+    product.lastDecisionAt        = None
 
     return {"deletedScrapedProducts": len(deletable_scraped_ids)}
