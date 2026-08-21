@@ -12,14 +12,14 @@ export default function PrivacyPolicy() {
       <p>Effective date: {EFFECTIVE_DATE}</p>
 
       <p>
-        MarketOS (&quot;we&quot;, &quot;our&quot;, &quot;the app&quot;) is a Shopify-embedded app that helps
+        Market Pulse (&quot;we&quot;, &quot;our&quot;, &quot;the app&quot;) is a Shopify-embedded app that helps
         merchants track competitor pricing and manage dynamic pricing for
         their own store. This policy explains what data we collect through
         the app, how we use it, and how it is retained and deleted.
       </p>
 
       <h2 style={h2Style}>Information We Collect</h2>
-      <p>When a merchant installs MarketOS, we collect and store:</p>
+      <p>When a merchant installs Market Pulse, we collect and store:</p>
       <ul>
         <li>
           <strong>Shop and account data:</strong> your shop domain, Shopify
@@ -44,7 +44,7 @@ export default function PrivacyPolicy() {
       </ul>
       <p>
         <strong>We do not collect data about your store&apos;s customers or
-        shoppers.</strong> MarketOS does not access, store, or process any
+        shoppers.</strong> Market Pulse does not access, store, or process any
         personal information belonging to the people who shop at your store.
       </p>
 
@@ -75,13 +75,13 @@ export default function PrivacyPolicy() {
       <h2 style={h2Style}>Data Retention and Deletion</h2>
       <p>
         We retain your shop&apos;s data for as long as the app remains installed
-        on your store. When you uninstall MarketOS, Shopify notifies us
+        on your store. When you uninstall Market Pulse, Shopify notifies us
         automatically, and we permanently delete all data associated with
         your shop — including products, pricing history, competitor matches,
         settings, and chat history — within 48 hours.
       </p>
       <p>
-        MarketOS implements Shopify&apos;s mandatory compliance webhooks
+        Market Pulse implements Shopify&apos;s mandatory compliance webhooks
         (<code>customers/data_request</code>, <code>customers/redact</code>,
         and <code>shop/redact</code>) so that data requests and deletions are
         honored automatically and promptly.
@@ -91,7 +91,7 @@ export default function PrivacyPolicy() {
       <p>
         Depending on your location, you may have rights under data protection
         laws (such as GDPR or CCPA) to access, correct, or request deletion of
-        your data. Since MarketOS only stores shop-level and product data —
+        your data. Since Market Pulse only stores shop-level and product data —
         not personal data about your store&apos;s customers — these requests apply
         to your own merchant account data. To exercise these rights, contact
         us at <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
@@ -108,7 +108,7 @@ export default function PrivacyPolicy() {
 
       <h2 style={h2Style}>Children&apos;s Privacy</h2>
       <p>
-        MarketOS is a business tool intended for use by merchants and is not
+        Market Pulse is a business tool intended for use by merchants and is not
         directed at, nor knowingly used to collect data from, children.
       </p>
 

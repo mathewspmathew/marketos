@@ -3,7 +3,7 @@
 client_id = "c3497bc570f028c3d7e85998dab70456"
 application_url = "https://marketos.buzz"
 embedded = true
-name = "market-pricing-dev"
+name = "Market Pulse (dev)"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
