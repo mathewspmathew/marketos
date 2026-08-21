@@ -503,7 +503,7 @@ export default function HomePage() {
 
   return (
     <s-page
-      heading="Dynamic Pricing"
+      heading="Products"
       subheading={`${filteredProducts.length} of ${products.length} product${products.length === 1 ? "" : "s"}`}
     >
       <s-stack direction="inline" gap="base" alignment="center">
