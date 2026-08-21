@@ -218,8 +218,11 @@ def list_product_stats(session: Session, shop_domain: str) -> list[dict]:
     """Everything the Stats product-list page (or a chatbot) needs."""
     products = (
         session.query(ShopifyProduct)
-        .filter(ShopifyProduct.shopDomain == shop_domain, ShopifyProduct.lastDecisionAt.isnot(None))
-        .order_by(ShopifyProduct.lastDecisionAt.desc())
+        .filter(
+            ShopifyProduct.shopDomain == shop_domain,
+            (ShopifyProduct.dynamicPricingEnabled.is_(True)) | (ShopifyProduct.lastDecisionAt.isnot(None)),
+        )
+        .order_by(ShopifyProduct.lastDecisionAt.desc().nullslast())
         .all()
     )
     product_ids = [p.id for p in products]

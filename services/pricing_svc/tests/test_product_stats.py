@@ -171,7 +171,7 @@ def test_list_product_stats_includes_computed_status(seeded_shop):
     assert row["lastStatus"] == "failed"
 
 
-def test_list_product_stats_excludes_products_without_decisions(seeded_shop):
+def test_list_product_stats_includes_enabled_products_without_decisions(seeded_shop):
     shop, _product_id, _variant_id = seeded_shop
     other_product_id = f"gid://shopify/Product/{uuid.uuid4().hex[:8]}"
     with get_db() as s:
@@ -183,7 +183,9 @@ def test_list_product_stats_excludes_products_without_decisions(seeded_shop):
     try:
         with get_db() as s:
             result = list_product_stats(s, shop)
-        assert other_product_id not in [r["id"] for r in result]
+        row = next(r for r in result if r["id"] == other_product_id)
+        assert row["lastStatus"] == "none"
+        assert row["lastDecisionAt"] is None
     finally:
         with get_db() as s:
             s.query(models.ShopifyProduct).filter(models.ShopifyProduct.id == other_product_id).delete(synchronize_session=False)
