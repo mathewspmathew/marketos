@@ -64,3 +64,66 @@ jobs:
           version: "latest"
       - run: uv sync --frozen
       - run: uv run pytest
+
+  build-and-push:
+    name: Build and push images
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [test-js, test-python]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Build and push Python image
+        run: |
+          docker build -f Dockerfile.python \
+            -t ${{ vars.ARTIFACT_REGISTRY }}/marketos-python:${{ github.sha }} \
+            -t ${{ vars.ARTIFACT_REGISTRY }}/marketos-python:latest .
+          docker push ${{ vars.ARTIFACT_REGISTRY }}/marketos-python:${{ github.sha }}
+          docker push ${{ vars.ARTIFACT_REGISTRY }}/marketos-python:latest
+      - name: Build and push web image
+        run: |
+          docker build \
+            -t ${{ vars.ARTIFACT_REGISTRY }}/marketos-web:${{ github.sha }} \
+            -t ${{ vars.ARTIFACT_REGISTRY }}/marketos-web:latest ./shopify_ui
+          docker push ${{ vars.ARTIFACT_REGISTRY }}/marketos-web:${{ github.sha }}
+          docker push ${{ vars.ARTIFACT_REGISTRY }}/marketos-web:latest
+
+  deploy:
+    name: Deploy to GCP VM
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/ssh-compute@v1
+        with:
+          instance_name: ${{ vars.GCE_INSTANCE_NAME }}
+          zone: ${{ vars.GCE_ZONE }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          use_iap: true
+          command: |
+            cd marketos && git pull \
+              && docker compose -f docker-compose.prod.yml pull \
+              && docker compose -f docker-compose.prod.yml up -d
+      - name: Health check
+        run: |
+          sleep 15
+          curl -fsS --retry 5 --retry-delay 10 --retry-connrefused \
+            "https://${{ vars.PROD_DOMAIN }}" > /dev/null
