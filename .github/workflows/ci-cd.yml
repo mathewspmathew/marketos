@@ -9,6 +9,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test-js:
     name: Test JS (shopify_ui)
@@ -26,14 +30,14 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run test
+      - run: npx vitest run
 
   test-python:
     name: Test Python (services)
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: timescale/timescaledb-ha:pg16-all
         env:
           POSTGRES_USER: marketos
           POSTGRES_PASSWORD: marketos
@@ -54,6 +58,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: shopify_ui/package-lock.json
       - name: Run Prisma migrations against the CI database
         working-directory: shopify_ui
         run: |
@@ -75,8 +81,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - id: auth
-        uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
@@ -107,8 +112,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - id: auth
-        uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
@@ -119,7 +123,7 @@ jobs:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           use_iap: true
           command: |
-            cd marketos && git pull \
+            cd /opt/marketos && git fetch origin main && git reset --hard origin/main \
               && docker compose -f docker-compose.prod.yml pull \
               && docker compose -f docker-compose.prod.yml up -d
       - name: Health check
