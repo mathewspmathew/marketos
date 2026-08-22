@@ -1,0 +1,133 @@
+# CI/CD pipeline: test on every push/PR, build+push images and deploy to
+# the GCP VM on every push to main. See
+# docs/superpowers/specs/2026-08-22-github-actions-gcp-cicd-design.md.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-js:
+    name: Test JS (shopify_ui)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shopify_ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: shopify_ui/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npx vitest run
+
+  test-python:
+    name: Test Python (services)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb-ha:pg16-all
+        env:
+          POSTGRES_USER: marketos
+          POSTGRES_PASSWORD: marketos
+          POSTGRES_DB: marketos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U marketos"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://marketos:marketos@localhost:5432/marketos
+      DIRECT_DATABASE_URL: postgresql://marketos:marketos@localhost:5432/marketos
+      INTERNAL_API_TOKEN: ci-dummy-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: shopify_ui/package-lock.json
+      - name: Run Prisma migrations against the CI database
+        working-directory: shopify_ui
+        run: |
+          npm ci
+          npx prisma migrate deploy
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv sync --frozen
+      - run: uv run pytest
+
+  build-and-push:
+    name: Build and push images
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [test-js, test-python]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Build and push Python image
+        run: |
+          docker build -f Dockerfile.python \
+            -t ${{ vars.ARTIFACT_REGISTRY }}/marketos-python:${{ github.sha }} \
+            -t ${{ vars.ARTIFACT_REGISTRY }}/marketos-python:latest .
+          docker push ${{ vars.ARTIFACT_REGISTRY }}/marketos-python:${{ github.sha }}
+          docker push ${{ vars.ARTIFACT_REGISTRY }}/marketos-python:latest
+      - name: Build and push web image
+        run: |
+          docker build \
+            -t ${{ vars.ARTIFACT_REGISTRY }}/marketos-web:${{ github.sha }} \
+            -t ${{ vars.ARTIFACT_REGISTRY }}/marketos-web:latest ./shopify_ui
+          docker push ${{ vars.ARTIFACT_REGISTRY }}/marketos-web:${{ github.sha }}
+          docker push ${{ vars.ARTIFACT_REGISTRY }}/marketos-web:latest
+
+  deploy:
+    name: Deploy to GCP VM
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/ssh-compute@v1
+        with:
+          instance_name: ${{ vars.GCE_INSTANCE_NAME }}
+          zone: ${{ vars.GCE_ZONE }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          use_iap: true
+          command: |
+            cd /opt/marketos && git fetch origin main && git reset --hard origin/main \
+              && docker compose -f docker-compose.prod.yml pull \
+              && docker compose -f docker-compose.prod.yml up -d
+      - name: Health check
+        run: |
+          sleep 15
+          curl -fsS --retry 5 --retry-delay 10 --retry-connrefused \
+            "https://${{ vars.PROD_DOMAIN }}" > /dev/null
