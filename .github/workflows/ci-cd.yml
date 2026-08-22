@@ -1,0 +1,66 @@
+# CI/CD pipeline: test on every push/PR, build+push images and deploy to
+# the GCP VM on every push to main. See
+# docs/superpowers/specs/2026-08-22-github-actions-gcp-cicd-design.md.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-js:
+    name: Test JS (shopify_ui)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shopify_ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: shopify_ui/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+
+  test-python:
+    name: Test Python (services)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: marketos
+          POSTGRES_PASSWORD: marketos
+          POSTGRES_DB: marketos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U marketos"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://marketos:marketos@localhost:5432/marketos
+      DIRECT_DATABASE_URL: postgresql://marketos:marketos@localhost:5432/marketos
+      INTERNAL_API_TOKEN: ci-dummy-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run Prisma migrations against the CI database
+        working-directory: shopify_ui
+        run: |
+          npm ci
+          npx prisma migrate deploy
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv sync --frozen
+      - run: uv run pytest
