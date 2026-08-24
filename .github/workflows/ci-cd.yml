@@ -57,6 +57,12 @@ jobs:
       # real API calls happen in tests (conftest mocks/blocks those), this
       # just needs to be present and well-formed for module import to succeed.
       CHATBOT_MODEL: groq:openai/gpt-oss-120b
+      # services/chatbot_svc/deps.py reads this with os.environ[...] (hard
+      # KeyError if unset). Never dereferenced for a real HTTP call anywhere
+      # in app or test code — services/chatbot_svc/tests/test_agent_loop.py
+      # already uses "http://test" as a Deps() placeholder, so this matches
+      # that existing project convention rather than inventing a new one.
+      CHATBOT_RR_URL: http://test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
