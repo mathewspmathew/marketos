@@ -196,5 +196,10 @@ jobs:
       - name: Health check
         run: |
           sleep 15
-          curl -fsS --retry 5 --retry-delay 10 --retry-connrefused \
+          # --retry-all-errors is required: plain --retry does NOT retry on
+          # an HTTP error response like a startup-window 502 by default,
+          # only on connection-level failures (confirmed directly — a real
+          # 502 during `web`'s prisma-migrate-then-boot startup window made
+          # curl give up after 2 attempts instead of the intended 5).
+          curl -fsS --retry 8 --retry-delay 10 --retry-all-errors --retry-connrefused \
             "https://${{ vars.PROD_DOMAIN }}" > /dev/null
