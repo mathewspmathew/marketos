@@ -905,10 +905,11 @@ export default function HomePage() {
                             <s-stack direction="inline" gap="base">
                               <div>
                                 <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                                  <label style={{ fontWeight: "500" }}>Every</label>
+                                  <label htmlFor={`frequency-interval-${product.id}`} style={{ fontWeight: "500" }}>Every</label>
                                   <span title="Rescrape interval for this product. Leave empty to use shop default." style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", background: "#e8f0f7", border: "1px solid #b3d9f2", borderRadius: "50%", color: "#0066cc", fontSize: "12px", fontWeight: "bold", cursor: "help" }}>ⓘ</span>
                                 </div>
                                 <s-text-field
+                                  id={`frequency-interval-${product.id}`}
                                   type="number"
                                   value={String(local.frequencyInterval || getCurrentDefaults().frequencyInterval || "")}
                                   helpText={`Shop default: ${getCurrentDefaults().frequencyInterval}`}
@@ -919,9 +920,10 @@ export default function HomePage() {
                               </div>
                               <div>
                                 <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
-                                  <label style={{ fontWeight: "500" }}>Unit</label>
+                                  <label htmlFor={`frequency-unit-${product.id}`} style={{ fontWeight: "500" }}>Unit</label>
                                 </div>
                                 <s-select
+                                  id={`frequency-unit-${product.id}`}
                                   value={local.frequencyUnit || getCurrentDefaults().frequencyUnit || ""}
                                   onChange={(e) =>
                                     setOverrideField(product.id, "frequencyUnit", e.currentTarget.value)

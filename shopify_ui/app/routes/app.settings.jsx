@@ -527,7 +527,7 @@ export default function SettingsPage() {
       <s-section heading="🏷️ Default Pricing Tier">
         <s-stack direction="block" gap="base">
           <s-text tone="subdued">
-            Used for new products when the chatbot isn't told a tier explicitly.
+            Used for new products when the chatbot isn&apos;t told a tier explicitly.
           </s-text>
           <s-select
             value={form.defaultPricingTier}

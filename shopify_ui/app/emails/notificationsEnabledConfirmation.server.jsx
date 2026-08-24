@@ -1,3 +1,4 @@
+// eslint-disable-next-line no-unused-vars -- required in scope: this file's JSX compiles under the classic runtime
 import React from "react";
 import { Body, Container, Head, Heading, Html, Preview, Text } from "@react-email/components";
 import { render } from "@react-email/render";
@@ -14,8 +15,8 @@ function ConfirmationEmail({ storeName, email }) {
             Price-change notifications are now enabled, sent to <strong>{email}</strong>.
           </Text>
           <Text>
-            From now on, whenever this app automatically updates a product's
-            price in your store, you'll get an email here with the old price,
+            From now on, whenever this app automatically updates a product&apos;s
+            price in your store, you&apos;ll get an email here with the old price,
             new price, and product details.
           </Text>
         </Container>

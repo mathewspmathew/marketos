@@ -50,6 +50,9 @@ module.exports = {
       },
       rules: {
         "react/no-unknown-property": ["error", { ignore: ["variant"] }],
+        // Not an enforced convention here — the `prop-types` package isn't
+        // even a dependency, and only 3 of 50+ components use it.
+        "react/prop-types": "off",
       },
     },
 

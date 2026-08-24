@@ -37,6 +37,7 @@ export const action = async ({ request }) => {
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
   let raw = "";
+  // eslint-disable-next-line no-constant-condition -- intentional read-until-done loop
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -52,7 +53,7 @@ export const action = async ({ request }) => {
     const dataLine = lines.find((l) => l.startsWith("data:"));
     const type = evLine ? evLine.slice(7).trim() : "text";
     let data = {};
-    try { data = JSON.parse((dataLine ?? "data: {}").slice(5).trim() || "{}"); } catch {}
+    try { data = JSON.parse((dataLine ?? "data: {}").slice(5).trim() || "{}"); } catch { /* malformed SSE data line, keep default */ }
     if (type === "open" && data.session_id) session_id = data.session_id;
     else events.push({ type, data });
   }

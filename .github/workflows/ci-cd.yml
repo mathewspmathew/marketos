@@ -28,11 +28,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: shopify_ui/package-lock.json
       - run: npm ci
-      # 69 pre-existing errors as of 2026-08-22 (never caught before — no CI
-      # ever ran lint). Non-blocking until that backlog is paid down; flip
-      # continue-on-error off once it's clean.
       - run: npm run lint
-        continue-on-error: true
       - run: npm run typecheck
       - run: npx vitest run
 

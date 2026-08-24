@@ -1,3 +1,4 @@
+// eslint-disable-next-line no-unused-vars -- required in scope: this file's JSX compiles under the classic runtime
 import React from "react";
 import { Body, Container, Head, Heading, Html, Preview, Row, Column, Section, Text } from "@react-email/components";
 import { render } from "@react-email/render";
@@ -41,7 +42,7 @@ function PriceChangeEmail({ storeName, productTitle, currency, variants }) {
             ))}
           </Section>
           <Text style={{ color: "#888", fontSize: "12px", marginTop: "24px" }}>
-            You're receiving this because price-change notifications are enabled
+            You&apos;re receiving this because price-change notifications are enabled
             for {storeName}. Turn them off any time in Settings.
           </Text>
         </Container>
