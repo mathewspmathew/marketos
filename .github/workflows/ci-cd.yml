@@ -164,6 +164,10 @@ jobs:
           umask 077
           printf '%s\n' "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
+          # gcloud compute ssh --ssh-key-file requires the matching .pub
+          # file to already exist too, or it stops to interactively ask
+          # whether to regenerate both (which --quiet does not suppress).
+          ssh-keygen -y -f /tmp/deploy_key > /tmp/deploy_key.pub
       - name: Ensure remote directory exists
         run: |
           gcloud compute ssh ${{ vars.GCE_INSTANCE_NAME }} \
@@ -188,7 +192,7 @@ jobs:
             --command "cd /opt/marketos && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d"
       - name: Clean up SSH key
         if: always()
-        run: rm -f /tmp/deploy_key
+        run: rm -f /tmp/deploy_key /tmp/deploy_key.pub
       - name: Health check
         run: |
           sleep 15
