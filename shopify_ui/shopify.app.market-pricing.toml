@@ -2,6 +2,7 @@
 
 client_id = "a91fe74ac239d442db88d3dc79740b1c"
 name = "Market Pulse"
+handle = "market-pulse"
 application_url = "https://marketos.buzz"
 embedded = true
 
