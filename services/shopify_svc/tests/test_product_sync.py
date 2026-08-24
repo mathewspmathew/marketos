@@ -1,14 +1,31 @@
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from services.api_gateway.main import app
+from services.common.db import get_db
+from services.common.models import ShopifyUser
 from services.conftest import INTERNAL_TOKEN_HEADERS
 
 client = TestClient(app, headers=INTERNAL_TOKEN_HEADERS)
 
 
-def test_sync_products_enqueues_task():
+@pytest.fixture
+def shopify_user_row():
+    """The atomic sync-slot claim (api_gateway/main.py's _CLAIM_SYNC_SLOT_SQL,
+    added in 8208292) is a plain UPDATE — it matches zero rows, and the
+    endpoint reports "already_syncing", unless a ShopifyUser row already
+    exists for the shop. Only shopDomain is required (everything else
+    defaults, per services/common/models.py's ShopifyUser)."""
+    with get_db() as s:
+        s.add(ShopifyUser(shopDomain="demo.myshopify.com"))
+    yield
+    with get_db() as s:
+        s.query(ShopifyUser).filter(ShopifyUser.shopDomain == "demo.myshopify.com").delete()
+
+
+def test_sync_products_enqueues_task(shopify_user_row):
     with patch("services.api_gateway.main.celery_app.send_task") as send:
         resp = client.post("/internal/shopify/sync-products?shop_domain=demo.myshopify.com")
     assert resp.status_code == 200

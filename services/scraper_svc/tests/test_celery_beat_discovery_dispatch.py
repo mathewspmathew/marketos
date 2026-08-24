@@ -44,7 +44,7 @@ def test_tick_dispatches_with_products_configured_num_results(seeded_queued_job,
 
     send.assert_called_once_with(
         "discovery.search_products",
-        args=[product_id, "wireless mouse", 25],
+        args=[product_id, "wireless mouse", 25, job_id],
         queue="discovery_queue",
     )
 
@@ -78,7 +78,7 @@ def test_tick_falls_back_to_10_when_product_has_no_configured_count(monkeypatch)
 
     send.assert_called_once_with(
         "discovery.search_products",
-        args=[product_id, "usb cable", 10],
+        args=[product_id, "usb cable", 10, job_id],
         queue="discovery_queue",
     )
 

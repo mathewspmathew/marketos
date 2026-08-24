@@ -50,9 +50,11 @@ def test_skip_reasons_endpoint_returns_full_taxonomy():
     reasons = body["reasons"]
     assert set(reasons) == {
         "below_min_competitors", "no_change", "clamped_per_round", "clamped_lifetime_cap",
+        "auto_update_off",
     }
     assert reasons["below_min_competitors"]["blocked"] is True
     assert reasons["clamped_per_round"]["blocked"] is False
+    assert reasons["auto_update_off"]["blocked"] is False
     for entry in reasons.values():
         assert "label" in entry
 

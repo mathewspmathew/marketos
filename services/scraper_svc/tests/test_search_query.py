@@ -1,9 +1,11 @@
 """
 services/scraper_svc/tests/test_search_query.py
 
-Unit tests for _groq_search_query's output shaping: exact_phrase gets quoted,
-attributes and the fixed exclusion terms are appended unquoted, and failure
-modes (missing exact_phrase, Groq errors) return None.
+Unit tests for _groq_search_query's output shaping: exact_phrase, attributes,
+and the fixed exclusion terms are appended unquoted (Serper's free plan
+rejects quoted "exact phrase" queries outright, so quoting was deliberately
+dropped — see semantics.py:179), and failure modes (missing exact_phrase,
+Groq errors) return None.
 """
 import json
 from unittest.mock import MagicMock
@@ -17,7 +19,7 @@ def _mock_response(payload: dict):
     return resp
 
 
-def test_query_quotes_exact_phrase_and_appends_attributes(monkeypatch):
+def test_query_appends_attributes_unquoted(monkeypatch):
     monkeypatch.setattr(
         sem.shopify_semantic_router, "completion",
         lambda **k: _mock_response({
@@ -26,7 +28,7 @@ def test_query_quotes_exact_phrase_and_appends_attributes(monkeypatch):
         }),
     )
     q = sem._groq_search_query(title="x", vendor="Philips", category="Appliances", description=None)
-    assert q == '"philips hd9200 air fryer" 4.1l black -review -blog -forum'
+    assert q == "philips hd9200 air fryer 4.1l black -review -blog -forum"
 
 
 def test_query_with_no_attributes(monkeypatch):
@@ -35,7 +37,7 @@ def test_query_with_no_attributes(monkeypatch):
         lambda **k: _mock_response({"exact_phrase": "cotton formal shirt", "attributes": []}),
     )
     q = sem._groq_search_query(title="x", vendor=None, category="Shirts", description=None)
-    assert q == '"cotton formal shirt" -review -blog -forum'
+    assert q == "cotton formal shirt -review -blog -forum"
 
 
 def test_query_missing_exact_phrase_returns_none(monkeypatch):
