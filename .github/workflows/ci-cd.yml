@@ -57,6 +57,10 @@ jobs:
       DATABASE_URL: postgresql://marketos:marketos@localhost:5432/marketos
       DIRECT_DATABASE_URL: postgresql://marketos:marketos@localhost:5432/marketos
       INTERNAL_API_TOKEN: ci-dummy-token
+      # services/chatbot_svc/agent.py raises at import time if unset — no
+      # real API calls happen in tests (conftest mocks/blocks those), this
+      # just needs to be present and well-formed for module import to succeed.
+      CHATBOT_MODEL: groq:openai/gpt-oss-120b
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
