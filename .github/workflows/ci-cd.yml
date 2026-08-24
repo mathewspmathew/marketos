@@ -145,7 +145,15 @@ jobs:
           instance_name: ${{ vars.GCE_INSTANCE_NAME }}
           zone: ${{ vars.GCE_ZONE }}
           project_id: ${{ vars.GCP_PROJECT_ID }}
-          use_iap: true
+          # No `use_iap` input exists on this action — it always tunnels
+          # through IAP unconditionally (hardcoded --tunnel-through-iap in
+          # its own gcloud invocation). ssh_private_key is genuinely
+          # required: the action writes it to disk and passes it to
+          # `gcloud compute ssh --ssh-key-file`, which auto-registers the
+          # derived public key against the authenticated identity's OS
+          # Login profile per-session (OS Login is already enabled on the
+          # VM) — no manual key upload needed.
+          ssh_private_key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
           command: |
             cd /opt/marketos && git fetch origin main && git reset --hard origin/main \
               && docker compose -f docker-compose.prod.yml pull \
