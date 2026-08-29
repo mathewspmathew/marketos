@@ -189,7 +189,7 @@ jobs:
           gcloud compute ssh ${{ vars.GCE_INSTANCE_NAME }} \
             --zone ${{ vars.GCE_ZONE }} --project ${{ vars.GCP_PROJECT_ID }} \
             --tunnel-through-iap --ssh-key-file /tmp/deploy_key --quiet \
-            --command "cd /opt/marketos && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d"
+            --command "cd /opt/marketos && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d --wait --wait-timeout 180"
       - name: Clean up SSH key
         if: always()
         run: rm -f /tmp/deploy_key /tmp/deploy_key.pub

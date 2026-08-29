@@ -206,6 +206,15 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+    healthcheck:
+      # node:20-alpine ships busybox wget, no extra install needed.
+      # start_period covers prisma generate + migrate deploy + boot, which
+      # runs fresh on every deploy before the server starts listening.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
 
   chatbot-svc:
     image: ${ARTIFACT_REGISTRY}/marketos-python:${TAG:-latest}
