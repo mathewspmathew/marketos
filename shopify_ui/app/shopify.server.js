@@ -32,16 +32,25 @@ const shopify = shopifyApp({
     // audit, 2026-07-20).
     afterAuth: async ({ session }) => {
       const shopDomain = session.shop;
-      await prisma.shopifyUser.upsert({
-        where: { shopDomain },
-        update: {},
-        create: { shopDomain },
-      });
-      await prisma.shopSettings.upsert({
-        where: { shopDomain },
-        update: {},
-        create: { shopDomain, ...SHOP_SETTINGS_DEFAULTS, updatedAt: new Date() },
-      });
+      try {
+        await prisma.shopifyUser.upsert({
+          where: { shopDomain },
+          update: {},
+          create: { shopDomain },
+        });
+        await prisma.shopSettings.upsert({
+          where: { shopDomain },
+          update: {},
+          create: { shopDomain, ...SHOP_SETTINGS_DEFAULTS, updatedAt: new Date() },
+        });
+      } catch (err) {
+        // Re-throw rather than swallow: silently continuing here would
+        // reintroduce the exact bug this hook exists to prevent (a shop
+        // installed with no ShopSettings row, rejecting its first save
+        // with no visible error — see comment above).
+        console.error(`[afterAuth] failed to seed ShopifyUser/ShopSettings for ${shopDomain}:`, err);
+        throw err;
+      }
     },
   },
   future: {
