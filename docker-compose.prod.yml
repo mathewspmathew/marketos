@@ -72,15 +72,12 @@ services:
       - GCS_IMAGE_BUCKET=${GCS_IMAGE_BUCKET}
       - GCS_MARKDOWN_BUCKET=${GCS_MARKDOWN_BUCKET}
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
-      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
       - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    volumes:
-      - ~/.config/gcloud:/root/.config/gcloud:ro
     command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker",
               "-Q", "scraping_queue,extraction_queue,scheduler_queue,match_queue",
               "-n", "core-worker@%h", "--pool=solo", "--loglevel=info"]
@@ -101,15 +98,12 @@ services:
       - VERTEX_PROJECT=${VERTEX_PROJECT}
       - VERTEX_LOCATION=${VERTEX_LOCATION}
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
-      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
       - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    volumes:
-      - ~/.config/gcloud:/root/.config/gcloud:ro
     command: ["uv", "run", "celery", "-A", "services.common.celery_app", "worker",
               "-Q", "discovery_queue,semantic_queue,shopify_semantic_queue,embedding_queue",
               "-n", "content-worker@%h", "--pool=threads", "--concurrency=2", "--loglevel=info"]
@@ -234,7 +228,6 @@ services:
       - VERTEX_PROJECT=${VERTEX_PROJECT}
       - VERTEX_LOCATION=${VERTEX_LOCATION}
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
-      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN}
       - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
@@ -242,8 +235,6 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    volumes:
-      - ~/.config/gcloud:/root/.config/gcloud:ro
     command: ["uv", "run", "uvicorn", "services.chatbot_svc.app:app", "--host", "0.0.0.0", "--port", "8088"]
 
   caddy:
