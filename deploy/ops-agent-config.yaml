@@ -1,0 +1,23 @@
+# Ships Docker's own json-file container logs into Cloud Logging, additively
+# — Docker's logging driver stays json-file (dozzle/`docker logs` depend on
+# it), this just tails the same files independently. Two parse_json stages:
+# one for Docker's {"log": "...", "stream": ...} wrapper, one for the app's
+# own structlog JSON inside the "log" field. See deploy/RUNBOOK.md.
+logging:
+  receivers:
+    docker_logs:
+      type: files
+      wildcard_refresh_interval: 15s
+      include_paths: [/var/lib/docker/containers/*/*-json.log]
+      record_log_file_path: true
+  processors:
+    docker_wrapper_parser:
+      type: parse_json
+    app_json_parser:
+      type: parse_json
+      field: log
+  service:
+    pipelines:
+      docker_pipeline:
+        receivers: [docker_logs]
+        processors: [docker_wrapper_parser, app_json_parser]
