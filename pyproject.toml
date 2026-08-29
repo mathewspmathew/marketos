@@ -32,6 +32,7 @@ dependencies = [
     "flower>=2.0.1",
     "pyright>=1.1.410",
     "litellm>=1.93.0",
+    "sentry-sdk>=2.0",
 ]
 
 [dependency-groups]

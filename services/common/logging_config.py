@@ -51,6 +51,20 @@ def setup_logging() -> None:
     root_logger.handlers = [handler]
     root_logger.setLevel(log_level)
 
+    # Sentry's LoggingIntegration auto-captures any logger.exception()/
+    # logger.error() as an event — no per-callsite changes needed, since
+    # structlog's LoggerFactory routes everything through stdlib logging
+    # already. No-op when SENTRY_DSN is unset (local dev).
+    sentry_dsn = os.getenv("SENTRY_DSN")
+    if sentry_dsn:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+            release=os.getenv("TAG"),
+        )
+
 
 # Translation: "When Celery is about to set up its own logging, run our setup_logging() instead." That guarantees our JSON setup wins and survives, no matter when in the boot sequence Celery would've tried to do its own thing.
 @celery_setup_logging.connect

@@ -26,7 +26,11 @@ from __future__ import annotations
 
 import os
 
+import litellm
+import structlog
 from litellm import Router
+
+logger = structlog.get_logger(__name__)
 
 # Tried in order: fast/cheap first, then progressively larger models. Each
 # key gets a fresh TPD/RPD budget per model, so this chain buys ~3x the
@@ -72,3 +76,24 @@ semantic_router = _build_router(["GROQ_API_KEY_SEMANTIC"])
 
 # shopify_semantic: generate_shopify_variant_semantics (semantics.py).
 shopify_semantic_router = _build_router(["GROQ_API_KEY_SHOPIFY"])
+
+
+def _log_llm_cost(kwargs, completion_response, start_time, end_time) -> None:
+    # litellm's cost DB doesn't price every Groq model (e.g. the gpt-oss-20b
+    # fallback tier) — cost_usd may come back None; token counts still log
+    # either way as a fallback signal.
+    try:
+        cost = litellm.completion_cost(completion_response=completion_response)
+    except Exception:
+        cost = None
+    usage = getattr(completion_response, "usage", None)
+    logger.info(
+        "llm_call_cost",
+        model=kwargs.get("model"),
+        cost_usd=cost,
+        prompt_tokens=getattr(usage, "prompt_tokens", None),
+        completion_tokens=getattr(usage, "completion_tokens", None),
+    )
+
+
+litellm.success_callback = [_log_llm_cost]

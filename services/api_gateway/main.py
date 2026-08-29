@@ -29,6 +29,7 @@ from services.common import pane_config
 from services.common.celery_app import app as celery_app
 from services.common.db import get_db
 from services.common.frequency import next_run_at
+from services.common.logging_config import setup_logging
 from services.common.models import ProductUrl, ShopifyProduct
 from services.pricing_svc import product_stats
 from services.pricing_svc.decide import get_skip_reason_taxonomy
@@ -37,6 +38,10 @@ from services.pricing_svc.match_review import MatchReviewError, confirm_match, r
 from services.scraper_svc.semantics import claim_and_enqueue_semantics
 
 load_dotenv()
+# api_gateway runs as its own uvicorn process (not a Celery worker), so it
+# never hits celery_app.py's import-time setup_logging() call — must be
+# called here directly, same as chatbot_svc/app.py does.
+setup_logging()
 
 logger = structlog.get_logger(__name__)
 

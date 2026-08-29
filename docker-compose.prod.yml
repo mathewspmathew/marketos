@@ -73,6 +73,7 @@ services:
       - GCS_MARKDOWN_BUCKET=${GCS_MARKDOWN_BUCKET}
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy
@@ -101,6 +102,7 @@ services:
       - VERTEX_LOCATION=${VERTEX_LOCATION}
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy
@@ -127,6 +129,7 @@ services:
       # name, on its internal port 3000 — not localhost, not the published port.
       # (Resend itself is only called from inside `web`, not here.)
       - APP_URL=http://web:3000
+      - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy
@@ -144,6 +147,7 @@ services:
     environment:
       - DATABASE_URL=${PGBOUNCER_DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
+      - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy
@@ -166,6 +170,7 @@ services:
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
       - SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
       - SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET}
+      - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy
@@ -222,6 +227,7 @@ services:
       - GOOGLE_CLOUD_PROJECT=${VERTEX_PROJECT}
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN}
+      - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy
@@ -261,6 +267,25 @@ services:
       - "127.0.0.1:8888:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Live Celery worker/queue/task view — the actual pipeline-tracing gap
+  # (which stage a product is stuck at) that manual DB queries were
+  # standing in for. No built-in auth, so bound to localhost only, same as
+  # dozzle above — reach it via `ssh -L 5555:127.0.0.1:5555 <user>@<vm-ip>`.
+  flower:
+    image: ${ARTIFACT_REGISTRY}/marketos-python:${TAG:-latest}
+    container_name: marketos_flower
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5555:5555"
+    command: ["uv", "run", "celery", "-A", "services.common.celery_app", "flower",
+              "--port=5555", "--basic_auth=${FLOWER_BASIC_AUTH}"]
 
 volumes:
   redis_data:
