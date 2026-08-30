@@ -28,6 +28,9 @@ venv/
 *.key
 secrets/
 
+# Local AI continuity notes (not for the team, personal handoff doc)
+PROJECT_NOTES.md
+
 # IDE
 .vscode/
 .idea/
