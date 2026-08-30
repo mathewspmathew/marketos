@@ -1,3 +1,8 @@
 :80 {
-	reverse_proxy web:3000
+	handle /flower/* {
+		reverse_proxy flower:5555
+	}
+	handle {
+		reverse_proxy web:3000
+	}
 }

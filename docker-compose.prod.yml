@@ -247,6 +247,7 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
       - web
+      - flower
 
   cloudflared:
     image: cloudflare/cloudflared:2026.7.2
@@ -286,7 +287,7 @@ services:
     ports:
       - "127.0.0.1:5555:5555"
     command: ["uv", "run", "celery", "-A", "services.common.celery_app", "flower",
-              "--port=5555", "--basic_auth=${FLOWER_BASIC_AUTH}"]
+              "--port=5555", "--basic_auth=${FLOWER_BASIC_AUTH}", "--url_prefix=flower"]
 
 volumes:
   redis_data:
