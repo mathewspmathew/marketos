@@ -195,6 +195,7 @@ services:
       - GROQ_REFINER_MODEL=${GROQ_REFINER_MODEL:-}
       - RESEND_API_KEY=${RESEND_API_KEY}
       - RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL}
+      - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       redis:
         condition: service_healthy

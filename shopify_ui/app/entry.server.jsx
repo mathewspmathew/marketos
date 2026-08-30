@@ -9,9 +9,30 @@ import { renderToPipeableStream } from "react-dom/server";
 import { ServerRouter } from "react-router";
 import { createReadableStreamFromReadable } from "@react-router/node";
 import { isbot } from "isbot";
+import * as Sentry from "@sentry/node";
 import { addDocumentResponseHeaders } from "./shopify.server";
 
+// No-op when unset (local dev) — same gate as the Python side's
+// services/common/logging_config.py.
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.SENTRY_ENVIRONMENT || "production",
+  });
+}
+
 export const streamTimeout = 5000;
+
+// React Router's app-wide server-error hook — called for every loader/
+// action/render error. Exporting this disables the framework's own default
+// console logging, so console.error stays in explicitly for parity with
+// today's dozzle/Cloud Logging visibility, plus Sentry now.
+export function handleError(error, { request }) {
+  if (!request.signal.aborted) {
+    Sentry.captureException(error);
+    console.error(error);
+  }
+}
 
 export default async function handleRequest(
   request,
@@ -41,10 +62,12 @@ export default async function handleRequest(
           pipe(body);
         },
         onShellError(error) {
+          Sentry.captureException(error);
           reject(error);
         },
         onError(error) {
           responseStatusCode = 500;
+          Sentry.captureException(error);
           console.error(error);
         },
       },

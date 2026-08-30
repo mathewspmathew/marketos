@@ -33,6 +33,7 @@
     "@react-router/fs-routes": "^7.18.2",
     "@react-router/node": "^7.18.2",
     "@react-router/serve": "^7.18.2",
+    "@sentry/node": "^10.72.0",
     "@shopify/app-bridge-react": "^4.2.4",
     "@shopify/polaris": "^13.9.5",
     "@shopify/polaris-icons": "^9.3.1",
