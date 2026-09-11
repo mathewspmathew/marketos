@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from firecrawl import V1FirecrawlApp
 from litellm.exceptions import RateLimitError as GroqRateLimitError
+from litellm.router import RouterRateLimitError
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -363,6 +364,12 @@ def extract_candidate(self, candidate_id: str, gcs_ref: str):
 
     try:
         product = extract_with_groq(markdown, url, router=candidate_router)
+    except RouterRateLimitError:
+        if self.request.retries >= self.max_retries:
+            with get_db() as db:
+                _set_candidate_status(db, candidate_id, status="DEAD", rejectReason="router_rate_limited")
+            return {"status": "dead"}
+        raise self.retry(countdown=1800)
     except GroqRateLimitError:
         if self.request.retries >= self.max_retries:
             with get_db() as db:
@@ -488,6 +495,12 @@ def expand_listing(self, candidate_id: str, gcs_ref: str):
 
     try:
         cards = extract_listing_with_groq(markdown, parent_url)
+    except RouterRateLimitError:
+        if self.request.retries >= self.max_retries:
+            with get_db() as db:
+                _set_candidate_status(db, candidate_id, status="DEAD", rejectReason="router_rate_limited")
+            return {"status": "dead"}
+        raise self.retry(countdown=1800)
     except GroqRateLimitError:
         if self.request.retries >= self.max_retries:
             with get_db() as db:

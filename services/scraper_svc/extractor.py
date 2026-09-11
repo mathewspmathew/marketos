@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import structlog
 from dotenv import load_dotenv
 from litellm.exceptions import RateLimitError as GroqRateLimitError
+from litellm.router import RouterRateLimitError
 
 from services.common.groq_client import extraction_router
 from sqlalchemy import select, update as sa_update
@@ -481,6 +482,11 @@ def rescrape_extract(self, config_id: str, shop_domain: str, product_url: str, g
 
     try:
         product = extract_with_groq(markdown, product_url)
+    except RouterRateLimitError:
+        if self.request.retries >= self.max_retries:
+            give_up("GROQ_RATE_LIMIT", "Router rate limited (daily quota) after max retries")
+            return
+        raise self.retry(countdown=1800)
     except GroqRateLimitError:
         if self.request.retries >= self.max_retries:
             give_up("GROQ_RATE_LIMIT", "Groq rate limited after max retries")
@@ -526,6 +532,12 @@ def extract_product(self, config_id: str, shop_domain: str, product_url: str, gc
 
     try:
         product = extract_with_groq(markdown, product_url)
+    except RouterRateLimitError:
+        logger.warning("router_rate_limited_retrying", product_url=product_url, countdown=1800)
+        if self.request.retries >= self.max_retries:
+            give_up("GROQ_RATE_LIMIT", "Router rate limited (daily quota) after max retries")
+            return
+        raise self.retry(countdown=1800)
     except GroqRateLimitError:
         logger.warning("groq_rate_limited_retrying", product_url=product_url, countdown=65)
         if self.request.retries >= self.max_retries:

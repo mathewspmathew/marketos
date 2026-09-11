@@ -13,6 +13,7 @@ import {
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { DEFAULTS as SHOP_SETTINGS_DEFAULTS } from "./lib/shopSettingsDefaults.server";
+import { shopAndHostParamsAreSafe } from "./lib/validateShopHostParams";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -69,7 +70,36 @@ const shopify = shopifyApp({
 export default shopify;
 export const apiVersion = ApiVersion.October25;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
-export const authenticate = shopify.authenticate;
+
+// Hardened `authenticate.admin` (see validateShopHostParams.js for the full
+// story): the SDK's sanitizeHost() crashes with `TypeError: Invalid URL` when
+// a request carries a valid `shop` param plus a base64-valid `host` param that
+// decodes to a non-URL (e.g. "hello world") — reproduces Sentry issue
+// PYTHON-7A as a 500. If the params are malformed in that specific way,
+// short-circuit with the same app-bridge Response the SDK throws for a
+// missing shop param; garbage traffic gets a bounce instead of a 500.
+function authenticateWithGuard(method) {
+  return async (request) => {
+    if (!shopAndHostParamsAreSafe(request)) {
+      // Mirrors renderAppBridge(): same script App Bridge needs to re-embed
+      // the app and retry with correct shop/host params.
+      throw new Response(
+        `\n      <script data-api-key="${process.env.SHOPIFY_API_KEY}" src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>\n    `,
+        {
+          headers: {
+            "content-type": "text/html;charset=utf-8",
+          },
+        },
+      );
+    }
+    return shopify.authenticate[method](request);
+  };
+}
+
+export const authenticate = {
+  ...shopify.authenticate,
+  admin: authenticateWithGuard("admin"),
+};
 export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;

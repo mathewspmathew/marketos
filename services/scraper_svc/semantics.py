@@ -19,6 +19,7 @@ import structlog
 from celery.exceptions import Retry as CeleryRetry
 from dotenv import load_dotenv
 from litellm.exceptions import RateLimitError as GroqRateLimitError
+from litellm.router import RouterRateLimitError
 from sqlalchemy import text, text as sa_text, update as sa_update
 
 from services.common.celery_app import app
@@ -364,6 +365,10 @@ def generate_variant_semantics(self, product_id: str, config_id: str, shop_domai
                     variants_payload,
                 )
             )
+        except RouterRateLimitError:
+            # All models in the chain are on cooldown (daily TPD exhausted).
+            # Back off for 30 min — burning 65s retries won't help here.
+            raise self.retry(countdown=1800)
         except GroqRateLimitError:
             raise self.retry(countdown=65)
         except Exception as e:
@@ -477,6 +482,10 @@ def generate_shopify_variant_semantics(self, product_id: str):
             semantic_map = _groq_semantic_call(
                 _build_semantic_prompt(p_title, p_vendor, p_type, p_desc, p_tags, None,
                                        variants_payload), shopify=True)
+        except RouterRateLimitError:
+            # All models in the chain are on cooldown (daily TPD exhausted).
+            # Back off for 30 min — burning 65s retries won't help here.
+            raise self.retry(countdown=1800)
         except GroqRateLimitError:
             raise self.retry(countdown=65)
         except Exception as e:

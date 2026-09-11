@@ -35,10 +35,12 @@ logger = structlog.get_logger(__name__)
 # Tried in order: fast/cheap first, then progressively larger models. Each
 # key gets a fresh TPD/RPD budget per model, so this chain buys ~3x the
 # effective daily quota per key before a group is fully exhausted.
+# llama-3.1-8b-instant and llama-3.3-70b-versatile removed — deprecated and
+# no longer available on this Groq plan tier (Sep 2026).
 _MODEL_CHAIN = [
-    ("groq",     "groq/llama-3.1-8b-instant"),
-    ("groq_fb1", "groq/llama-3.3-70b-versatile"),
-    ("groq_fb2", "groq/openai/gpt-oss-20b"),
+    ("groq",     "groq/qwen/qwen3.6-27b"),       # fast primary, 200K TPD
+    ("groq_fb1", "groq/openai/gpt-oss-20b"),      # proven fallback, 200K TPD
+    ("groq_fb2", "groq/openai/gpt-oss-120b"),     # largest fallback, 200K TPD
 ]
 
 
