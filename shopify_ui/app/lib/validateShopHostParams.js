@@ -49,7 +49,7 @@ const HOST_ORIGIN_REGEX = new RegExp(
 
 function decodeHost(host) {
   // Node 20+: atob exists globally; mirror the SDK's decodeHost exactly.
-  return Buffer.from(host, "base64").toString("binary");
+  return atob(host);
 }
 
 /**

@@ -34,8 +34,8 @@ import shopifyDefault, { authenticate } from "./shopify.server";
 
 // b64("hello world") — base64-valid, decodes to a non-URL. This is the
 // exact param pair captured in the Sentry event (host=aGVsbG8gd29ybGQ=).
-const CRASH_HOST = Buffer.from("hello world").toString("base64");
-const GOOD_HOST = Buffer.from("acme.myshopify.com").toString("base64");
+const CRASH_HOST = btoa("hello world");
+const GOOD_HOST = btoa("acme.myshopify.com");
 
 function appRequest(search) {
   return new Request(`http://localhost:3000/app?${search}`);

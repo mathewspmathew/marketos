@@ -62,7 +62,7 @@ describe("shopAndHostParamsAreSafe", () => {
 
   it("accepts spin.dev / shop.dev / myshopify.io hosts (SDK allowlist)", () => {
     for (const domain of ["acme.spin.dev", "acme.shop.dev", "acme.myshopify.io"]) {
-      const encoded = Buffer.from(domain).toString("base64");
+      const encoded = btoa(domain);
       expect(shopAndHostParamsAreSafe(req(`http://x/app?${SH}&host=${encoded}`))).toBe(
         true,
       );
